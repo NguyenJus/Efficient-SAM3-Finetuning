@@ -197,6 +197,13 @@ class Trainer:
     def fit(self) -> RunResult: ...
 
 # eval/evaluator.py
+@dataclass
+class MetricsReport:
+    overall: dict[str, float]           # {"mAP": .., "mAP_50": .., "mAP_75": ..}
+    per_class: dict[str, dict[str, float]]   # class_name -> {"AP": .., "AP_50": ..}
+    n_images: int
+    n_predictions: int
+
 class Evaluator:
     def evaluate(self, model, dataset: Dataset) -> MetricsReport: ...
 ```
@@ -221,7 +228,7 @@ Aggressive memory-saving defaults, degraded predictably via config.
 - **QLoRA path:** base loaded `nf4` via bitsandbytes; adapters in bf16. QLoRA + grad-checkpointing is the 12GB recipe.
 - **Image resolution:** config-driven; defaults to SAM3.1's native input.
 - **Batch size:** default `1` with `gradient_accumulation_steps: 8`. Effective batch behavior independent of GPU.
-- **Optimizer:** `AdamW` 8-bit (bitsandbytes) default.
+- **Optimizer:** `adamw` (torch) by default. `adamw8bit` (bitsandbytes) selectable, requires the `[qlora]` extra — automatically available to QLoRA users.
 - **No DDP/FSDP in v0** — single device. Multi-GPU deferred to a Ray Train spec.
 
 ---
@@ -282,7 +289,7 @@ train:
   epochs: 10
   batch_size: 1
   grad_accum_steps: 8
-  optimizer: "adamw8bit"
+  optimizer: "adamw"               # adamw | adamw8bit (adamw8bit requires [qlora] extra)
   lr: 1.0e-4
   lr_schedule: "cosine"
   warmup_steps: 100
@@ -352,7 +359,7 @@ Three tiers. All CPU except the smoke tier.
 
 - **Integration (CPU, `@pytest.mark.integration`).** End-to-end with stub model + `tests/fixtures/tiny_coco/`. Verifies: config loads → dataset iterates → trainer runs one step → checkpoint writes → eval produces a `MetricsReport`. Run in CI.
 
-- **GPU smoke (`@pytest.mark.gpu`, manual / nightly).** Load real SAM3.1, LoRA-finetune ~50 steps on tiny_coco, assert train loss drops by >X%. Skipped when CUDA absent. Not in CI by default; documented in README as `pytest -m gpu`.
+- **GPU smoke (`@pytest.mark.gpu`, manual / nightly).** Load real SAM3.1, LoRA-finetune ~50 steps on tiny_coco, assert train loss at step 50 is ≥30% lower than step 1 (overfit on 2 images should easily clear this). Skipped when CUDA absent. Not in CI by default; documented in README as `pytest -m gpu`.
 
 **Fixtures:** `tests/fixtures/tiny_coco/` (2 images + COCO JSON, KBs, committed); `tiny_sam3_stub.py` matching SAM3.1's forward contract; conftest fixtures `tmp_run_dir`, `stub_model`, `tiny_coco_dataset`, `noop_tracker`.
 
