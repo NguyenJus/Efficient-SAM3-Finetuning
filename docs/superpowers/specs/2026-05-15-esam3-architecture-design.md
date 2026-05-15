@@ -322,12 +322,10 @@ export:
 
 ## 8. Code Quality & Readability
 
-The repo prioritizes legibility for the maintainer and forking developers, not external contributor onboarding.
-
-**In:**
+The repo prioritizes legibility for the maintainer and forking developers.
 
 - `README.md` — what / why / 60-second quickstart.
-- `ARCHITECTURE.md` — one page: module map, data flow diagram, the Section 5 protocols.
+- `ARCHITECTURE.md` — one page: module map, data flow diagram, the Section 5 protocols documented as stable seams.
 - `LICENSE` — Apache-2.0.
 - Type hints everywhere; `mypy --strict` on `src/esam3`.
 - Module + public-class docstrings (one-liner + Args/Returns where non-obvious). No function-by-function noise.
@@ -336,17 +334,6 @@ The repo prioritizes legibility for the maintainer and forking developers, not e
 - `.github/workflows/ci.yml` — ruff + mypy + pytest on push/PR. CPU-only.
 - Optional deps grouped: `[wandb]`, `[qlora]`, `[dev]`. QLoRA opt-in because bitsandbytes is platform-finicky.
 - Plugin-style `_registry.py` for the three pluggable surfaces (dataset adapters, PEFT methods, trackers). New adapter = one file + `@register` + one test.
-- The four Section 5 protocols documented in `ARCHITECTURE.md` as stable seams.
-
-**Out (intentionally):**
-
-- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue/PR templates.
-- "Good first issue" labels.
-- `mkdocs` site.
-- Self-hosted GPU smoke workflow, release-to-PyPI workflow.
-
-**Per `~/.claude/CLAUDE.md` conventions:**
-
 - `logs/log.md` and `logs/TODO.md` exist from scaffolding with header comments explaining the append-only convention. Committed.
 
 ---
