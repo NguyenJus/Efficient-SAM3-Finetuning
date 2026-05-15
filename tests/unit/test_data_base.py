@@ -73,3 +73,17 @@ def test_dataset_protocol_recognizes_conforming_class() -> None:
 
 def test_dataset_protocol_rejects_nonconforming() -> None:
     assert is_dataset(object()) is False
+
+
+class _AlmostDataset:
+    """Has __len__ and __getitem__ but no class_names — should not match Dataset."""
+
+    def __len__(self) -> int:
+        return 0
+
+    def __getitem__(self, i: int) -> Example:  # pragma: no cover - never called
+        raise NotImplementedError
+
+
+def test_dataset_protocol_rejects_class_missing_class_names() -> None:
+    assert is_dataset(_AlmostDataset()) is False
