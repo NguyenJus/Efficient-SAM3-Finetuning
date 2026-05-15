@@ -87,3 +87,22 @@ def test_malformed_override_raises(tmp_path: Path) -> None:
 def test_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "missing.yaml")
+
+
+def test_override_empty_payload_is_empty_string() -> None:
+    base: dict[str, object] = {}
+    apply_overrides(base, ["a.b="])
+    assert base == {"a": {"b": ""}}
+
+
+def test_override_empty_key_segment_raises() -> None:
+    with pytest.raises(ConfigError, match="empty key segment"):
+        apply_overrides({}, ["=oops"])
+    with pytest.raises(ConfigError, match="empty key segment"):
+        apply_overrides({}, ["a..b=1"])
+
+
+def test_override_traversing_non_dict_raises() -> None:
+    base: dict[str, object] = {"a": "string-not-dict"}
+    with pytest.raises(ConfigError, match="non-dict"):
+        apply_overrides(base, ["a.b.c=1"])

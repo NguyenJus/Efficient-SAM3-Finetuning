@@ -41,7 +41,7 @@ def load_config(
         raise ConfigError(f"config not found: {p}")
 
     try:
-        raw = yaml.safe_load(p.read_text()) or {}
+        raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         raise ConfigError(f"invalid YAML in {p}: {e}") from e
 
@@ -60,24 +60,36 @@ def load_config(
 
 
 def apply_overrides(target: dict[str, Any], overrides: Sequence[str]) -> None:
-    """Mutate `target` in place: each override is `dotted.key=scalar_value`."""
+    """Mutate `target` in place: each override is `dotted.key=value`.
+
+    Values are parsed YAML-style (`true`/`null`/numbers map to Python types).
+    A bare RHS (`key=`) is interpreted as the empty string.
+    """
     for ov in overrides:
         if "=" not in ov:
             raise ConfigError(f"malformed override (expected key=value): {ov!r}")
         key, _, raw_value = ov.partition("=")
         keys = key.split(".")
+        if not key or any(not k for k in keys):
+            raise ConfigError(f"malformed override (empty key segment): {ov!r}")
         node = target
         for k in keys[:-1]:
             existing = node.get(k)
-            if not isinstance(existing, dict):
+            if existing is None:
                 existing = {}
                 node[k] = existing
+            elif not isinstance(existing, dict):
+                raise ConfigError(
+                    f"override {ov!r} traverses non-dict at '{k}' (have {type(existing).__name__})"
+                )
             node = existing
         node[keys[-1]] = _parse_scalar(raw_value)
 
 
 def _parse_scalar(s: str) -> Any:
-    """YAML-style scalar parsing for override values."""
+    """YAML-style scalar parsing for override values; empty string passes through."""
+    if s == "":
+        return ""
     try:
         return yaml.safe_load(s)
     except yaml.YAMLError:
