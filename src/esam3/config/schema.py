@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
 
 Dtype = Literal["bfloat16", "float16"]
 DataFormat = Literal["coco", "hf"]
@@ -19,6 +19,7 @@ QuantType = Literal["nf4", "fp4"]
 Optimizer = Literal["adamw", "adamw8bit"]
 LRSchedule = Literal["constant", "cosine", "linear"]
 TrackerBackend = Literal["tensorboard", "wandb", "none"]
+TextPromptMode = Literal["present", "all", "present_plus_negatives", "sampled_fixed_k"]
 
 
 class _Strict(BaseModel):
@@ -48,13 +49,93 @@ class AugmentationsConfig(_Strict):
     color_jitter: float = Field(default=0.1, ge=0.0, le=1.0)
 
 
+class TextPromptConfig(_Strict):
+    """How TextPrompts.classes is populated for each image when prompt_mode='text'.
+
+    - present:                Use exactly the categories present in the image's
+                              annotations (post-iscrowd filter). Default.
+    - all:                    Use the full dataset class vocabulary every time.
+    - present_plus_negatives: Use the present categories plus N randomly-sampled
+                              negative class names per image.
+    - sampled_fixed_k:        Use exactly k class names: all positives, plus
+                              negatives sampled to reach k. If positives exceed
+                              k, positives are truncated (kept in dense-id
+                              ascending order). Deterministic given (seed, image_id).
+    """
+
+    mode: TextPromptMode = "present"
+    negatives_per_image: int = Field(default=0, ge=0)
+    k: int = Field(default=16, ge=1, le=16)
+
+
+class NormalizeConfig(_Strict):
+    """Normalization stats used when AutoImageProcessor cannot be loaded.
+
+    Resolution order at dataset construction:
+      1. AutoImageProcessor.from_pretrained(model.name, local_files_only=True)
+         and read image_mean/image_std.
+      2. On OSError/AttributeError/ValueError, fall back to (mean, std) here.
+    """
+
+    mean: list[float] = Field(
+        default_factory=lambda: [0.485, 0.456, 0.406], min_length=3, max_length=3
+    )
+    std: list[float] = Field(
+        default_factory=lambda: [0.229, 0.224, 0.225], min_length=3, max_length=3
+    )
+
+    @model_validator(mode="after")
+    def _check_ranges(self) -> NormalizeConfig:
+        for m in self.mean:
+            if not (0.0 <= m <= 1.0):
+                raise ValueError(f"normalize.mean values must be in [0, 1]; got {m}")
+        for s in self.std:
+            if s <= 0.0:
+                raise ValueError(f"normalize.std values must be > 0; got {s}")
+        return self
+
+
+class HFFieldMap(_Strict):
+    """Optional overrides for HuggingFace dataset field names.
+
+    Defaults match a conventional schema: top-level `image`, nested `objects.bbox`,
+    `objects.category`, optional `objects.segmentation`; class names from the
+    top-level `categories` feature.
+    """
+
+    image: str = "image"
+    bbox: str = "objects.bbox"
+    category: str = "objects.category"
+    segmentation: str | None = "objects.segmentation"
+    categories_feature: str = "categories"
+    bbox_format: Literal["xywh", "xyxy"] = "xyxy"
+
+
+class HFDatasetConfig(_Strict):
+    """HuggingFace dataset specification (used when DataConfig.format == 'hf')."""
+
+    name: str = Field(min_length=1)
+    split_train: str = "train"
+    split_val: str = "validation"
+    field_map: HFFieldMap = Field(default_factory=HFFieldMap)
+
+
 class DataConfig(_Strict):
     format: DataFormat
     train: DataSplit
     val: DataSplit
+    hf: HFDatasetConfig | None = None
     prompt_mode: PromptMode
     image_size: PositiveInt = 1024
     augmentations: AugmentationsConfig = Field(default_factory=AugmentationsConfig)
+    text_prompt: TextPromptConfig = Field(default_factory=TextPromptConfig)
+    normalize: NormalizeConfig = Field(default_factory=NormalizeConfig)
+
+    @model_validator(mode="after")
+    def _check_format_specific(self) -> DataConfig:
+        if self.format == "hf" and self.hf is None:
+            raise ValueError("data.hf is required when data.format == 'hf'")
+        return self
 
 
 class QLoRAConfig(_Strict):
