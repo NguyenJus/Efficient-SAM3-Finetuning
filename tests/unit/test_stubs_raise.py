@@ -31,8 +31,14 @@ def _assert_stub(call: object) -> None:
 
 
 def test_data_stubs() -> None:
-    _assert_stub(lambda: COCODataset("a", "b", "bbox").__len__())
-    _assert_stub(lambda: HFDataset("a", "train", "text").__len__())
+    coco = COCODataset("a", "b", "bbox")
+    _assert_stub(lambda: coco.__len__())
+    _assert_stub(lambda: coco.__getitem__(0))
+    _assert_stub(lambda: coco.class_names)
+    hf = HFDataset("a", "train", "text")
+    _assert_stub(lambda: hf.__len__())
+    _assert_stub(lambda: hf.__getitem__(0))
+    _assert_stub(lambda: hf.class_names)
     _assert_stub(lambda: build_train_transforms(AugmentationsConfig(), 1024))
     _assert_stub(lambda: build_eval_transforms(1024))
     _assert_stub(lambda: collate_batch([]))
@@ -70,3 +76,36 @@ def test_train_stubs(tmp_path: object) -> None:
     from esam3.config.schema import TrainHyperparams
 
     _assert_stub(lambda: run_epoch(object(), object(), object(), TrainHyperparams(epochs=1), 0))
+
+
+def test_trainer_fit_stub() -> None:
+    from esam3.config.schema import (
+        DataConfig,
+        DataSplit,
+        PEFTConfig,
+        RunConfig,
+        TrainConfig,
+        TrainHyperparams,
+    )
+    from esam3.tracking.noop import NoopTracker
+    from esam3.train.trainer import Trainer
+
+    cfg = TrainConfig(
+        run=RunConfig(name="t"),
+        data=DataConfig(
+            format="coco",
+            train=DataSplit(annotations="a", images="b"),
+            val=DataSplit(annotations="a", images="b"),
+            prompt_mode="bbox",
+        ),
+        peft=PEFTConfig(method="lora"),
+        train=TrainHyperparams(epochs=1),
+    )
+    trainer = Trainer(
+        model=object(),
+        train_ds=object(),  # type: ignore[arg-type]
+        val_ds=object(),  # type: ignore[arg-type]
+        tracker=NoopTracker(),
+        cfg=cfg,
+    )
+    _assert_stub(trainer.fit)
