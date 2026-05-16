@@ -45,7 +45,7 @@ def meta_to_canonical(outputs: dict) -> CanonicalOutputs:
     Meta keys (from `sam3.model.sam3_image.Sam3Image.forward_grounding`):
       "pred_logits":        (B, Q, 1)  per-query text-image similarity logit.
       "pred_boxes":         (B, Q, 4)  normalized cx,cy,w,h.
-      "pred_masks":         (B, Q, H, W)  instance mask logits (288×288 at 1008px).
+      "pred_masks":         (B, Q, H, W)  instance mask logits (288x288 at 1008px).
       "presence_logit_dec": (B, 1)     single global presence logit per image.
 
     The trailing size-1 dims of pred_logits and presence_logit_dec are squeezed.
