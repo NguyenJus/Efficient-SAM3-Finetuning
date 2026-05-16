@@ -68,3 +68,24 @@ def test_hf_field_map_segmentation_can_be_none() -> None:
 def test_hf_field_map_rejects_invalid_bbox_format() -> None:
     with pytest.raises(ValidationError):
         HFFieldMap(bbox_format="cxcywh")  # type: ignore[arg-type]
+
+
+from esam3.config.schema import HFDatasetConfig
+
+
+def test_hf_dataset_config_required_name() -> None:
+    with pytest.raises(ValidationError):
+        HFDatasetConfig()  # type: ignore[call-arg]
+
+
+def test_hf_dataset_config_defaults() -> None:
+    cfg = HFDatasetConfig(name="my-org/my-ds")
+    assert cfg.name == "my-org/my-ds"
+    assert cfg.split_train == "train"
+    assert cfg.split_val == "validation"
+    assert cfg.field_map.bbox == "objects.bbox"
+
+
+def test_hf_dataset_config_name_min_length() -> None:
+    with pytest.raises(ValidationError):
+        HFDatasetConfig(name="")

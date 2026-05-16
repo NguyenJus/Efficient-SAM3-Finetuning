@@ -179,3 +179,12 @@ class HFFieldMap(_Strict):
     segmentation: str | None = "objects.segmentation"
     categories_feature: str = "categories"
     bbox_format: Literal["xywh", "xyxy"] = "xyxy"
+
+
+class HFDatasetConfig(_Strict):
+    """HuggingFace dataset specification (used when DataConfig.format == 'hf')."""
+
+    name: str = Field(min_length=1)
+    split_train: str = "train"
+    split_val: str = "validation"
+    field_map: HFFieldMap = Field(default_factory=HFFieldMap)
