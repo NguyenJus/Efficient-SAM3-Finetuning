@@ -156,21 +156,31 @@ class PEFTConfig(_Strict):
 
 
 class MatcherWeights(_Strict):
-    """Per-term cost weights for the Hungarian matcher."""
+    """Per-term cost weights for the Hungarian matcher.
 
-    lambda_cls: PositiveFloat = 2.0
+    No `lambda_cls` term: SAM 3.1's open-vocab head has no multi-class
+    classification logits; class identity comes from the text prompt itself,
+    so matching uses only geometric (L1/GIoU) and mask (Dice) costs.
+    """
+
     lambda_l1: PositiveFloat = 5.0
     lambda_giou: PositiveFloat = 2.0
     lambda_mask: PositiveFloat = 5.0
 
 
 class LossConfig(_Strict):
-    """Loss-mix weights and focal CE params for SAM3.1 training."""
+    """Loss-mix weights and focal CE params for SAM 3.1 training.
+
+    No `w_cls`: discrimination across classes comes from running one forward
+    pass per class prompt. `w_presence` weights the image-level
+    "any-instance-of-this-class-present?" supervision applied to
+    `presence_logit_dec`.
+    """
 
     w_mask: PositiveFloat = 1.0
     w_box: PositiveFloat = 5.0
     w_obj: PositiveFloat = 1.0
-    w_cls: PositiveFloat = 2.0
+    w_presence: PositiveFloat = 1.0
     matcher_weights: MatcherWeights = Field(default_factory=MatcherWeights)
     focal_gamma: PositiveFloat = 2.0
     focal_alpha: float = Field(default=0.25, ge=0.0, le=1.0)
