@@ -19,7 +19,7 @@ def tiny_coco_dir() -> Path:
 
 
 @pytest.fixture
-def tiny_coco_dataset(tiny_coco_dir: Path) -> "COCODataset":
+def tiny_coco_dataset(tiny_coco_dir: Path) -> COCODataset:
     """A COCODataset pointing at the tiny_coco fixture.
 
     Methods raise NotImplementedError until spec/data-loading lands; this
