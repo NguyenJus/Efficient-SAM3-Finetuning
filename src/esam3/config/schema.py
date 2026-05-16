@@ -34,9 +34,12 @@ class RunConfig(_Strict):
 
 class ModelConfig(_Strict):
     name: str = "facebook/sam3.1"
+    local_dir: str | None = "models/sam3.1"
+    checkpoint_file: str = "sam3.1_multiplex.pt"
     revision: str | None = None
     gradient_checkpointing: bool = True
     dtype: Dtype = "bfloat16"
+    device: str | None = None
 
 
 class DataSplit(_Strict):
@@ -152,6 +155,27 @@ class PEFTConfig(_Strict):
     qlora: QLoRAConfig = Field(default_factory=QLoRAConfig)
 
 
+class MatcherWeights(_Strict):
+    """Per-term cost weights for the Hungarian matcher."""
+
+    lambda_cls: PositiveFloat = 2.0
+    lambda_l1: PositiveFloat = 5.0
+    lambda_giou: PositiveFloat = 2.0
+    lambda_mask: PositiveFloat = 5.0
+
+
+class LossConfig(_Strict):
+    """Loss-mix weights and focal CE params for SAM3.1 training."""
+
+    w_mask: PositiveFloat = 1.0
+    w_box: PositiveFloat = 5.0
+    w_obj: PositiveFloat = 1.0
+    w_cls: PositiveFloat = 2.0
+    matcher_weights: MatcherWeights = Field(default_factory=MatcherWeights)
+    focal_gamma: PositiveFloat = 2.0
+    focal_alpha: float = Field(default=0.25, ge=0.0, le=1.0)
+
+
 class TrainHyperparams(_Strict):
     epochs: PositiveInt
     batch_size: PositiveInt = 1
@@ -163,6 +187,7 @@ class TrainHyperparams(_Strict):
     max_grad_norm: PositiveFloat = 1.0
     eval_every: PositiveInt = 500
     save_every: PositiveInt = 1000
+    loss: LossConfig = Field(default_factory=LossConfig)
 
 
 class EvalConfig(_Strict):
