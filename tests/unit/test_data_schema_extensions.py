@@ -89,3 +89,56 @@ def test_hf_dataset_config_defaults() -> None:
 def test_hf_dataset_config_name_min_length() -> None:
     with pytest.raises(ValidationError):
         HFDatasetConfig(name="")
+
+
+from pathlib import Path
+
+from esam3.config.schema import DataConfig, DataSplit, TrainConfig
+
+
+def _minimal_data(format: str = "coco") -> dict[str, object]:
+    return {
+        "format": format,
+        "train": {"annotations": "a.json", "images": "imgs/"},
+        "val": {"annotations": "a.json", "images": "imgs/"},
+        "prompt_mode": "bbox",
+    }
+
+
+def test_data_config_accepts_coco_without_hf() -> None:
+    cfg = DataConfig.model_validate(_minimal_data("coco"))
+    assert cfg.hf is None
+    assert cfg.text_prompt.mode == "present"
+    assert cfg.normalize.mean == [0.485, 0.456, 0.406]
+
+
+def test_data_config_requires_hf_when_format_hf() -> None:
+    with pytest.raises(ValidationError) as exc:
+        DataConfig.model_validate(_minimal_data("hf"))
+    assert "data.hf" in str(exc.value)
+
+
+def test_data_config_accepts_hf_with_hf_block() -> None:
+    d = _minimal_data("hf")
+    d["hf"] = {"name": "cppe-5"}
+    cfg = DataConfig.model_validate(d)
+    assert cfg.hf is not None
+    assert cfg.hf.name == "cppe-5"
+
+
+def test_data_config_accepts_text_prompt_override() -> None:
+    d = _minimal_data("coco")
+    d["text_prompt"] = {"mode": "present_plus_negatives", "negatives_per_image": 3}
+    cfg = DataConfig.model_validate(d)
+    assert cfg.text_prompt.mode == "present_plus_negatives"
+    assert cfg.text_prompt.negatives_per_image == 3
+
+
+def test_existing_example_yaml_still_validates() -> None:
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[2]
+    for name in ("coco_text_lora.yaml", "coco_bbox_qlora.yaml"):
+        p = repo_root / "configs" / "examples" / name
+        raw = yaml.safe_load(p.read_text())
+        TrainConfig.model_validate(raw)

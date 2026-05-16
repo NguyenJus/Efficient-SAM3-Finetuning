@@ -12,3 +12,4 @@
 [2026-05-16] [implementer] task 4 — added NormalizeConfig with range validator
 [2026-05-16] [implementer] task 5 — added HFFieldMap schema with conventional defaults
 [2026-05-16] [implementer] task 6 — added HFDatasetConfig schema
+[2026-05-16] [implementer] task 7 — extended DataConfig with hf/text_prompt/normalize + format validator
