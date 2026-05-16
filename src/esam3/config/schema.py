@@ -85,7 +85,7 @@ class NormalizeConfig(_Strict):
     )
 
     @model_validator(mode="after")
-    def _check_ranges(self) -> "NormalizeConfig":
+    def _check_ranges(self) -> NormalizeConfig:
         for m in self.mean:
             if not (0.0 <= m <= 1.0):
                 raise ValueError(f"normalize.mean values must be in [0, 1]; got {m}")
@@ -132,7 +132,7 @@ class DataConfig(_Strict):
     normalize: NormalizeConfig = Field(default_factory=NormalizeConfig)
 
     @model_validator(mode="after")
-    def _check_format_specific(self) -> "DataConfig":
+    def _check_format_specific(self) -> DataConfig:
         if self.format == "hf" and self.hf is None:
             raise ValueError("data.hf is required when data.format == 'hf'")
         return self

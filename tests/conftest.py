@@ -21,8 +21,8 @@ def tiny_coco_dir() -> Path:
 @pytest.fixture
 def tiny_coco_dataset(tiny_coco_dir: Path) -> COCODataset:
     """A COCODataset pointing at the tiny_coco fixture (bbox prompt mode)."""
-    from esam3.data.transforms import build_eval_transforms
     from esam3.config.schema import NormalizeConfig, TextPromptConfig
+    from esam3.data.transforms import build_eval_transforms
 
     transforms = build_eval_transforms(
         32, model_name="facebook/sam3.1", normalize=NormalizeConfig()

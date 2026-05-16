@@ -25,3 +25,4 @@
 [2026-05-16] [implementer] task 17 — augment example YAMLs with text_prompt + normalize; ARCHITECTURE.md data line
 [2026-05-16] [implementer] task 18 — boundary test guarding TrainConfig import in data layer
 [2026-05-16] [implementer] task 19 — drop test_data_stubs and stale data imports
+[2026-05-16] [implementer] task 20 — ruff/format clean sweep: per-file E402 for test_data_*, removed unused std vars, shortened docstring (135/135 pass, mypy clean)

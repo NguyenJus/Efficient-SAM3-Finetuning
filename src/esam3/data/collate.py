@@ -24,9 +24,7 @@ def collate_batch(examples: list[Example]) -> dict[str, Any]:
     for ex in examples[1:]:
         shp = tuple(ex.image.shape)
         if shp != ref_shape:
-            raise ValueError(
-                f"collate_batch: image shape mismatch: {ref_shape} vs {shp}"
-            )
+            raise ValueError(f"collate_batch: image shape mismatch: {ref_shape} vs {shp}")
     images = torch.stack([ex.image for ex in examples], dim=0)
     return {
         "images": images,

@@ -14,7 +14,7 @@ import numpy as np
 
 from esam3._registry import register
 from esam3.config.schema import HFFieldMap, TextPromptConfig
-from esam3.data.base import Dataset, Example  # noqa: F401  (Example is part of the module API)
+from esam3.data.base import Dataset, Example
 
 _LOG = logging.getLogger(__name__)
 
@@ -113,9 +113,9 @@ def _resolve_class_names(ds: Any, field_map: HFFieldMap) -> list[str]:
         if names:
             return list(names)
     raise HFFieldError(
-        f"Cannot resolve class names. Set data.hf.field_map.categories_feature "
-        f"to a top-level Sequence(ClassLabel) feature, or use a ClassLabel-typed "
-        f"category field."
+        "Cannot resolve class names. Set data.hf.field_map.categories_feature "
+        "to a top-level Sequence(ClassLabel) feature, or use a ClassLabel-typed "
+        "category field."
     )
 
 
@@ -154,7 +154,7 @@ class HFDataset:
         self._class_names = _resolve_class_names(self._ds, field_map)
 
     def __len__(self) -> int:
-        return int(len(self._ds))
+        return len(self._ds)
 
     def __getitem__(self, i: int) -> Example:
         import random as _random
@@ -206,9 +206,7 @@ class HFDataset:
             from esam3.data.coco import _decode_segmentation
 
             for ann in seg_resolved:
-                masks.append(
-                    _decode_segmentation({"segmentation": ann}, h, w).astype(np.uint8)
-                )
+                masks.append(_decode_segmentation({"segmentation": ann}, h, w).astype(np.uint8))
 
         out = self._transforms(
             image=np_img,
@@ -247,7 +245,9 @@ class HFDataset:
                     _LOG.warning(
                         "esam3.data.hf: image_id=%s requested %d text prompts; "
                         "truncating to %d. Suppressing further warnings.",
-                        image_id, len(prompts_list), self._multiplex_cap,
+                        image_id,
+                        len(prompts_list),
+                        self._multiplex_cap,
                     )
                     self._warned_truncation = True
                 prompts_list = prompts_list[: self._multiplex_cap]
@@ -260,19 +260,29 @@ class HFDataset:
 
         order = sorted(
             range(len(instances)),
-            key=lambda k: (instances[k].class_id, float(instances[k].box[0]), float(instances[k].box[1])),
+            key=lambda k: (
+                instances[k].class_id,
+                float(instances[k].box[0]),
+                float(instances[k].box[1]),
+            ),
         )
         if len(order) > self._multiplex_cap:
             if not self._warned_truncation:
                 _LOG.warning(
                     "esam3.data.hf: image_id=%s requested %d box prompts; "
                     "truncating to %d. Suppressing further warnings.",
-                    image_id, len(order), self._multiplex_cap,
+                    image_id,
+                    len(order),
+                    self._multiplex_cap,
                 )
                 self._warned_truncation = True
             order = order[: self._multiplex_cap]
         kept_instances = [instances[k] for k in order]
-        boxes_t = torch.stack([inst.box for inst in kept_instances]) if kept_instances else torch.zeros((0, 4))
+        boxes_t = (
+            torch.stack([inst.box for inst in kept_instances])
+            if kept_instances
+            else torch.zeros((0, 4))
+        )
         class_ids_t = torch.tensor([inst.class_id for inst in kept_instances], dtype=torch.int64)
         return Example(
             image=image_tensor,
@@ -311,9 +321,7 @@ def build_hf(
             aug, image_size, model_name=model_name, normalize=normalize
         )
     else:
-        transforms = build_eval_transforms(
-            image_size, model_name=model_name, normalize=normalize
-        )
+        transforms = build_eval_transforms(image_size, model_name=model_name, normalize=normalize)
     return HFDataset(
         name=hf_cfg["name"],
         split=split,

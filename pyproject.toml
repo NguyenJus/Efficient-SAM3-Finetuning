@@ -58,6 +58,7 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "src/esam3/cli/*_cmd.py" = ["B008"]
+"tests/unit/test_data_*.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.13"

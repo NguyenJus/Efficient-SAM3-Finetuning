@@ -152,11 +152,14 @@ class COCODataset:
         if dropped:
             _LOG.info(
                 "esam3.data.coco: dropped %d images (iscrowd-only) from %s",
-                dropped, annotations,
+                dropped,
+                annotations,
             )
         _LOG.info(
             "esam3.data.coco: loaded %d images, %d dense classes from %s",
-            len(self._image_ids), len(self._class_names), annotations,
+            len(self._image_ids),
+            len(self._class_names),
+            annotations,
         )
 
     def __len__(self) -> int:
@@ -220,7 +223,9 @@ class COCODataset:
                     _LOG.warning(
                         "esam3.data.coco: image_id=%s requested %d text prompts; "
                         "truncating to %d. Suppressing further warnings for this dataset.",
-                        image_id, len(prompts_list), self._multiplex_cap,
+                        image_id,
+                        len(prompts_list),
+                        self._multiplex_cap,
                     )
                     self._warned_truncation = True
                 prompts_list = prompts_list[: self._multiplex_cap]
@@ -234,20 +239,31 @@ class COCODataset:
         # bbox mode
         order = sorted(
             range(len(instances)),
-            key=lambda k: (instances[k].class_id, float(instances[k].box[0]), float(instances[k].box[1])),
+            key=lambda k: (
+                instances[k].class_id,
+                float(instances[k].box[0]),
+                float(instances[k].box[1]),
+            ),
         )
         if len(order) > self._multiplex_cap:
             if not self._warned_truncation:
                 _LOG.warning(
                     "esam3.data.coco: image_id=%s requested %d box prompts; "
                     "truncating to %d. Suppressing further warnings for this dataset.",
-                    image_id, len(order), self._multiplex_cap,
+                    image_id,
+                    len(order),
+                    self._multiplex_cap,
                 )
                 self._warned_truncation = True
             order = order[: self._multiplex_cap]
         kept_instances = [instances[k] for k in order]
         import torch as _torch
-        boxes_t = _torch.stack([inst.box for inst in kept_instances]) if kept_instances else _torch.zeros((0, 4))
+
+        boxes_t = (
+            _torch.stack([inst.box for inst in kept_instances])
+            if kept_instances
+            else _torch.zeros((0, 4))
+        )
         class_ids_t = _torch.tensor([inst.class_id for inst in kept_instances], dtype=_torch.int64)
         return Example(
             image=image_tensor,
@@ -290,9 +306,7 @@ def build_coco(
             aug, image_size, model_name=model_name, normalize=normalize
         )
     else:
-        transforms = build_eval_transforms(
-            image_size, model_name=model_name, normalize=normalize
-        )
+        transforms = build_eval_transforms(image_size, model_name=model_name, normalize=normalize)
     return COCODataset(
         annotations=split["annotations"],
         images=split["images"],

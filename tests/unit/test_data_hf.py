@@ -67,9 +67,7 @@ def _build_hf_dataset(
     categories = [[0] for _ in range(n)]
     cols: dict[str, Any] = {
         "image": images,
-        "objects": [
-            {"bbox": bboxes[i], "category": categories[i]} for i in range(n)
-        ],
+        "objects": [{"bbox": bboxes[i], "category": categories[i]} for i in range(n)],
         "categories": [["thing"]] * n,
     }
     if include_segmentation:
@@ -131,9 +129,7 @@ def _build_eval(image_size: int = 8) -> Any:
     )
 
 
-def _patch_load_dataset(
-    monkeypatch: pytest.MonkeyPatch, ds: hf_datasets.Dataset
-) -> None:
+def _patch_load_dataset(monkeypatch: pytest.MonkeyPatch, ds: hf_datasets.Dataset) -> None:
     def fake(name: str, split: str, **kwargs: object) -> hf_datasets.Dataset:
         return ds
 
@@ -147,16 +143,15 @@ def test_required_fields_validation_default_paths(
         {"image": [Image.new("RGB", (8, 8))], "objects": [{"category": [0]}]}
     )
     _patch_load_dataset(monkeypatch, bad)
-    with _patch_imagenet_ctx():
-        with pytest.raises(HFFieldError) as exc:
-            HFDataset(
-                name="x",
-                split="train",
-                prompt_mode="bbox",
-                transforms=_build_eval(),
-                text_prompt=TextPromptConfig(),
-                field_map=HFFieldMap(segmentation=None),
-            )
+    with _patch_imagenet_ctx(), pytest.raises(HFFieldError) as exc:
+        HFDataset(
+            name="x",
+            split="train",
+            prompt_mode="bbox",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
+            field_map=HFFieldMap(segmentation=None),
+        )
     msg = str(exc.value)
     assert "objects.bbox" in msg
     assert "data.hf.field_map.bbox" in msg
@@ -257,8 +252,11 @@ def test_getitem_text_mode_present(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_load_dataset(monkeypatch, ds)
     with _patch_imagenet_ctx():
         hfds = HFDataset(
-            name="x", split="train", prompt_mode="text",
-            transforms=_build_eval(), text_prompt=TextPromptConfig(mode="present"),
+            name="x",
+            split="train",
+            prompt_mode="text",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(mode="present"),
             field_map=HFFieldMap(segmentation=None),
         )
     ex = hfds[0]
@@ -271,8 +269,11 @@ def test_getitem_bbox_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_load_dataset(monkeypatch, ds)
     with _patch_imagenet_ctx():
         hfds = HFDataset(
-            name="x", split="train", prompt_mode="bbox",
-            transforms=_build_eval(), text_prompt=TextPromptConfig(),
+            name="x",
+            split="train",
+            prompt_mode="bbox",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
             field_map=HFFieldMap(segmentation=None),
         )
     ex = hfds[0]
@@ -303,8 +304,11 @@ def test_bbox_format_xywh_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_load_dataset(monkeypatch, ds)
     with _patch_imagenet_ctx():
         hfds = HFDataset(
-            name="x", split="train", prompt_mode="bbox",
-            transforms=_build_eval(), text_prompt=TextPromptConfig(),
+            name="x",
+            split="train",
+            prompt_mode="bbox",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
             field_map=HFFieldMap(segmentation=None, bbox_format="xywh"),
         )
     ex = hfds[0]
@@ -321,8 +325,11 @@ def test_masks_from_boxes_when_segmentation_absent(
     caplog.set_level(logging.WARNING, logger="esam3.data.hf")
     with _patch_imagenet_ctx():
         hfds = HFDataset(
-            name="x", split="train", prompt_mode="bbox",
-            transforms=_build_eval(), text_prompt=TextPromptConfig(),
+            name="x",
+            split="train",
+            prompt_mode="bbox",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
             field_map=HFFieldMap(segmentation=None),
         )
     ex = hfds[0]

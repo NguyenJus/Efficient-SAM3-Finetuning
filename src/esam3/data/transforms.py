@@ -43,9 +43,7 @@ def resolve_normalization(
         )
         return list(fallback.mean), list(fallback.std)
     else:
-        _LOG.info(
-            "Using image_mean/image_std from AutoImageProcessor for %r.", model_name
-        )
+        _LOG.info("Using image_mean/image_std from AutoImageProcessor for %r.", model_name)
         return mean, std
 
 
@@ -54,7 +52,7 @@ def build_eval_transforms(
     *,
     model_name: str,
     normalize: NormalizeConfig,
-) -> "A.Compose":
+) -> A.Compose:
     """Deterministic eval pipeline: longest-edge resize -> top-left pad -> normalize -> ToTensor."""
     import albumentations as A
     import cv2
@@ -90,7 +88,7 @@ def build_train_transforms(
     *,
     model_name: str,
     normalize: NormalizeConfig,
-) -> "A.Compose":
+) -> A.Compose:
     """Train pipeline: resize+pad geometry + optional hflip + color jitter + normalize."""
     import albumentations as A
     import cv2

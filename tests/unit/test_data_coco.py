@@ -67,12 +67,20 @@ def test_drop_crowd_only_images(tmp_path: Path) -> None:
                 "categories": [{"id": 1, "name": "x"}],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                     },
                     {
-                        "id": 2, "image_id": 2, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 1,
+                        "id": 2,
+                        "image_id": 2,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 1,
                     },
                 ],
             }
@@ -200,9 +208,7 @@ def test_class_names_dense_and_ordered(tiny_coco_dir: Path) -> None:
     assert ds.coco_category_ids == [1, 2]
 
 
-def test_len_drops_empty_after_iscrowd(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_len_drops_empty_after_iscrowd(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     p = tmp_path / "ann.json"
     p.write_text(
         json.dumps(
@@ -214,13 +220,21 @@ def test_len_drops_empty_after_iscrowd(
                 "categories": [{"id": 1, "name": "x"}],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     },
                     {
-                        "id": 2, "image_id": 2, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 1,
+                        "id": 2,
+                        "image_id": 2,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 1,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     },
                 ],
@@ -288,8 +302,12 @@ def test_getitem_text_mode_present_plus_negatives(tmp_path: Path) -> None:
                 ],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     }
                 ],
@@ -326,8 +344,12 @@ def test_getitem_text_mode_sampled_fixed_k(tmp_path: Path) -> None:
                 "categories": [{"id": i, "name": f"c{i}"} for i in range(1, 6)],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     }
                 ],
@@ -369,8 +391,12 @@ def _synth_many_cats(tmp_path: Path, n_cats: int) -> tuple[Path, Path]:
                 "categories": [{"id": i + 1, "name": f"c{i}"} for i in range(n_cats)],
                 "annotations": [
                     {
-                        "id": i + 1, "image_id": 1, "category_id": i + 1,
-                        "bbox": [0, 0, 4, 4], "area": 16, "iscrowd": 0,
+                        "id": i + 1,
+                        "image_id": 1,
+                        "category_id": i + 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     }
                     for i in range(n_cats)
@@ -381,9 +407,7 @@ def _synth_many_cats(tmp_path: Path, n_cats: int) -> tuple[Path, Path]:
     return p, images_dir
 
 
-def test_multiplex_truncation_text(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_multiplex_truncation_text(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     ann, imgs = _synth_many_cats(tmp_path, 20)
     caplog.set_level(logging.WARNING, logger="esam3.data.coco")
     with _patch_imagenet_ctx():
@@ -400,9 +424,7 @@ def test_multiplex_truncation_text(
     assert any(re.search(r"truncating to 16", rec.message) for rec in caplog.records)
 
 
-def test_multiplex_truncation_box(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_multiplex_truncation_box(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     ann, imgs = _synth_many_cats(tmp_path, 20)
     caplog.set_level(logging.WARNING, logger="esam3.data.coco")
     with _patch_imagenet_ctx():
@@ -453,11 +475,13 @@ def test_polygon_segmentation_decoded(tiny_coco_dir: Path) -> None:
 
 
 def test_rle_segmentation_decoded(tmp_path: Path) -> None:
-    from pycocotools import mask as mu
     from PIL import Image
+    from pycocotools import mask as mu
 
     rle = mu.encode(np.asfortranarray(np.ones((8, 8), dtype=np.uint8)))
-    rle["counts"] = rle["counts"].decode("ascii") if isinstance(rle["counts"], bytes) else rle["counts"]
+    rle["counts"] = (
+        rle["counts"].decode("ascii") if isinstance(rle["counts"], bytes) else rle["counts"]
+    )
     p = tmp_path / "ann.json"
     p.write_text(
         json.dumps(
@@ -466,8 +490,13 @@ def test_rle_segmentation_decoded(tmp_path: Path) -> None:
                 "categories": [{"id": 1, "name": "x"}],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 8, 8],
-                        "area": 64, "iscrowd": 0, "segmentation": rle,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 8, 8],
+                        "area": 64,
+                        "iscrowd": 0,
+                        "segmentation": rle,
                     }
                 ],
             }
@@ -499,13 +528,21 @@ def test_iscrowd_skipped(tmp_path: Path) -> None:
                 "categories": [{"id": 1, "name": "x"}],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     },
                     {
-                        "id": 2, "image_id": 1, "category_id": 1, "bbox": [4, 4, 4, 4],
-                        "area": 16, "iscrowd": 1,
+                        "id": 2,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [4, 4, 4, 4],
+                        "area": 16,
+                        "iscrowd": 1,
                         "segmentation": [[4, 4, 8, 4, 8, 8, 4, 8]],
                     },
                 ],
@@ -527,9 +564,7 @@ def test_iscrowd_skipped(tmp_path: Path) -> None:
     assert len(ex.instances) == 1
 
 
-def test_dropped_empty_image_logged_once(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_dropped_empty_image_logged_once(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     from PIL import Image
 
     p = tmp_path / "ann.json"
@@ -543,13 +578,21 @@ def test_dropped_empty_image_logged_once(
                 "categories": [{"id": 1, "name": "x"}],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     },
                     {
-                        "id": 2, "image_id": 2, "category_id": 1, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 1,
+                        "id": 2,
+                        "image_id": 2,
+                        "category_id": 1,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 1,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     },
                 ],
@@ -569,9 +612,7 @@ def test_dropped_empty_image_logged_once(
             transforms=_build_eval(8),
             text_prompt=TextPromptConfig(),
         )
-    drop_lines = [
-        r for r in caplog.records if re.search(r"dropped.*iscrowd", r.message)
-    ]
+    drop_lines = [r for r in caplog.records if re.search(r"dropped.*iscrowd", r.message)]
     assert len(drop_lines) == 1
 
 
@@ -605,13 +646,21 @@ def test_sparse_to_dense_remap(tmp_path: Path) -> None:
                 ],
                 "annotations": [
                     {
-                        "id": 1, "image_id": 1, "category_id": 3, "bbox": [0, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 3,
+                        "bbox": [0, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
                     },
                     {
-                        "id": 2, "image_id": 1, "category_id": 7, "bbox": [4, 0, 4, 4],
-                        "area": 16, "iscrowd": 0,
+                        "id": 2,
+                        "image_id": 1,
+                        "category_id": 7,
+                        "bbox": [4, 0, 4, 4],
+                        "area": 16,
+                        "iscrowd": 0,
                         "segmentation": [[4, 0, 8, 0, 8, 4, 4, 4]],
                     },
                 ],

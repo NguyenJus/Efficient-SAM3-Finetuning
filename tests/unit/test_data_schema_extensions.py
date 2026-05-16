@@ -93,7 +93,7 @@ def test_hf_dataset_config_name_min_length() -> None:
 
 from pathlib import Path
 
-from esam3.config.schema import DataConfig, DataSplit, TrainConfig
+from esam3.config.schema import DataConfig, TrainConfig
 
 
 def _minimal_data(format: str = "coco") -> dict[str, object]:
