@@ -45,3 +45,26 @@ def test_normalize_config_validation_rejects_nonpositive_std() -> None:
 def test_normalize_config_validation_rejects_mean_out_of_range() -> None:
     with pytest.raises(ValidationError):
         NormalizeConfig(mean=[1.5, 0.1, 0.1], std=[0.1, 0.1, 0.1])
+
+
+from esam3.config.schema import HFFieldMap
+
+
+def test_hf_field_map_defaults() -> None:
+    fm = HFFieldMap()
+    assert fm.image == "image"
+    assert fm.bbox == "objects.bbox"
+    assert fm.category == "objects.category"
+    assert fm.segmentation == "objects.segmentation"
+    assert fm.categories_feature == "categories"
+    assert fm.bbox_format == "xyxy"
+
+
+def test_hf_field_map_segmentation_can_be_none() -> None:
+    fm = HFFieldMap(segmentation=None)
+    assert fm.segmentation is None
+
+
+def test_hf_field_map_rejects_invalid_bbox_format() -> None:
+    with pytest.raises(ValidationError):
+        HFFieldMap(bbox_format="cxcywh")  # type: ignore[arg-type]

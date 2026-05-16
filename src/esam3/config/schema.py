@@ -163,3 +163,19 @@ class NormalizeConfig(_Strict):
             if s <= 0.0:
                 raise ValueError(f"normalize.std values must be > 0; got {s}")
         return self
+
+
+class HFFieldMap(_Strict):
+    """Optional overrides for HuggingFace dataset field names.
+
+    Defaults match a conventional schema: top-level `image`, nested `objects.bbox`,
+    `objects.category`, optional `objects.segmentation`; class names from the
+    top-level `categories` feature.
+    """
+
+    image: str = "image"
+    bbox: str = "objects.bbox"
+    category: str = "objects.category"
+    segmentation: str | None = "objects.segmentation"
+    categories_feature: str = "categories"
+    bbox_format: Literal["xywh", "xyxy"] = "xyxy"
