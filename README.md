@@ -1,35 +1,59 @@
-# Efficient-SAM3-Finetuning
+# efficient-sam3-finetuning
 
-This open source package is designed to help facilitate rapid and scalable finetuning of SAM3 on any niche dataset a user might need. The intent is for low compute users to cater the massive foundation model to meet their niche needs. 
+Parameter-efficient finetuning of [SAM3.1](https://huggingface.co/facebook/sam3.1)
+on niche image instance-segmentation datasets — runnable on a single
+consumer GPU.
 
-## Key Libraries 
+> **Status:** v0 scaffolding only. The CLI and library surfaces exist;
+> training/eval/data-loading bodies land in subsequent specs. See
+> `docs/superpowers/specs/` for design and `docs/superpowers/plans/`
+> for the build sequence.
 
-- https://github.com/facebookresearch/sam3
-- https://github.com/huggingface/peft
-- https://github.com/ray-project/ray
-- https://github.com/argoproj/argoproj
+## Quickstart
 
-## Input Modalities 
+```bash
+# Install
+uv sync --all-extras --group dev
 
-Package supports any input prompt made available by SAM. This includes:
+# Sanity check the CLI
+uv run esam3 --help
+uv run esam3 doctor
 
-- Text
-- Bounding Boxes
-- Points
-- Masks
-- Others if available
+# Run the (currently stubbed) train command against an example config
+uv run esam3 train --config configs/examples/coco_bbox_qlora.yaml
+```
 
-## Output Modalities 
+## What's supported in v0
 
-Package supports outputting either instance segmentation masks or semantic segmentation masks depending on users' needs. Package supports both static image datasets and videos.
+| | v0 | Deferred |
+|---|---|---|
+| Model | SAM3.1 | SAM3 |
+| Prompts | text, bounding boxes | points, masks |
+| Data | static images, COCO + HF datasets | video |
+| Output | instance segmentation | semantic segmentation |
+| Distribution | single GPU | Ray Train, Argo workflows |
+| PEFT | LoRA, QLoRA | other PEFT methods |
+| Tracking | TensorBoard, W&B, none | — |
 
-## Models
+## Repo layout
 
-Project supports both SAM3 and SAM 3.1
+See `ARCHITECTURE.md` for the module map and data flow.
 
-- https://huggingface.co/facebook/sam3.1
-- https://huggingface.co/facebook/sam3
+## Development
 
-## Licenses 
+```bash
+uv run ruff check
+uv run ruff format --check
+uv run mypy src/esam3
+uv run pytest
+```
 
-This package is fully open source and is free for commercial use. As such, all requirements must conform.
+GPU smoke test (requires CUDA + SAM3.1 weights):
+
+```bash
+uv run pytest -m gpu
+```
+
+## License
+
+Apache-2.0. See `LICENSE`.

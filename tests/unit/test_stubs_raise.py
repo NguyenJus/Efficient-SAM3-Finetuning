@@ -69,6 +69,4 @@ def test_train_stubs(tmp_path: object) -> None:
     _assert_stub(lambda: load_adapter(object(), p))
     from esam3.config.schema import TrainHyperparams
 
-    _assert_stub(
-        lambda: run_epoch(object(), object(), object(), TrainHyperparams(epochs=1), 0)
-    )
+    _assert_stub(lambda: run_epoch(object(), object(), object(), TrainHyperparams(epochs=1), 0))
