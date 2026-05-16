@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
+from unittest.mock import MagicMock
+from unittest.mock import patch as mock_patch
 
 import datasets as hf_datasets
 import pytest
+import torch
 from PIL import Image
 
-from esam3.config.schema import HFFieldMap
+from esam3.config.schema import HFFieldMap, NormalizeConfig, TextPromptConfig
 from esam3.data.hf import (
     HFFieldError,
     _normalize_bbox,
@@ -16,6 +23,14 @@ from esam3.data.hf import (
     _resolve_field,
     _validate_required_fields,
 )
+
+
+@contextmanager
+def _patch_imagenet_ctx() -> Iterator[None]:
+    mock_aip = MagicMock()
+    mock_aip.from_pretrained.side_effect = OSError("no cache")
+    with mock_patch("transformers.AutoImageProcessor", mock_aip):
+        yield
 
 
 def test_resolve_field_top_level() -> None:
@@ -97,3 +112,252 @@ def test_resolve_class_names_from_classlabel_in_objects() -> None:
     ds = _build_hf_dataset(use_class_label=True)
     names = _resolve_class_names(ds, HFFieldMap())
     assert names == ["thing"]
+
+
+# ---------------------------------------------------------------------------
+# Task 16: HFDataset + build_hf
+# ---------------------------------------------------------------------------
+
+from esam3._registry import lookup
+from esam3.data.base import BoxPrompts, TextPrompts
+from esam3.data.hf import HFDataset
+
+
+def _build_eval(image_size: int = 8) -> Any:
+    from esam3.data.transforms import build_eval_transforms
+
+    return build_eval_transforms(
+        image_size, model_name="facebook/sam3.1", normalize=NormalizeConfig()
+    )
+
+
+def _patch_load_dataset(
+    monkeypatch: pytest.MonkeyPatch, ds: hf_datasets.Dataset
+) -> None:
+    def fake(name: str, split: str, **kwargs: object) -> hf_datasets.Dataset:
+        return ds
+
+    monkeypatch.setattr("esam3.data.hf.hf_load_dataset", fake)
+
+
+def test_required_fields_validation_default_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = hf_datasets.Dataset.from_dict(
+        {"image": [Image.new("RGB", (8, 8))], "objects": [{"category": [0]}]}
+    )
+    _patch_load_dataset(monkeypatch, bad)
+    with _patch_imagenet_ctx():
+        with pytest.raises(HFFieldError) as exc:
+            HFDataset(
+                name="x",
+                split="train",
+                prompt_mode="bbox",
+                transforms=_build_eval(),
+                text_prompt=TextPromptConfig(),
+                field_map=HFFieldMap(segmentation=None),
+            )
+    msg = str(exc.value)
+    assert "objects.bbox" in msg
+    assert "data.hf.field_map.bbox" in msg
+
+
+def test_field_map_override_picks_alternate_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    features = hf_datasets.Features(
+        {
+            "image": hf_datasets.Image(),
+            "annotations": hf_datasets.Sequence(
+                {
+                    "bbox": hf_datasets.Sequence(hf_datasets.Value("float32"), length=4),
+                    "label": hf_datasets.ClassLabel(names=["thing"]),
+                }
+            ),
+        }
+    )
+    ds = hf_datasets.Dataset.from_dict(
+        {
+            "image": [Image.new("RGB", (8, 8))],
+            "annotations": [{"bbox": [[0.0, 0.0, 4.0, 4.0]], "label": [0]}],
+        },
+        features=features,
+    )
+    _patch_load_dataset(monkeypatch, ds)
+    with _patch_imagenet_ctx():
+        hfds = HFDataset(
+            name="x",
+            split="train",
+            prompt_mode="bbox",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
+            field_map=HFFieldMap(
+                bbox="annotations.bbox",
+                category="annotations.label",
+                segmentation=None,
+            ),
+        )
+    assert len(hfds) == 1
+    assert hfds.class_names == ["thing"]
+
+
+def test_class_names_from_categories_feature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    features = hf_datasets.Features(
+        {
+            "image": hf_datasets.Image(),
+            "objects": hf_datasets.Sequence(
+                {
+                    "bbox": hf_datasets.Sequence(hf_datasets.Value("float32"), length=4),
+                    "category": hf_datasets.ClassLabel(names=["a", "b"]),
+                }
+            ),
+        }
+    )
+    ds = hf_datasets.Dataset.from_dict(
+        {
+            "image": [Image.new("RGB", (8, 8))],
+            "objects": [{"bbox": [[0.0, 0.0, 4.0, 4.0]], "category": [0]}],
+        },
+        features=features,
+    )
+    _patch_load_dataset(monkeypatch, ds)
+    with _patch_imagenet_ctx():
+        hfds = HFDataset(
+            name="x",
+            split="train",
+            prompt_mode="text",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
+            field_map=HFFieldMap(segmentation=None),
+        )
+    assert hfds.class_names == ["a", "b"]
+
+
+def test_getitem_text_mode_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    features = hf_datasets.Features(
+        {
+            "image": hf_datasets.Image(),
+            "objects": hf_datasets.Sequence(
+                {
+                    "bbox": hf_datasets.Sequence(hf_datasets.Value("float32"), length=4),
+                    "category": hf_datasets.ClassLabel(names=["a", "b"]),
+                }
+            ),
+        }
+    )
+    ds = hf_datasets.Dataset.from_dict(
+        {
+            "image": [Image.new("RGB", (8, 8))],
+            "objects": [{"bbox": [[0.0, 0.0, 4.0, 4.0]], "category": [1]}],
+        },
+        features=features,
+    )
+    _patch_load_dataset(monkeypatch, ds)
+    with _patch_imagenet_ctx():
+        hfds = HFDataset(
+            name="x", split="train", prompt_mode="text",
+            transforms=_build_eval(), text_prompt=TextPromptConfig(mode="present"),
+            field_map=HFFieldMap(segmentation=None),
+        )
+    ex = hfds[0]
+    assert isinstance(ex.prompts, TextPrompts)
+    assert ex.prompts.classes == ["b"]
+
+
+def test_getitem_bbox_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    ds = _build_hf_dataset(use_class_label=True)
+    _patch_load_dataset(monkeypatch, ds)
+    with _patch_imagenet_ctx():
+        hfds = HFDataset(
+            name="x", split="train", prompt_mode="bbox",
+            transforms=_build_eval(), text_prompt=TextPromptConfig(),
+            field_map=HFFieldMap(segmentation=None),
+        )
+    ex = hfds[0]
+    assert isinstance(ex.prompts, BoxPrompts)
+    assert ex.prompts.boxes.dtype == torch.float32
+    assert ex.prompts.class_ids.dtype == torch.int64
+
+
+def test_bbox_format_xywh_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
+    features = hf_datasets.Features(
+        {
+            "image": hf_datasets.Image(),
+            "objects": hf_datasets.Sequence(
+                {
+                    "bbox": hf_datasets.Sequence(hf_datasets.Value("float32"), length=4),
+                    "category": hf_datasets.ClassLabel(names=["thing"]),
+                }
+            ),
+        }
+    )
+    ds = hf_datasets.Dataset.from_dict(
+        {
+            "image": [Image.new("RGB", (8, 8))],
+            "objects": [{"bbox": [[1.0, 2.0, 3.0, 4.0]], "category": [0]}],
+        },
+        features=features,
+    )
+    _patch_load_dataset(monkeypatch, ds)
+    with _patch_imagenet_ctx():
+        hfds = HFDataset(
+            name="x", split="train", prompt_mode="bbox",
+            transforms=_build_eval(), text_prompt=TextPromptConfig(),
+            field_map=HFFieldMap(segmentation=None, bbox_format="xywh"),
+        )
+    ex = hfds[0]
+    box = ex.prompts.boxes[0]
+    assert abs(float(box[0]) - 1.0) < 0.5
+    assert abs(float(box[2]) - 4.0) < 0.5
+
+
+def test_masks_from_boxes_when_segmentation_absent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    ds = _build_hf_dataset(use_class_label=True, include_segmentation=False)
+    _patch_load_dataset(monkeypatch, ds)
+    caplog.set_level(logging.WARNING, logger="esam3.data.hf")
+    with _patch_imagenet_ctx():
+        hfds = HFDataset(
+            name="x", split="train", prompt_mode="bbox",
+            transforms=_build_eval(), text_prompt=TextPromptConfig(),
+            field_map=HFFieldMap(segmentation=None),
+        )
+    ex = hfds[0]
+    assert ex.instances[0].mask.dtype == torch.bool
+    assert int(ex.instances[0].mask.sum()) > 0
+    assert any(re.search(r"masks-from-boxes", rec.message) for rec in caplog.records)
+
+
+def test_register_hf_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    ds = _build_hf_dataset(use_class_label=True)
+    _patch_load_dataset(monkeypatch, ds)
+    builder = lookup("dataset", "hf")
+    cfg: dict[str, Any] = {
+        "format": "hf",
+        "train": {"annotations": "unused", "images": "unused"},
+        "val": {"annotations": "unused", "images": "unused"},
+        "hf": {
+            "name": "x",
+            "split_train": "train",
+            "split_val": "val",
+            "field_map": {
+                "image": "image",
+                "bbox": "objects.bbox",
+                "category": "objects.category",
+                "segmentation": None,
+                "categories_feature": "categories",
+                "bbox_format": "xyxy",
+            },
+        },
+        "prompt_mode": "bbox",
+        "image_size": 8,
+        "augmentations": {"hflip": False, "color_jitter": 0.0},
+        "text_prompt": {"mode": "present"},
+        "normalize": {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    }
+    with _patch_imagenet_ctx():
+        hfds = builder(cfg, model_name="facebook/sam3.1", pipeline="eval")
+    assert len(hfds) > 0

@@ -21,3 +21,4 @@
 [2026-05-16] [implementer] task 13 — COCODataset full impl with prompt modes, iscrowd filter, multiplex cap (TDD, 17 new tests, 26 coco tests pass; only test_data_stubs fails as expected)
 [2026-05-16] [implementer] task 14 — build_coco builder with pipeline + model_name kwargs (2 new tests; 28 coco tests pass)
 [2026-05-16] [implementer] task 15 — hf module-private helpers (resolve_field, normalize_bbox, validate, class_names; 8 tests pass)
+[2026-05-16] [implementer] task 16 — HFDataset + build_hf builder with field-map, masks-from-boxes fallback (8 new tests; 16 hf tests pass)

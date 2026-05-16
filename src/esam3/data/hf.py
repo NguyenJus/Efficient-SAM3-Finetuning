@@ -14,7 +14,7 @@ import numpy as np
 
 from esam3._registry import register
 from esam3.config.schema import HFFieldMap, TextPromptConfig
-from esam3.data.base import Dataset, Example
+from esam3.data.base import Dataset, Example  # noqa: F401  (Example is part of the module API)
 
 _LOG = logging.getLogger(__name__)
 
@@ -92,14 +92,23 @@ def _resolve_class_names(ds: Any, field_map: HFFieldMap) -> list[str]:
     if feats is not None:
         node: Any = feats
         for part in field_map.category.split("."):
-            inner = getattr(node, "feature", None) if not isinstance(node, dict) else None
+            # Descend through any number of Sequence/List wrappers to reach a dict.
+            while node is not None and not isinstance(node, dict):
+                inner = getattr(node, "feature", None)
+                if inner is None:
+                    break
+                node = inner
             if isinstance(node, dict) and part in node:
                 node = node[part]
-            elif inner is not None and getattr(inner, part, None) is not None:
-                node = getattr(inner, part)
             else:
                 node = None
                 break
+        # Unwrap remaining Sequence/List wrappers to reach the ClassLabel.
+        while node is not None and getattr(node, "names", None) is None:
+            inner = getattr(node, "feature", None)
+            if inner is None:
+                break
+            node = inner
         names = getattr(node, "names", None) if node is not None else None
         if names:
             return list(names)
@@ -110,33 +119,206 @@ def _resolve_class_names(ds: Any, field_map: HFFieldMap) -> list[str]:
     )
 
 
-class HFDataset:
-    """Placeholder — full impl in Task 16."""
+from datasets import load_dataset as hf_load_dataset  # noqa: E402
 
-    def __init__(self, name: str, split: str, prompt_mode: str) -> None:
-        self.name = name
-        self.split = split
-        self.prompt_mode = prompt_mode
+
+class HFDataset:
+    """HuggingFace `datasets` adapter."""
+
+    def __init__(
+        self,
+        name: str,
+        split: str,
+        prompt_mode: Literal["text", "bbox"],
+        *,
+        transforms: Any,
+        text_prompt: TextPromptConfig,
+        field_map: HFFieldMap,
+        seed: int = 0,
+    ) -> None:
+        if prompt_mode not in ("text", "bbox"):
+            raise ValueError(f"prompt_mode must be 'text' or 'bbox'; got {prompt_mode!r}")
+        self._name = name
+        self._split = split
+        self._prompt_mode: Literal["text", "bbox"] = prompt_mode
+        self._transforms = transforms
+        self._text_prompt_cfg = text_prompt
+        self._field_map = field_map
+        self._seed = seed
+        self._multiplex_cap = 16
+        self._warned_truncation = False
+        self._warned_masks_from_boxes = False
+
+        self._ds = hf_load_dataset(name, split=split)
+        _validate_required_fields(self._ds, field_map)
+        self._class_names = _resolve_class_names(self._ds, field_map)
 
     def __len__(self) -> int:
-        raise NotImplementedError("filled in by spec: spec/data-loading (Task 16)")
+        return int(len(self._ds))
 
     def __getitem__(self, i: int) -> Example:
-        raise NotImplementedError("filled in by spec: spec/data-loading (Task 16)")
+        import random as _random
+
+        import torch
+        from PIL import Image as PILImage
+
+        from esam3.data.base import BoxPrompts, Instance, TextPrompts
+        from esam3.data.coco import _build_text_prompts
+
+        row = self._ds[i]
+        img_obj = _resolve_field(row, self._field_map.image)
+        if isinstance(img_obj, PILImage.Image):
+            np_img = np.asarray(img_obj.convert("RGB"))
+        else:
+            np_img = np.asarray(img_obj)
+            if np_img.ndim == 2:
+                np_img = np.stack([np_img] * 3, axis=-1)
+        h, w = int(np_img.shape[0]), int(np_img.shape[1])
+
+        bboxes_raw = _resolve_field(row, self._field_map.bbox)
+        classes = list(_resolve_field(row, self._field_map.category))
+        bboxes_xyxy = [_normalize_bbox(list(b), self._field_map.bbox_format) for b in bboxes_raw]
+
+        masks: list[np.ndarray] = []
+        seg_path = self._field_map.segmentation
+        seg_resolved: Any = None
+        if seg_path:
+            try:
+                seg_resolved = _resolve_field(row, seg_path)
+            except KeyError:
+                seg_resolved = None
+        if seg_resolved is None:
+            if not self._warned_masks_from_boxes:
+                _LOG.warning(
+                    "esam3.data.hf: masks-from-boxes fallback used for dataset %r "
+                    "(field_map.segmentation absent or None). Suppressing further warnings.",
+                    self._name,
+                )
+                self._warned_masks_from_boxes = True
+            for x0, y0, x1, y1 in bboxes_xyxy:
+                m = np.zeros((h, w), dtype=np.uint8)
+                xi0, yi0 = max(0, int(x0)), max(0, int(y0))
+                xi1, yi1 = min(w, int(x1)), min(h, int(y1))
+                if xi1 > xi0 and yi1 > yi0:
+                    m[yi0:yi1, xi0:xi1] = 1
+                masks.append(m)
+        else:
+            from esam3.data.coco import _decode_segmentation
+
+            for ann in seg_resolved:
+                masks.append(
+                    _decode_segmentation({"segmentation": ann}, h, w).astype(np.uint8)
+                )
+
+        out = self._transforms(
+            image=np_img,
+            bboxes=[list(b) for b in bboxes_xyxy],
+            masks=masks,
+            class_labels=classes,
+        )
+        image_tensor: torch.Tensor = out["image"]
+        out_bboxes = list(out["bboxes"])
+        out_masks = list(out["masks"])
+        out_classes = [int(c) for c in out["class_labels"]]
+
+        instances: list[Instance] = []
+        for box, mask_np, cls in zip(out_bboxes, out_masks, out_classes, strict=True):
+            instances.append(
+                Instance(
+                    mask=torch.from_numpy(np.asarray(mask_np).astype(bool)),
+                    class_id=int(cls),
+                    box=torch.tensor(box, dtype=torch.float32),
+                )
+            )
+
+        image_id = str(i)
+        if self._prompt_mode == "text":
+            present = sorted(set(out_classes))
+            rng = _random.Random(f"{self._seed}:{i}")
+            prompts_list = _build_text_prompts(
+                present_dense_ids=present,
+                class_names=self._class_names,
+                cfg=self._text_prompt_cfg,
+                rng=rng,
+                image_id=i,
+            )
+            if len(prompts_list) > self._multiplex_cap:
+                if not self._warned_truncation:
+                    _LOG.warning(
+                        "esam3.data.hf: image_id=%s requested %d text prompts; "
+                        "truncating to %d. Suppressing further warnings.",
+                        image_id, len(prompts_list), self._multiplex_cap,
+                    )
+                    self._warned_truncation = True
+                prompts_list = prompts_list[: self._multiplex_cap]
+            return Example(
+                image=image_tensor,
+                image_id=image_id,
+                prompts=TextPrompts(classes=prompts_list),
+                instances=instances,
+            )
+
+        order = sorted(
+            range(len(instances)),
+            key=lambda k: (instances[k].class_id, float(instances[k].box[0]), float(instances[k].box[1])),
+        )
+        if len(order) > self._multiplex_cap:
+            if not self._warned_truncation:
+                _LOG.warning(
+                    "esam3.data.hf: image_id=%s requested %d box prompts; "
+                    "truncating to %d. Suppressing further warnings.",
+                    image_id, len(order), self._multiplex_cap,
+                )
+                self._warned_truncation = True
+            order = order[: self._multiplex_cap]
+        kept_instances = [instances[k] for k in order]
+        boxes_t = torch.stack([inst.box for inst in kept_instances]) if kept_instances else torch.zeros((0, 4))
+        class_ids_t = torch.tensor([inst.class_id for inst in kept_instances], dtype=torch.int64)
+        return Example(
+            image=image_tensor,
+            image_id=image_id,
+            prompts=BoxPrompts(boxes=boxes_t.to(torch.float32), class_ids=class_ids_t),
+            instances=kept_instances,
+        )
 
     @property
     def class_names(self) -> list[str]:
-        raise NotImplementedError("filled in by spec: spec/data-loading (Task 16)")
+        return list(self._class_names)
 
 
 @register("dataset", "hf")
-def build_hf(cfg: dict[str, Any]) -> Dataset:
-    """Placeholder — full impl in Task 16."""
+def build_hf(
+    cfg: dict[str, Any],
+    *,
+    model_name: str,
+    pipeline: Literal["train", "eval"],
+) -> Dataset:
+    """Build an `HFDataset` from a validated DataConfig dict."""
+    from esam3.config.schema import AugmentationsConfig, NormalizeConfig
+    from esam3.data.transforms import build_eval_transforms, build_train_transforms
+
+    if pipeline not in ("train", "eval"):
+        raise ValueError(f"pipeline must be 'train' or 'eval'; got {pipeline!r}")
+    hf_cfg = cfg["hf"]
+    split = hf_cfg["split_train"] if pipeline == "train" else hf_cfg["split_val"]
+    image_size = int(cfg["image_size"])
+    normalize = NormalizeConfig.model_validate(cfg.get("normalize", {}))
+    text_prompt = TextPromptConfig.model_validate(cfg.get("text_prompt", {}))
+    field_map = HFFieldMap.model_validate(hf_cfg.get("field_map", {}))
+    if pipeline == "train":
+        aug = AugmentationsConfig.model_validate(cfg.get("augmentations", {}))
+        transforms = build_train_transforms(
+            aug, image_size, model_name=model_name, normalize=normalize
+        )
+    else:
+        transforms = build_eval_transforms(
+            image_size, model_name=model_name, normalize=normalize
+        )
     return HFDataset(
-        name=cfg["name"],
-        split=cfg.get("split", "train"),
+        name=hf_cfg["name"],
+        split=split,
         prompt_mode=cfg["prompt_mode"],
+        transforms=transforms,
+        text_prompt=text_prompt,
+        field_map=field_map,
     )
-
-
-_ = (np, TextPromptConfig)  # silences F401 until Task 16
