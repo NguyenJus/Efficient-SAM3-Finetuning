@@ -9,3 +9,4 @@
 [2026-05-16] [implementer] task 1 — added albumentations/opencv-headless deps, promoted pillow to core
 [2026-05-16] [implementer] task 2 — appended deferred iscrowd + transform-suite TODO entries
 [2026-05-16] [implementer] task 3 — added TextPromptMode + TextPromptConfig schema
+[2026-05-16] [implementer] task 4 — added NormalizeConfig with range validator

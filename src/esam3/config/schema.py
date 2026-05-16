@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
 
 Dtype = Literal["bfloat16", "float16"]
 DataFormat = Literal["coco", "hf"]
@@ -136,3 +136,30 @@ class TextPromptConfig(_Strict):
     mode: TextPromptMode = "present"
     negatives_per_image: int = Field(default=0, ge=0)
     k: int = Field(default=16, ge=1, le=16)
+
+
+class NormalizeConfig(_Strict):
+    """Normalization stats used when AutoImageProcessor cannot be loaded.
+
+    Resolution order at dataset construction:
+      1. AutoImageProcessor.from_pretrained(model.name, local_files_only=True)
+         and read image_mean/image_std.
+      2. On OSError/AttributeError/ValueError, fall back to (mean, std) here.
+    """
+
+    mean: list[float] = Field(
+        default_factory=lambda: [0.485, 0.456, 0.406], min_length=3, max_length=3
+    )
+    std: list[float] = Field(
+        default_factory=lambda: [0.229, 0.224, 0.225], min_length=3, max_length=3
+    )
+
+    @model_validator(mode="after")
+    def _check_ranges(self) -> "NormalizeConfig":
+        for m in self.mean:
+            if not (0.0 <= m <= 1.0):
+                raise ValueError(f"normalize.mean values must be in [0, 1]; got {m}")
+        for s in self.std:
+            if s <= 0.0:
+                raise ValueError(f"normalize.std values must be > 0; got {s}")
+        return self
