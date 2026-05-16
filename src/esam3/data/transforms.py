@@ -9,8 +9,12 @@ Public API:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from esam3.config.schema import AugmentationsConfig, NormalizeConfig
+
+if TYPE_CHECKING:
+    import albumentations as A
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,8 +54,34 @@ def build_eval_transforms(
     *,
     model_name: str,
     normalize: NormalizeConfig,
-) -> object:
-    raise NotImplementedError("filled in by Task 9")
+) -> "A.Compose":
+    """Deterministic eval pipeline: longest-edge resize -> top-left pad -> normalize -> ToTensor."""
+    import albumentations as A
+    import cv2
+    from albumentations.pytorch import ToTensorV2
+
+    mean, std = resolve_normalization(model_name, normalize)
+    return A.Compose(
+        [
+            A.LongestMaxSize(max_size=image_size, interpolation=cv2.INTER_LINEAR),
+            A.PadIfNeeded(
+                min_height=image_size,
+                min_width=image_size,
+                border_mode=cv2.BORDER_CONSTANT,
+                value=0,
+                mask_value=0,
+                position="top_left",
+            ),
+            A.Normalize(mean=mean, std=std, max_pixel_value=255.0),
+            ToTensorV2(),
+        ],
+        bbox_params=A.BboxParams(
+            format="pascal_voc",
+            label_fields=["class_labels"],
+            min_visibility=0.0,
+            min_area=0.0,
+        ),
+    )
 
 
 def build_train_transforms(
