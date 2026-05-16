@@ -16,19 +16,24 @@ from torch import Tensor
 
 @dataclass
 class CanonicalOutputs:
-    """Output of `meta_to_canonical`. Used by the matcher and losses.
+    """Adapter output of `meta_to_canonical`. Per-class (one prompt per call).
 
-    Shapes:
-      class_logits: (B, Q, C+1)   # last index = "no-object"
-      pred_boxes:   (B, Q, 4)     # normalized cx,cy,w,h in [0, 1]
-      pred_masks:   (B, Q, 288, 288)
-      presence:     (B, Q)        # objectness logit
+    Shapes (B = batch size, Q = number of decoder queries):
+      obj_logits:   (B, Q)         per-query binary score (text-image similarity).
+                                   Positive = "this query detects an instance of the
+                                   current prompt class." From Meta's `pred_logits`
+                                   after squeezing the trailing size-1 dim.
+      pred_boxes:   (B, Q, 4)      normalized cx,cy,w,h in [0, 1].
+      pred_masks:   (B, Q, H, W)   instance mask logits; H=W=288 at 1008-px input.
+      img_presence: (B,)           image-level binary score "does this image contain
+                                   any instance of the current prompt class." From
+                                   Meta's `presence_logit_dec` after squeezing.
     """
 
-    class_logits: Tensor
+    obj_logits: Tensor
     pred_boxes: Tensor
     pred_masks: Tensor
-    presence: Tensor
+    img_presence: Tensor
 
 
 def meta_to_canonical(outputs: dict) -> CanonicalOutputs:
