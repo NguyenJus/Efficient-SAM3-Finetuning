@@ -37,11 +37,27 @@ class CanonicalOutputs:
 
 
 def meta_to_canonical(outputs: dict) -> CanonicalOutputs:
-    """Convert Meta sam3's native output dict to CanonicalOutputs.
+    """Convert Meta SAM 3.1's native output dict to CanonicalOutputs.
 
-    Implementation deferred to Task 5 (requires inspection of real Meta output).
+    SINGLE point of contact for Meta key names. Update only this function if
+    Meta renames a field.
+
+    Meta keys (from `sam3.model.sam3_image.Sam3Image.forward_grounding`):
+      "pred_logits":        (B, Q, 1)  per-query text-image similarity logit.
+      "pred_boxes":         (B, Q, 4)  normalized cx,cy,w,h.
+      "pred_masks":         (B, Q, H, W)  instance mask logits (288×288 at 1008px).
+      "presence_logit_dec": (B, 1)     single global presence logit per image.
+
+    The trailing size-1 dims of pred_logits and presence_logit_dec are squeezed.
     """
-    raise NotImplementedError("filled in by Task 5 of spec/model-loading")
+    pred_logits: Tensor = outputs["pred_logits"]
+    presence: Tensor = outputs["presence_logit_dec"]
+    return CanonicalOutputs(
+        obj_logits=pred_logits.squeeze(-1),
+        pred_boxes=outputs["pred_boxes"],
+        pred_masks=outputs["pred_masks"],
+        img_presence=presence.squeeze(-1),
+    )
 
 
 from scipy.optimize import linear_sum_assignment  # noqa: E402
