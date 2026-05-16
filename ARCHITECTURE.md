@@ -13,7 +13,7 @@ src/esam3/
     loader.py          load YAML + apply --override + resolve paths
   data/
     base.py            Example, Prompts (TextPrompts | BoxPrompts), Dataset protocol
-    coco.py / hf.py    @register("dataset", ...) adapters
+    coco.py / hf.py    @register("dataset", ...) adapters (call with pipeline + model_name kwargs)
     transforms.py      image + prompt augmentation
     collate.py         batch collator (variable-shape per image)
   models/

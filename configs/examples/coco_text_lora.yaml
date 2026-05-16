@@ -21,6 +21,12 @@ data:
   augmentations:
     hflip: true
     color_jitter: 0.1
+  text_prompt:
+    mode: present_plus_negatives
+    negatives_per_image: 4
+  normalize:
+    mean: [0.485, 0.456, 0.406]
+    std:  [0.229, 0.224, 0.225]
 
 peft:
   method: lora
