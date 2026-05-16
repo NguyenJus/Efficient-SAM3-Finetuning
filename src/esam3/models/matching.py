@@ -99,7 +99,7 @@ class HungarianMatcher:
         outputs: CanonicalOutputs,
         targets: list[list[Instance]],
     ) -> list[tuple[Tensor, Tensor]]:
-        b, q, _ = outputs.class_logits.shape
+        b, _q, _ = outputs.class_logits.shape
         mask_h, mask_w = outputs.pred_masks.shape[-2:]
         results: list[tuple[Tensor, Tensor]] = []
         for i in range(b):
