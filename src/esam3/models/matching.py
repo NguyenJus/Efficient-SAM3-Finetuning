@@ -100,16 +100,19 @@ def _dice_cost(pred_masks: Tensor, tgt_masks: Tensor) -> Tensor:
 
 
 class HungarianMatcher:
-    """DETR-style bipartite matcher. Non-differentiable; called under no_grad."""
+    """DETR-style bipartite matcher for per-class SAM 3.1 outputs.
+
+    No class-cost term: prompts encode class identity, so the only meaningful
+    pairwise affinities are geometric (L1, GIoU on cxcywh boxes) and mask (Dice).
+    Non-differentiable; called under `@torch.no_grad()`.
+    """
 
     def __init__(
         self,
-        lambda_cls: float,
         lambda_l1: float,
         lambda_giou: float,
         lambda_mask: float,
     ) -> None:
-        self.lambda_cls = lambda_cls
         self.lambda_l1 = lambda_l1
         self.lambda_giou = lambda_giou
         self.lambda_mask = lambda_mask
@@ -120,7 +123,7 @@ class HungarianMatcher:
         outputs: CanonicalOutputs,
         targets: list[list[Instance]],
     ) -> list[tuple[Tensor, Tensor]]:
-        b, _q, _ = outputs.class_logits.shape
+        b = outputs.obj_logits.shape[0]
         mask_h, mask_w = outputs.pred_masks.shape[-2:]
         results: list[tuple[Tensor, Tensor]] = []
         for i in range(b):
@@ -131,14 +134,8 @@ class HungarianMatcher:
                     torch.empty(0, dtype=torch.long),
                 ))
                 continue
-            probs = outputs.class_logits[i].softmax(-1)  # (Q, C+1)
-            tgt_class = torch.tensor(
-                [t.class_id for t in tgts], dtype=torch.long, device=probs.device
-            )
-            cost_cls = -probs[:, tgt_class]  # (Q, N)
-
             tgt_boxes = torch.stack([t.box for t in tgts]).to(outputs.pred_boxes.device)
-            cost_l1 = torch.cdist(outputs.pred_boxes[i], tgt_boxes, p=1)  # (Q, N)
+            cost_l1 = torch.cdist(outputs.pred_boxes[i], tgt_boxes, p=1)
             cost_giou = -_giou(
                 _box_cxcywh_to_xyxy(outputs.pred_boxes[i]),
                 _box_cxcywh_to_xyxy(tgt_boxes),
@@ -154,8 +151,7 @@ class HungarianMatcher:
             cost_mask = _dice_cost(outputs.pred_masks[i], tgt_masks_low)
 
             cost = (
-                self.lambda_cls * cost_cls
-                + self.lambda_l1 * cost_l1
+                self.lambda_l1 * cost_l1
                 + self.lambda_giou * cost_giou
                 + self.lambda_mask * cost_mask
             )
