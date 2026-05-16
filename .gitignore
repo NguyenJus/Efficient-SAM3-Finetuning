@@ -33,3 +33,6 @@ wandb/
 
 # Local logs not tracked
 *.log
+
+data/*
+models/*
