@@ -6,15 +6,10 @@ import pytest
 import torch
 
 from esam3.config.schema import (
-    AugmentationsConfig,
     EvalConfig,
     ModelConfig,
     PEFTConfig,
 )
-from esam3.data.coco import COCODataset
-from esam3.data.collate import collate_batch
-from esam3.data.hf import HFDataset
-from esam3.data.transforms import build_eval_transforms, build_train_transforms
 from esam3.eval.evaluator import Evaluator
 from esam3.eval.metrics import compute_coco_map
 from esam3.models.losses import box_loss, mask_loss, objectness_loss, total_loss
@@ -28,20 +23,6 @@ from esam3.train.loop import run_epoch
 def _assert_stub(call: object) -> None:
     with pytest.raises(NotImplementedError, match="filled in by spec:"):
         call()  # type: ignore[operator]
-
-
-def test_data_stubs() -> None:
-    coco = COCODataset("a", "b", "bbox")
-    _assert_stub(lambda: coco.__len__())
-    _assert_stub(lambda: coco.__getitem__(0))
-    _assert_stub(lambda: coco.class_names)
-    hf = HFDataset("a", "train", "text")
-    _assert_stub(lambda: hf.__len__())
-    _assert_stub(lambda: hf.__getitem__(0))
-    _assert_stub(lambda: hf.class_names)
-    _assert_stub(lambda: build_train_transforms(AugmentationsConfig(), 1024))
-    _assert_stub(lambda: build_eval_transforms(1024))
-    _assert_stub(lambda: collate_batch([]))
 
 
 def test_model_stubs() -> None:
