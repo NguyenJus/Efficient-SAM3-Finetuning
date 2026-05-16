@@ -15,3 +15,4 @@
 [2026-05-16] [implementer] task 7 — extended DataConfig with hf/text_prompt/normalize + format validator
 [2026-05-16] [implementer] task 8 — implemented resolve_normalization
 [2026-05-16] [implementer] task 9 — implemented build_eval_transforms
+[2026-05-16] [implementer] task 10 — implemented build_train_transforms (det test uses compose.set_random_seed for alb 2.x)

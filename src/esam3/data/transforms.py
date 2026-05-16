@@ -90,5 +90,43 @@ def build_train_transforms(
     *,
     model_name: str,
     normalize: NormalizeConfig,
-) -> object:
-    raise NotImplementedError("filled in by Task 10")
+) -> "A.Compose":
+    """Train pipeline: resize+pad geometry + optional hflip + color jitter + normalize."""
+    import albumentations as A
+    import cv2
+    from albumentations.pytorch import ToTensorV2
+
+    mean, std = resolve_normalization(model_name, normalize)
+    steps: list[object] = [
+        A.LongestMaxSize(max_size=image_size, interpolation=cv2.INTER_LINEAR),
+        A.PadIfNeeded(
+            min_height=image_size,
+            min_width=image_size,
+            border_mode=cv2.BORDER_CONSTANT,
+            value=0,
+            mask_value=0,
+            position="top_left",
+        ),
+    ]
+    if aug_cfg.hflip:
+        steps.append(A.HorizontalFlip(p=0.5))
+    steps.append(
+        A.ColorJitter(
+            brightness=aug_cfg.color_jitter,
+            contrast=aug_cfg.color_jitter,
+            saturation=aug_cfg.color_jitter,
+            hue=aug_cfg.color_jitter * 0.5,
+            p=0.5,
+        )
+    )
+    steps.append(A.Normalize(mean=mean, std=std, max_pixel_value=255.0))
+    steps.append(ToTensorV2())
+    return A.Compose(
+        steps,
+        bbox_params=A.BboxParams(
+            format="pascal_voc",
+            label_fields=["class_labels"],
+            min_visibility=0.0,
+            min_area=0.0,
+        ),
+    )

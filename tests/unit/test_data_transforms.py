@@ -100,3 +100,62 @@ def test_eval_transforms_pad_position_top_left() -> None:
     bottom_row = out["image"][0, 60, :]
     assert top_row.mean().item() > 0
     assert bottom_row.mean().item() < 0
+
+
+import random
+
+from esam3.config.schema import AugmentationsConfig
+from esam3.data.transforms import build_train_transforms
+
+
+def test_train_transforms_deterministic_with_seeded_global_rng() -> None:
+    """With albumentations 2.x, determinism is controlled via compose.set_random_seed()."""
+    aug = AugmentationsConfig(hflip=True, color_jitter=0.1)
+
+    def run() -> torch.Tensor:
+        random.seed(0)
+        np.random.seed(0)
+        torch.manual_seed(0)
+        with _patch_proc_to_imagenet():
+            compose = build_train_transforms(aug, 64, model_name="x", normalize=NormalizeConfig())
+        compose.set_random_seed(0)
+        img = np.arange(40 * 80 * 3, dtype=np.uint8).reshape(40, 80, 3)
+        return compose(image=img, bboxes=[], masks=[], class_labels=[])["image"]
+
+    a = run()
+    b = run()
+    assert torch.equal(a, b)
+
+
+def test_train_transforms_hflip_disabled() -> None:
+    aug = AugmentationsConfig(hflip=False, color_jitter=0.0)
+    with _patch_proc_to_imagenet():
+        compose = build_train_transforms(aug, 64, model_name="x", normalize=NormalizeConfig())
+    img = np.zeros((32, 64, 3), dtype=np.uint8)
+    img[:, :8, 0] = 200  # strong left column marker
+    flips = 0
+    for seed in range(50):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        out = compose(image=img.copy(), bboxes=[], masks=[], class_labels=[])
+        left = out["image"][0, :32, :8].mean().item()
+        right = out["image"][0, :32, 56:64].mean().item()
+        if right > left:
+            flips += 1
+    assert flips == 0
+
+
+def test_train_transforms_color_jitter_zero_preserves_color() -> None:
+    with _patch_proc_to_imagenet():
+        eval_compose = build_eval_transforms(64, model_name="x", normalize=NormalizeConfig())
+        train_compose = build_train_transforms(
+            AugmentationsConfig(hflip=False, color_jitter=0.0),
+            64,
+            model_name="x",
+            normalize=NormalizeConfig(),
+        )
+    img = np.random.RandomState(0).randint(0, 256, size=(40, 60, 3), dtype=np.uint8)
+    e_out = eval_compose(image=img, bboxes=[], masks=[], class_labels=[])
+    t_out = train_compose(image=img, bboxes=[], masks=[], class_labels=[])
+    assert torch.allclose(e_out["image"], t_out["image"], atol=1e-5)
