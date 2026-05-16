@@ -246,9 +246,9 @@ def resolve_normalization(
     fallback: NormalizeConfig,
 ) -> tuple[list[float], list[float]]:
     """Try transformers.AutoImageProcessor.from_pretrained(model_name, local_files_only=True);
-    on success read image_mean/image_std. On OSError or AttributeError, return
-    (fallback.mean, fallback.std). Logs exactly one INFO line stating which path
-    was taken. Pure function w.r.t. its inputs — no globals."""
+    on success read image_mean/image_std. On (OSError, AttributeError, ValueError),
+    return (fallback.mean, fallback.std). Logs exactly one INFO line stating which
+    path was taken. Pure function w.r.t. its inputs — no globals."""
 ```
 
 **Pipeline composition (locked):**
