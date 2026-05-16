@@ -18,3 +18,4 @@
 [2026-05-16] [implementer] task 10 — implemented build_train_transforms (det test uses compose.set_random_seed for alb 2.x)
 [2026-05-16] [implementer] task 11 — implemented collate_batch
 [2026-05-16] [implementer] task 12 — added COCO module-private helpers (index, remap, decode, prompts)
+[2026-05-16] [implementer] task 13 — COCODataset full impl with prompt modes, iscrowd filter, multiplex cap (TDD, 17 new tests, 26 coco tests pass; only test_data_stubs fails as expected)

@@ -20,15 +20,19 @@ def tiny_coco_dir() -> Path:
 
 @pytest.fixture
 def tiny_coco_dataset(tiny_coco_dir: Path) -> COCODataset:
-    """A COCODataset pointing at the tiny_coco fixture.
+    """A COCODataset pointing at the tiny_coco fixture (bbox prompt mode)."""
+    from esam3.data.transforms import build_eval_transforms
+    from esam3.config.schema import NormalizeConfig, TextPromptConfig
 
-    Methods raise NotImplementedError until spec/data-loading lands; this
-    fixture exists so future integration tests have a typed Dataset handle.
-    """
+    transforms = build_eval_transforms(
+        32, model_name="facebook/sam3.1", normalize=NormalizeConfig()
+    )
     return COCODataset(
         annotations=str(tiny_coco_dir / "annotations.json"),
         images=str(tiny_coco_dir / "images"),
         prompt_mode="bbox",
+        transforms=transforms,
+        text_prompt=TextPromptConfig(),
     )
 
 

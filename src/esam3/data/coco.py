@@ -111,33 +111,157 @@ def _build_text_prompts(
 
 
 class COCODataset:
-    """Placeholder — full impl in Task 13."""
+    """COCO instance-JSON dataset.
 
-    def __init__(self, annotations: str, images: str, prompt_mode: str) -> None:
-        self.annotations = annotations
-        self.images = images
-        self.prompt_mode = prompt_mode
+    Sparse COCO category ids -> dense 0..C-1; images with only iscrowd=1
+    annotations are dropped at construction; per-image multiplex capped at 16.
+    """
+
+    coco_category_ids: list[int]
+
+    def __init__(
+        self,
+        annotations: str,
+        images: str,
+        prompt_mode: Literal["text", "bbox"],
+        *,
+        transforms: Any,
+        text_prompt: TextPromptConfig,
+        seed: int = 0,
+    ) -> None:
+        if prompt_mode not in ("text", "bbox"):
+            raise ValueError(f"prompt_mode must be 'text' or 'bbox'; got {prompt_mode!r}")
+        self._image_root = Path(images)
+        self._prompt_mode: Literal["text", "bbox"] = prompt_mode
+        self._transforms = transforms
+        self._text_prompt_cfg = text_prompt
+        self._seed = seed
+        self._multiplex_cap = 16
+        self._warned_truncation = False
+
+        self._coco = _load_coco_index(annotations)
+        sparse_ids, mapping, class_names = _build_category_remap(self._coco)
+        self._coco_category_ids = sparse_ids
+        self.coco_category_ids = sparse_ids
+        self._cat_id_to_dense = mapping
+        self._class_names = class_names
+
+        kept, ann_index, dropped = _drop_crowd_only_images(self._coco)
+        self._image_ids = kept
+        self._ann_index = ann_index
+        if dropped:
+            _LOG.info(
+                "esam3.data.coco: dropped %d images (iscrowd-only) from %s",
+                dropped, annotations,
+            )
+        _LOG.info(
+            "esam3.data.coco: loaded %d images, %d dense classes from %s",
+            len(self._image_ids), len(self._class_names), annotations,
+        )
 
     def __len__(self) -> int:
-        raise NotImplementedError("filled in by spec: spec/data-loading (Task 13)")
+        return len(self._image_ids)
 
     def __getitem__(self, i: int) -> Example:
-        raise NotImplementedError("filled in by spec: spec/data-loading (Task 13)")
+        import torch
+        from PIL import Image
+
+        image_id = self._image_ids[i]
+        rec = self._coco.loadImgs([image_id])[0]
+        img_path = self._image_root / rec["file_name"]
+        np_img = np.asarray(Image.open(img_path).convert("RGB"))
+        h, w = int(rec["height"]), int(rec["width"])
+
+        anns = self._ann_index[image_id]
+        bboxes_xyxy: list[list[float]] = []
+        masks: list[np.ndarray] = []
+        class_labels: list[int] = []
+        for ann in anns:
+            x, y, bw, bh = ann["bbox"]
+            bboxes_xyxy.append([float(x), float(y), float(x + bw), float(y + bh)])
+            masks.append(_decode_segmentation(ann, h, w).astype(np.uint8))
+            class_labels.append(self._cat_id_to_dense[int(ann["category_id"])])
+
+        out = self._transforms(
+            image=np_img,
+            bboxes=bboxes_xyxy,
+            masks=masks,
+            class_labels=class_labels,
+        )
+        image_tensor: torch.Tensor = out["image"]
+        out_bboxes: list[tuple[float, float, float, float]] = list(out["bboxes"])
+        out_masks: list[np.ndarray] = list(out["masks"])
+        out_classes: list[int] = [int(c) for c in out["class_labels"]]
+
+        from esam3.data.base import BoxPrompts, Instance, TextPrompts
+
+        instances: list[Instance] = []
+        for box, mask_np, cls in zip(out_bboxes, out_masks, out_classes, strict=True):
+            instances.append(
+                Instance(
+                    mask=torch.from_numpy(np.asarray(mask_np).astype(bool)),
+                    class_id=int(cls),
+                    box=torch.tensor(box, dtype=torch.float32),
+                )
+            )
+
+        if self._prompt_mode == "text":
+            present = sorted(set(out_classes))
+            rng = random.Random(f"{self._seed}:{int(image_id)}")
+            prompts_list = _build_text_prompts(
+                present_dense_ids=present,
+                class_names=self._class_names,
+                cfg=self._text_prompt_cfg,
+                rng=rng,
+                image_id=int(image_id),
+            )
+            if len(prompts_list) > self._multiplex_cap:
+                if not self._warned_truncation:
+                    _LOG.warning(
+                        "esam3.data.coco: image_id=%s requested %d text prompts; "
+                        "truncating to %d. Suppressing further warnings for this dataset.",
+                        image_id, len(prompts_list), self._multiplex_cap,
+                    )
+                    self._warned_truncation = True
+                prompts_list = prompts_list[: self._multiplex_cap]
+            return Example(
+                image=image_tensor,
+                image_id=str(image_id),
+                prompts=TextPrompts(classes=prompts_list),
+                instances=instances,
+            )
+
+        # bbox mode
+        order = sorted(
+            range(len(instances)),
+            key=lambda k: (instances[k].class_id, float(instances[k].box[0]), float(instances[k].box[1])),
+        )
+        if len(order) > self._multiplex_cap:
+            if not self._warned_truncation:
+                _LOG.warning(
+                    "esam3.data.coco: image_id=%s requested %d box prompts; "
+                    "truncating to %d. Suppressing further warnings for this dataset.",
+                    image_id, len(order), self._multiplex_cap,
+                )
+                self._warned_truncation = True
+            order = order[: self._multiplex_cap]
+        kept_instances = [instances[k] for k in order]
+        import torch as _torch
+        boxes_t = _torch.stack([inst.box for inst in kept_instances]) if kept_instances else _torch.zeros((0, 4))
+        class_ids_t = _torch.tensor([inst.class_id for inst in kept_instances], dtype=_torch.int64)
+        return Example(
+            image=image_tensor,
+            image_id=str(image_id),
+            prompts=BoxPrompts(boxes=boxes_t.to(_torch.float32), class_ids=class_ids_t),
+            instances=kept_instances,
+        )
 
     @property
     def class_names(self) -> list[str]:
-        raise NotImplementedError("filled in by spec: spec/data-loading (Task 13)")
+        return list(self._class_names)
 
 
 @register("dataset", "coco")
 def build_coco(cfg: dict[str, Any]) -> Dataset:
     """Placeholder — full impl in Task 14."""
-    return COCODataset(
-        annotations=cfg["annotations"],
-        images=cfg["images"],
-        prompt_mode=cfg["prompt_mode"],
-    )
-
-
-# Suppress unused-import warnings until later tasks consume these.
-_ = (Literal, np)
+    raise NotImplementedError("build_coco: full impl in Task 14")

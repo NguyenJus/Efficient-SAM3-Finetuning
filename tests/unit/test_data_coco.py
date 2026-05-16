@@ -150,3 +150,506 @@ def test_build_text_prompts_sampled_fixed_k_truncates_positives() -> None:
     )
     assert len(out) == 3
     assert out == ["c0", "c1", "c2"]
+
+
+# ---------------------------------------------------------------------------
+# Task 13: COCODataset integration tests
+# ---------------------------------------------------------------------------
+
+import logging
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+from unittest.mock import MagicMock
+from unittest.mock import patch as mock_patch
+
+import torch
+
+from esam3.config.schema import NormalizeConfig
+from esam3.data.base import BoxPrompts, TextPrompts
+from esam3.data.coco import COCODataset
+
+
+@contextmanager
+def _patch_imagenet_ctx() -> Iterator[None]:
+    mock_aip = MagicMock()
+    mock_aip.from_pretrained.side_effect = OSError("no cache")
+    with mock_patch("transformers.AutoImageProcessor", mock_aip):
+        yield
+
+
+def _build_eval(image_size: int = 32) -> Any:
+    from esam3.data.transforms import build_eval_transforms
+
+    return build_eval_transforms(
+        image_size, model_name="facebook/sam3.1", normalize=NormalizeConfig()
+    )
+
+
+def test_class_names_dense_and_ordered(tiny_coco_dir: Path) -> None:
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(tiny_coco_dir / "annotations.json"),
+            images=str(tiny_coco_dir / "images"),
+            prompt_mode="bbox",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(),
+        )
+    assert ds.class_names == ["thing_a", "thing_b"]
+    assert ds.coco_category_ids == [1, 2]
+
+
+def test_len_drops_empty_after_iscrowd(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 1, "file_name": "a.png", "width": 8, "height": 8},
+                    {"id": 2, "file_name": "b.png", "width": 8, "height": 8},
+                ],
+                "categories": [{"id": 1, "name": "x"}],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    },
+                    {
+                        "id": 2, "image_id": 2, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 1,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    },
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    Image.new("RGB", (8, 8)).save(images_dir / "b.png")
+    caplog.set_level(logging.INFO, logger="esam3.data.coco")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="bbox",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(),
+        )
+    assert len(ds) == 1
+    assert any(re.search(r"dropped.*1.*iscrowd", rec.message) for rec in caplog.records)
+
+
+def test_getitem_text_mode_present(tiny_coco_dir: Path) -> None:
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(tiny_coco_dir / "annotations.json"),
+            images=str(tiny_coco_dir / "images"),
+            prompt_mode="text",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(mode="present"),
+        )
+    ex = ds[0]
+    assert isinstance(ex.prompts, TextPrompts)
+    assert ex.prompts.classes == ["thing_a", "thing_b"]
+
+
+def test_getitem_text_mode_all(tiny_coco_dir: Path) -> None:
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(tiny_coco_dir / "annotations.json"),
+            images=str(tiny_coco_dir / "images"),
+            prompt_mode="text",
+            transforms=_build_eval(),
+            text_prompt=TextPromptConfig(mode="all"),
+        )
+    ex = ds[1]
+    assert isinstance(ex.prompts, TextPrompts)
+    assert ex.prompts.classes == ["thing_a", "thing_b"]
+
+
+def test_getitem_text_mode_present_plus_negatives(tmp_path: Path) -> None:
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.png", "width": 8, "height": 8}],
+                "categories": [
+                    {"id": 1, "name": "a"},
+                    {"id": 2, "name": "b"},
+                    {"id": 3, "name": "c"},
+                    {"id": 4, "name": "d"},
+                ],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    }
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="text",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(mode="present_plus_negatives", negatives_per_image=2),
+            seed=42,
+        )
+    ex = ds[0]
+    assert isinstance(ex.prompts, TextPrompts)
+    assert ex.prompts.classes[0] == "a"
+    assert len(ex.prompts.classes) == 3
+    assert len(set(ex.prompts.classes)) == 3
+
+
+def test_getitem_text_mode_sampled_fixed_k(tmp_path: Path) -> None:
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.png", "width": 8, "height": 8}],
+                "categories": [{"id": i, "name": f"c{i}"} for i in range(1, 6)],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    }
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    from PIL import Image
+
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="text",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(mode="sampled_fixed_k", k=3),
+            seed=7,
+        )
+    ex = ds[0]
+    assert isinstance(ex.prompts, TextPrompts)
+    assert len(ex.prompts.classes) == 3
+    assert ex.prompts.classes[0] == "c1"
+
+
+def _synth_many_cats(tmp_path: Path, n_cats: int) -> tuple[Path, Path]:
+    """Build a 1-image COCO with n_cats categories, one annotation each."""
+    from PIL import Image
+
+    p = tmp_path / "ann.json"
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    Image.new("RGB", (32, 32)).save(images_dir / "a.png")
+    p.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.png", "width": 32, "height": 32}],
+                "categories": [{"id": i + 1, "name": f"c{i}"} for i in range(n_cats)],
+                "annotations": [
+                    {
+                        "id": i + 1, "image_id": 1, "category_id": i + 1,
+                        "bbox": [0, 0, 4, 4], "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    }
+                    for i in range(n_cats)
+                ],
+            }
+        )
+    )
+    return p, images_dir
+
+
+def test_multiplex_truncation_text(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    ann, imgs = _synth_many_cats(tmp_path, 20)
+    caplog.set_level(logging.WARNING, logger="esam3.data.coco")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(ann),
+            images=str(imgs),
+            prompt_mode="text",
+            transforms=_build_eval(32),
+            text_prompt=TextPromptConfig(mode="all"),
+        )
+    ex = ds[0]
+    assert isinstance(ex.prompts, TextPrompts)
+    assert len(ex.prompts.classes) == 16
+    assert any(re.search(r"truncating to 16", rec.message) for rec in caplog.records)
+
+
+def test_multiplex_truncation_box(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    ann, imgs = _synth_many_cats(tmp_path, 20)
+    caplog.set_level(logging.WARNING, logger="esam3.data.coco")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(ann),
+            images=str(imgs),
+            prompt_mode="bbox",
+            transforms=_build_eval(32),
+            text_prompt=TextPromptConfig(),
+        )
+    ex = ds[0]
+    assert isinstance(ex.prompts, BoxPrompts)
+    assert ex.prompts.boxes.shape == (16, 4)
+    assert ex.prompts.class_ids.shape == (16,)
+    assert len(ex.instances) == 16
+
+
+def test_getitem_bbox_mode_returns_BoxPrompts(tiny_coco_dir: Path) -> None:
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(tiny_coco_dir / "annotations.json"),
+            images=str(tiny_coco_dir / "images"),
+            prompt_mode="bbox",
+            transforms=_build_eval(32),
+            text_prompt=TextPromptConfig(),
+        )
+    ex = ds[0]
+    assert isinstance(ex.prompts, BoxPrompts)
+    assert ex.prompts.boxes.dtype == torch.float32
+    assert ex.prompts.class_ids.dtype == torch.int64
+    coords = ex.prompts.boxes.reshape(-1)
+    assert (coords >= 0).all() and (coords <= 32).all()
+
+
+def test_polygon_segmentation_decoded(tiny_coco_dir: Path) -> None:
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(tiny_coco_dir / "annotations.json"),
+            images=str(tiny_coco_dir / "images"),
+            prompt_mode="bbox",
+            transforms=_build_eval(32),
+            text_prompt=TextPromptConfig(),
+        )
+    ex = ds[0]
+    assert ex.instances[0].mask.shape == (32, 32)
+    assert ex.instances[0].mask.dtype == torch.bool
+    assert int(ex.instances[0].mask.sum()) > 0
+
+
+def test_rle_segmentation_decoded(tmp_path: Path) -> None:
+    from pycocotools import mask as mu
+    from PIL import Image
+
+    rle = mu.encode(np.asfortranarray(np.ones((8, 8), dtype=np.uint8)))
+    rle["counts"] = rle["counts"].decode("ascii") if isinstance(rle["counts"], bytes) else rle["counts"]
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.png", "width": 8, "height": 8}],
+                "categories": [{"id": 1, "name": "x"}],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 8, 8],
+                        "area": 64, "iscrowd": 0, "segmentation": rle,
+                    }
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="bbox",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(),
+        )
+    ex = ds[0]
+    assert int(ex.instances[0].mask.sum()) > 0
+
+
+def test_iscrowd_skipped(tmp_path: Path) -> None:
+    from PIL import Image
+
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.png", "width": 8, "height": 8}],
+                "categories": [{"id": 1, "name": "x"}],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    },
+                    {
+                        "id": 2, "image_id": 1, "category_id": 1, "bbox": [4, 4, 4, 4],
+                        "area": 16, "iscrowd": 1,
+                        "segmentation": [[4, 4, 8, 4, 8, 8, 4, 8]],
+                    },
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="bbox",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(),
+        )
+    ex = ds[0]
+    assert len(ex.instances) == 1
+
+
+def test_dropped_empty_image_logged_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from PIL import Image
+
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 1, "file_name": "a.png", "width": 8, "height": 8},
+                    {"id": 2, "file_name": "b.png", "width": 8, "height": 8},
+                ],
+                "categories": [{"id": 1, "name": "x"}],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    },
+                    {
+                        "id": 2, "image_id": 2, "category_id": 1, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 1,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    },
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    Image.new("RGB", (8, 8)).save(images_dir / "b.png")
+    caplog.set_level(logging.INFO, logger="esam3.data.coco")
+    with _patch_imagenet_ctx():
+        COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="bbox",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(),
+        )
+    drop_lines = [
+        r for r in caplog.records if re.search(r"dropped.*iscrowd", r.message)
+    ]
+    assert len(drop_lines) == 1
+
+
+def test_image_resize_geometry(tiny_coco_dir: Path) -> None:
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(tiny_coco_dir / "annotations.json"),
+            images=str(tiny_coco_dir / "images"),
+            prompt_mode="bbox",
+            transforms=_build_eval(64),
+            text_prompt=TextPromptConfig(),
+        )
+    ex = ds[0]
+    assert ex.image.shape == (3, 64, 64)
+    assert ex.instances[0].mask.shape == (64, 64)
+    coords = ex.prompts.boxes.reshape(-1)
+    assert (coords >= 0).all() and (coords <= 64).all()
+
+
+def test_sparse_to_dense_remap(tmp_path: Path) -> None:
+    from PIL import Image
+
+    p = tmp_path / "ann.json"
+    p.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.png", "width": 8, "height": 8}],
+                "categories": [
+                    {"id": 7, "name": "g"},
+                    {"id": 3, "name": "a"},
+                ],
+                "annotations": [
+                    {
+                        "id": 1, "image_id": 1, "category_id": 3, "bbox": [0, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[0, 0, 4, 0, 4, 4, 0, 4]],
+                    },
+                    {
+                        "id": 2, "image_id": 1, "category_id": 7, "bbox": [4, 0, 4, 4],
+                        "area": 16, "iscrowd": 0,
+                        "segmentation": [[4, 0, 8, 0, 8, 4, 4, 4]],
+                    },
+                ],
+            }
+        )
+    )
+    images_dir = tmp_path / "imgs"
+    images_dir.mkdir()
+    Image.new("RGB", (8, 8)).save(images_dir / "a.png")
+    with _patch_imagenet_ctx():
+        ds = COCODataset(
+            annotations=str(p),
+            images=str(images_dir),
+            prompt_mode="bbox",
+            transforms=_build_eval(8),
+            text_prompt=TextPromptConfig(),
+        )
+    assert len(ds.class_names) == 2
+    assert ds.coco_category_ids == [3, 7]
+    assert {int(inst.class_id) for inst in ds[0].instances} == {0, 1}
+
+
+def test_deterministic_text_sampling_under_fixed_seed(tmp_path: Path) -> None:
+    ann, imgs = _synth_many_cats(tmp_path, 5)
+
+    def build() -> COCODataset:
+        with _patch_imagenet_ctx():
+            return COCODataset(
+                annotations=str(ann),
+                images=str(imgs),
+                prompt_mode="text",
+                transforms=_build_eval(32),
+                text_prompt=TextPromptConfig(mode="sampled_fixed_k", k=4),
+                seed=42,
+            )
+
+    a = build()[0]
+    b = build()[0]
+    assert isinstance(a.prompts, TextPrompts)
+    assert isinstance(b.prompts, TextPrompts)
+    assert a.prompts.classes == b.prompts.classes
