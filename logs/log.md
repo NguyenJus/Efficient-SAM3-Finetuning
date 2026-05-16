@@ -19,3 +19,4 @@
 [2026-05-16] [implementer] task 11 — implemented collate_batch
 [2026-05-16] [implementer] task 12 — added COCO module-private helpers (index, remap, decode, prompts)
 [2026-05-16] [implementer] task 13 — COCODataset full impl with prompt modes, iscrowd filter, multiplex cap (TDD, 17 new tests, 26 coco tests pass; only test_data_stubs fails as expected)
+[2026-05-16] [implementer] task 14 — build_coco builder with pipeline + model_name kwargs (2 new tests; 28 coco tests pass)

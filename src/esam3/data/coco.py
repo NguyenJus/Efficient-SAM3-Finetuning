@@ -262,6 +262,41 @@ class COCODataset:
 
 
 @register("dataset", "coco")
-def build_coco(cfg: dict[str, Any]) -> Dataset:
-    """Placeholder — full impl in Task 14."""
-    raise NotImplementedError("build_coco: full impl in Task 14")
+def build_coco(
+    cfg: dict[str, Any],
+    *,
+    model_name: str,
+    pipeline: Literal["train", "eval"],
+) -> Dataset:
+    """Build a `COCODataset` from a validated DataConfig dict.
+
+    The caller (trainer) chooses the split by passing the matching `train` or
+    `val` sub-dict in `cfg["train"]` / `cfg["val"]`. Here `pipeline` selects the
+    transform variant.
+    """
+    from esam3.config.schema import AugmentationsConfig, NormalizeConfig, TextPromptConfig
+    from esam3.data.transforms import build_eval_transforms, build_train_transforms
+
+    if pipeline not in ("train", "eval"):
+        raise ValueError(f"pipeline must be 'train' or 'eval'; got {pipeline!r}")
+    split_key = "train" if pipeline == "train" else "val"
+    split = cfg[split_key]
+    image_size = int(cfg["image_size"])
+    normalize = NormalizeConfig.model_validate(cfg.get("normalize", {}))
+    text_prompt = TextPromptConfig.model_validate(cfg.get("text_prompt", {}))
+    if pipeline == "train":
+        aug = AugmentationsConfig.model_validate(cfg.get("augmentations", {}))
+        transforms = build_train_transforms(
+            aug, image_size, model_name=model_name, normalize=normalize
+        )
+    else:
+        transforms = build_eval_transforms(
+            image_size, model_name=model_name, normalize=normalize
+        )
+    return COCODataset(
+        annotations=split["annotations"],
+        images=split["images"],
+        prompt_mode=cfg["prompt_mode"],
+        transforms=transforms,
+        text_prompt=text_prompt,
+    )

@@ -634,6 +634,62 @@ def test_sparse_to_dense_remap(tmp_path: Path) -> None:
     assert {int(inst.class_id) for inst in ds[0].instances} == {0, 1}
 
 
+# ---------------------------------------------------------------------------
+# Task 14: build_coco builder
+# ---------------------------------------------------------------------------
+
+
+def test_register_coco_lookup(tiny_coco_dir: Path) -> None:
+    from esam3._registry import lookup
+
+    builder = lookup("dataset", "coco")
+    cfg: dict[str, Any] = {
+        "format": "coco",
+        "train": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
+        "val": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
+        "prompt_mode": "bbox",
+        "image_size": 32,
+        "augmentations": {"hflip": True, "color_jitter": 0.1},
+        "text_prompt": {"mode": "present"},
+        "normalize": {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    }
+    with _patch_imagenet_ctx():
+        ds = builder(cfg, model_name="facebook/sam3.1", pipeline="eval")
+    assert len(ds) == 2
+    assert ds.class_names == ["thing_a", "thing_b"]
+
+
+def test_build_coco_train_pipeline_uses_train_transforms(tiny_coco_dir: Path) -> None:
+    from esam3._registry import lookup
+
+    builder = lookup("dataset", "coco")
+    cfg: dict[str, Any] = {
+        "format": "coco",
+        "train": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
+        "val": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
+        "prompt_mode": "bbox",
+        "image_size": 32,
+        "augmentations": {"hflip": False, "color_jitter": 0.0},
+        "text_prompt": {"mode": "present"},
+        "normalize": {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    }
+    with _patch_imagenet_ctx():
+        ds = builder(cfg, model_name="facebook/sam3.1", pipeline="train")
+    assert len(ds) == 2
+
+
 def test_deterministic_text_sampling_under_fixed_seed(tmp_path: Path) -> None:
     ann, imgs = _synth_many_cats(tmp_path, 5)
 
