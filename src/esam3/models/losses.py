@@ -65,3 +65,28 @@ def box_loss(pred: Tensor, target: Tensor) -> Tensor:
     smooth_l1 = torch.nn.functional.smooth_l1_loss(pred, target, reduction="mean")
     giou = _giou_pairwise(_box_cxcywh_to_xyxy(pred), _box_cxcywh_to_xyxy(target))
     return smooth_l1 + (1.0 - giou).mean()
+
+
+def _focal_bce(
+    logits: Tensor, targets: Tensor, gamma: float = 2.0, alpha: float = 0.25
+) -> Tensor:
+    """Sigmoid focal BCE, mean-reduced. logits and targets broadcastable to the same shape."""
+    p = logits.sigmoid()
+    ce = binary_cross_entropy_with_logits(logits, targets.float(), reduction="none")
+    p_t = p * targets + (1 - p) * (1 - targets)
+    alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+    return (alpha_t * (1 - p_t).pow(gamma) * ce).mean()
+
+
+def objectness_loss(
+    obj_logits: Tensor,
+    matched_mask: Tensor,
+    gamma: float = 2.0,
+    alpha: float = 0.25,
+) -> Tensor:
+    """Per-query binary focal BCE.
+
+    obj_logits:    (B, Q) — Meta's `pred_logits` squeezed.
+    matched_mask:  (B, Q) bool — True for queries assigned to some target by the matcher.
+    """
+    return _focal_bce(obj_logits, matched_mask.float(), gamma=gamma, alpha=alpha)
