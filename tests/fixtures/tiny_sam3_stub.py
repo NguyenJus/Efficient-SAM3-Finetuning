@@ -1,8 +1,8 @@
-"""A tiny `nn.Module` matching the (planned) SAM3.1 forward contract.
+"""A tiny `nn.Module` that mimics Meta SAM 3.1's image-forward output dict.
 
-Used to unit-test trainer/eval/peft adapter logic without loading real weights.
-The forward signature is intentionally loose — the contract gets pinned in
-spec/model-loading.
+Used to unit-test the Sam3Wrapper, meta_to_canonical adapter, and the loss
+pipeline without loading the real ~3.5 GB checkpoint. Output keys match
+Meta's `Sam3Image.forward_grounding` contract.
 """
 
 from __future__ import annotations
@@ -14,21 +14,27 @@ from torch import nn
 
 
 class TinySam3Stub(nn.Module):
-    """Returns deterministically-shaped random outputs given image + prompts."""
+    """Returns Meta-shaped output dict given image + prompts.
 
-    def __init__(self, num_classes: int = 2, mask_size: int = 32) -> None:
+    Q = number of decoder queries (default 4 for fast tests).
+    The stub is per-class (one prompt at a time), matching Sam3Wrapper's
+    single-prompt forward contract.
+    """
+
+    def __init__(self, num_queries: int = 4, mask_size: int = 16) -> None:
         super().__init__()
-        self.num_classes = num_classes
+        self.num_queries = num_queries
         self.mask_size = mask_size
-        # A single trainable param so optimizers have something to update.
+        # One trainable param so optimizers have something to update.
         self.dummy = nn.Parameter(torch.zeros(1))
 
     def forward(self, image: torch.Tensor, prompts: Any) -> dict[str, torch.Tensor]:
         del prompts  # ignored by the stub
-        batch = image.shape[0] if image.ndim == 4 else 1
+        b = image.shape[0] if image.ndim == 4 else 1
+        q, m = self.num_queries, self.mask_size
         return {
-            "masks": torch.zeros(batch, 1, self.mask_size, self.mask_size) + self.dummy,
-            "boxes": torch.zeros(batch, 1, 4) + self.dummy,
-            "objectness": torch.zeros(batch, 1) + self.dummy,
-            "class_logits": torch.zeros(batch, 1, self.num_classes) + self.dummy,
+            "pred_logits": torch.zeros(b, q, 1) + self.dummy,
+            "pred_boxes": torch.zeros(b, q, 4) + self.dummy,
+            "pred_masks": torch.zeros(b, q, m, m) + self.dummy,
+            "presence_logit_dec": torch.zeros(b, 1) + self.dummy,
         }
