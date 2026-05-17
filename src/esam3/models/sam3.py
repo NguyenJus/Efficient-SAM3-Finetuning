@@ -69,6 +69,8 @@ def _build_geometric_prompt(
         if h is None:
             # Entire row stays masked (all True) and zero-filled.
             continue
+        if h.ndim != 2 or h.shape[-1] != 4:
+            raise ValueError(f"box_hints[{i}] must have shape (M_i, 4); got {tuple(h.shape)}")
         n_i = h.shape[0]
         if n_i == 0:
             continue
@@ -144,8 +146,7 @@ class Sam3Wrapper(nn.Module):
                 )
 
         if box_hints is not None:
-            # Reject box_hints combined with BoxPrompts.
-            if any(isinstance(p, BoxPrompts) for p in prompts):
+            if first is BoxPrompts:
                 raise ValueError(
                     "box_hints must not be combined with BoxPrompts prompts. "
                     "BoxPrompts already carry localization information."
@@ -222,15 +223,34 @@ class _Sam3ImageAdapter(nn.Module):
         prompts: list[Prompts],
         box_hints: list[Tensor | None] | None = None,
     ) -> dict[str, Tensor]:
-        # IMPLEMENTOR: complete after pinning Meta's text-tokenization path.
-        # See docs/superpowers/plans/2026-05-17-training-loop-notes.md §"Where
-        # the slot lives" and Note A.  Construct geometric_prompt via:
-        #   _build_geometric_prompt(box_hints or [None]*B, self.image_size, device)
-        # and substitute Meta's zero-length dummy when it returns None.
+        # IMPLEMENTOR: complete this body to drive Meta's text-grounding path.
+        # Contract pinned in docs/superpowers/plans/2026-05-17-training-loop-notes.md
+        # ("Where the slot lives" + Note A + Note B + Sources). Required steps:
+        #   1. Encode images → backbone_out via self.model.image_encoder(images).
+        #   2. Tokenize per-image class names ([p.classes[0] for p in prompts])
+        #      through Meta's text tokenizer/encoder (the same path
+        #      `SAM3Image.forward` uses to populate `find_input` at
+        #      sam3_image.py:576-580). Inspect sam3.model.data_misc.FindStage
+        #      for the dtype/device contract — see notes file §Sources.
+        #   3. Build `find_input` (FindStage with input_text + input_text_mask)
+        #      and `find_target` (training-time labels; pass an empty/None
+        #      target for inference paths). The find_target shape depends on
+        #      whether mask supervision is active — refer to the trainer's
+        #      call site for the live contract.
+        #   4. Build `geometric_prompt`:
+        #        gp = _build_geometric_prompt(box_hints or [None]*B,
+        #                                     self.image_size, images.device)
+        #        if gp is None:
+        #            gp = Prompt(
+        #                box_embeddings=torch.zeros(0, B, 4, device=images.device),
+        #                box_mask=torch.zeros(B, 0, device=images.device, dtype=torch.bool),
+        #            )  # Meta's zero-length dummy (sam3_image.py:547-553)
+        #   5. Call self.model.forward_grounding(backbone_out, find_input,
+        #      find_target, geometric_prompt=gp) and return its dict.
         raise NotImplementedError(
             "Sam3Image high-level forward entrypoint not yet pinned; complete this "
-            "function after running Step 1's inspection in your local environment. "
-            "See _Sam3ImageAdapter docstring for guidance."
+            "function using the contract pinned in Task 0's notes file. See the "
+            "step-by-step recipe in this function's inline comment above."
         )
 
 
