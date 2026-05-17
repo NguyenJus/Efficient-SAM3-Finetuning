@@ -175,7 +175,7 @@ def test_save_load_lora_roundtrip(tmp_path: Path) -> None:
 
 def test_load_lora_keeps_lora_params_trainable(tmp_path: Path) -> None:
     w_a = make_stub_wrapper(dim=8)
-    apply_lora(w_a, PEFTConfig(method="lora", scope="vision"))
+    apply_lora(w_a, PEFTConfig(method="lora", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]))
     save_lora(w_a, tmp_path / "adapter")
 
     w_b = make_stub_wrapper(dim=8)
