@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from esam3.models.losses import box_loss, mask_loss, objectness_loss
+from esam3.models.losses import box_loss, mask_loss, objectness_loss, presence_loss
 
 
 def test_mask_loss_zero_on_perfect_match() -> None:
@@ -58,4 +58,19 @@ def test_objectness_loss_high_when_predictions_invert() -> None:
     obj_logits = torch.tensor([[-10.0, 10.0, -10.0, 10.0]])
     matched = torch.tensor([[1, 0, 1, 0]], dtype=torch.bool)
     loss = objectness_loss(obj_logits, matched)
+    assert loss.item() > 1.0
+
+
+def test_presence_loss_zero_when_agree() -> None:
+    img_presence = torch.tensor([10.0, -10.0, 10.0])
+    image_has_target = torch.tensor([True, False, True])
+    loss = presence_loss(img_presence, image_has_target)
+    assert loss.dim() == 0
+    assert loss.item() < 0.05
+
+
+def test_presence_loss_high_when_inverted() -> None:
+    img_presence = torch.tensor([-10.0, 10.0, -10.0])
+    image_has_target = torch.tensor([True, False, True])
+    loss = presence_loss(img_presence, image_has_target)
     assert loss.item() > 1.0

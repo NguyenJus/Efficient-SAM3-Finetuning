@@ -90,3 +90,16 @@ def objectness_loss(
     matched_mask:  (B, Q) bool — True for queries assigned to some target by the matcher.
     """
     return _focal_bce(obj_logits, matched_mask.float(), gamma=gamma, alpha=alpha)
+
+
+def presence_loss(
+    img_presence: Tensor,
+    image_has_target: Tensor,
+) -> Tensor:
+    """Image-level binary BCE on the global presence logit.
+
+    img_presence:     (B,) — Meta's `presence_logit_dec` squeezed.
+    image_has_target: (B,) bool — True if the image contains any instance of the
+                      current prompt class.
+    """
+    return binary_cross_entropy_with_logits(img_presence, image_has_target.float())
