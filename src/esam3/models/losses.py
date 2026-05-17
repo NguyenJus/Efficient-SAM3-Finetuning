@@ -6,9 +6,9 @@ import torch
 from torch import Tensor
 from torch.nn.functional import binary_cross_entropy_with_logits, interpolate
 
-from esam3.config.schema import LossConfig  # noqa: F401
-from esam3.data.base import Instance  # noqa: F401
-from esam3.models.matching import (  # noqa: F401
+from esam3.config.schema import LossConfig
+from esam3.data.base import Instance
+from esam3.models.matching import (
     CanonicalOutputs,
     HungarianMatcher,
     meta_to_canonical,
@@ -103,3 +103,100 @@ def presence_loss(
                       current prompt class.
     """
     return binary_cross_entropy_with_logits(img_presence, image_has_target.float())
+
+
+def _gather_matched_boxes_masks(
+    canonical: CanonicalOutputs,
+    targets: list[list[Instance]],
+    indices: list[tuple[Tensor, Tensor]],
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Concatenate matched (pred_box, tgt_box, pred_mask, tgt_mask) across the batch."""
+    pred_boxes, tgt_boxes, pred_masks, tgt_masks = [], [], [], []
+    for i, (pred_idx, tgt_idx) in enumerate(indices):
+        if pred_idx.numel() == 0:
+            continue
+        pred_boxes.append(canonical.pred_boxes[i, pred_idx])
+        tgt_boxes.append(
+            torch.stack([targets[i][j].box for j in tgt_idx.tolist()]).to(
+                canonical.pred_boxes.device
+            )
+        )
+        pred_masks.append(canonical.pred_masks[i, pred_idx])
+        tgt_masks.append(
+            torch.stack([targets[i][j].mask for j in tgt_idx.tolist()]).to(
+                canonical.pred_masks.device
+            )
+        )
+    if not pred_boxes:
+        empty_b = canonical.pred_boxes.new_zeros((0, 4))
+        empty_m = canonical.pred_masks.new_zeros((0, 1, 1))
+        return empty_b, empty_b, empty_m, empty_m
+    return (
+        torch.cat(pred_boxes),
+        torch.cat(tgt_boxes),
+        torch.cat(pred_masks),
+        torch.cat(tgt_masks),
+    )
+
+
+def _matched_query_mask(
+    canonical: CanonicalOutputs,
+    indices: list[tuple[Tensor, Tensor]],
+) -> Tensor:
+    """Bool (B, Q): True where a query is matched to some target."""
+    b, q = canonical.obj_logits.shape
+    mask = torch.zeros((b, q), dtype=torch.bool, device=canonical.obj_logits.device)
+    for i, (pred_idx, _) in enumerate(indices):
+        if pred_idx.numel() > 0:
+            mask[i, pred_idx] = True
+    return mask
+
+
+def _image_has_target(targets: list[list[Instance]], device: torch.device) -> Tensor:
+    """Bool (B,): True if image has any target instance of the current prompt class."""
+    return torch.tensor([len(t) > 0 for t in targets], dtype=torch.bool, device=device)
+
+
+def total_loss(
+    outputs: dict,
+    targets: list[list[Instance]],
+    cfg: LossConfig,
+) -> dict[str, Tensor]:
+    """Run matching, compute per-component losses, return dict with 'total' summed.
+
+    `outputs` is Meta's raw per-class forward dict. `targets[i]` is the list of
+    GT instances of the prompt's class for image i (may be empty).
+    """
+    canonical = meta_to_canonical(outputs)
+    matcher = HungarianMatcher(
+        lambda_l1=cfg.matcher_weights.lambda_l1,
+        lambda_giou=cfg.matcher_weights.lambda_giou,
+        lambda_mask=cfg.matcher_weights.lambda_mask,
+    )
+    indices = matcher(canonical, targets)
+
+    pred_boxes_m, tgt_boxes_m, pred_masks_m, tgt_masks_m = _gather_matched_boxes_masks(
+        canonical, targets, indices
+    )
+    matched_mask = _matched_query_mask(canonical, indices)
+    has_target = _image_has_target(targets, canonical.img_presence.device)
+
+    zero = canonical.obj_logits.new_zeros(())
+    losses: dict[str, Tensor] = {
+        "mask": mask_loss(pred_masks_m, tgt_masks_m) if pred_masks_m.numel() > 0 else zero,
+        "box": box_loss(pred_boxes_m, tgt_boxes_m) if pred_boxes_m.numel() > 0 else zero,
+        "obj": objectness_loss(
+            canonical.obj_logits,
+            matched_mask,
+            gamma=cfg.focal_gamma,
+            alpha=cfg.focal_alpha,
+        ),
+        "presence": presence_loss(canonical.img_presence, has_target),
+    }
+    losses["total"] = (
+        cfg.w_mask * losses["mask"]
+        + cfg.w_box * losses["box"]
+        + cfg.w_obj * losses["obj"]
+        + cfg.w_presence * losses["presence"]
+    )
+    return losses

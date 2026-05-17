@@ -74,3 +74,63 @@ def test_presence_loss_high_when_inverted() -> None:
     image_has_target = torch.tensor([True, False, True])
     loss = presence_loss(img_presence, image_has_target)
     assert loss.item() > 1.0
+
+
+def _stub_outputs(b: int = 1, q: int = 4, h: int = 16) -> dict:
+    return {
+        "pred_logits": torch.zeros(b, q, 1),
+        "pred_boxes": torch.zeros(b, q, 4),
+        "pred_masks": torch.zeros(b, q, h, h),
+        "presence_logit_dec": torch.zeros(b, 1),
+    }
+
+
+def test_total_loss_returns_all_components() -> None:
+    from esam3.config.schema import LossConfig
+    from esam3.data.base import Instance
+    from esam3.models.losses import total_loss
+
+    raw = _stub_outputs()
+    targets = [[Instance(
+        mask=torch.zeros(32, 32),
+        class_id=0,
+        box=torch.tensor([0.5, 0.5, 0.2, 0.2]),
+    )]]
+    losses = total_loss(raw, targets, LossConfig())
+    assert set(losses.keys()) == {"total", "mask", "box", "obj", "presence"}
+    assert all(torch.isfinite(v) for v in losses.values())
+
+
+def test_total_loss_total_equals_weighted_sum() -> None:
+    from esam3.config.schema import LossConfig
+    from esam3.data.base import Instance
+    from esam3.models.losses import total_loss
+
+    raw = _stub_outputs()
+    targets = [[Instance(
+        mask=torch.zeros(32, 32),
+        class_id=0,
+        box=torch.tensor([0.5, 0.5, 0.2, 0.2]),
+    )]]
+    cfg = LossConfig()
+    losses = total_loss(raw, targets, cfg)
+    expected = (
+        cfg.w_mask * losses["mask"]
+        + cfg.w_box * losses["box"]
+        + cfg.w_obj * losses["obj"]
+        + cfg.w_presence * losses["presence"]
+    )
+    assert torch.allclose(losses["total"], expected, atol=1e-6)
+
+
+def test_total_loss_handles_empty_targets() -> None:
+    from esam3.config.schema import LossConfig
+    from esam3.models.losses import total_loss
+
+    raw = _stub_outputs()
+    losses = total_loss(raw, [[]], LossConfig())
+    # No matches → mask + box are zero; obj + presence are still finite (no-object supervision).
+    assert losses["mask"].item() == 0.0
+    assert losses["box"].item() == 0.0
+    assert torch.isfinite(losses["obj"])
+    assert torch.isfinite(losses["presence"])
