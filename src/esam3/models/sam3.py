@@ -178,19 +178,6 @@ def _resolve_checkpoint_path(cfg: ModelConfig) -> Path:
     return path
 
 
-def _resolve_bpe_path(cfg: ModelConfig) -> Path:
-    """The BPE merges file is shipped alongside the checkpoint in the HF repo."""
-    if cfg.local_dir is None:
-        raise FileNotFoundError("ModelConfig.local_dir is None; cannot resolve BPE path.")
-    path = Path(cfg.local_dir) / "merges.txt"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"SAM 3.1 BPE merges file not found at {path}. Re-download the checkpoint "
-            f"directory from {cfg.name}."
-        )
-    return path
-
-
 class _Sam3ImageAdapter(nn.Module):
     """Adapt raw Sam3Image to the (images, prompts, **kwargs) calling convention.
 
@@ -262,11 +249,9 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     `presence_logit_dec`).
     """
     ckpt_path = _resolve_checkpoint_path(cfg)
-    bpe_path = _resolve_bpe_path(cfg)
     device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     raw_model = sam3.build_sam3_image_model(
-        bpe_path=str(bpe_path),
         device=device,
         eval_mode=False,  # training mode — gradients flow.
         checkpoint_path=str(ckpt_path),
