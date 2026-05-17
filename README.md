@@ -60,8 +60,10 @@ Run the GPU-gated tests on a free Colab T4 (no local GPU required):
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/NguyenJus/Efficient-SAM3-Finetuning/blob/main/notebooks/colab_gpu_tests.ipynb)
 
-Set a `HF_TOKEN` once in Colab Secrets, choose a T4 (or better) runtime,
-and Run All. See [`docs/superpowers/specs/2026-05-17-peft-qlora-design.md`](docs/superpowers/specs/2026-05-17-peft-qlora-design.md) §11 for details.
+In Colab Secrets, set `HF_TOKEN` (Hugging Face token with read access to
+gated `facebook/sam3.1`), plus `GH_TOKEN` (GitHub fine-grained PAT with
+`Contents: Read`) **if this repo is private**. Choose a T4 (or better)
+runtime, then Run All. See [`docs/superpowers/specs/2026-05-17-peft-qlora-design.md`](docs/superpowers/specs/2026-05-17-peft-qlora-design.md) §11 for details.
 
 ## License
 
