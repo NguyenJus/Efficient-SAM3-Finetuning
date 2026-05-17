@@ -134,7 +134,7 @@ def load_lora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
     base = cast(nn.Module, wrapper.model.model)
     for p in base.parameters():
         p.requires_grad = False
-    peft_base = PeftModel.from_pretrained(base, str(dirpath))
+    peft_base = PeftModel.from_pretrained(base, str(dirpath), is_trainable=True)
     wrapper.model.model = peft_base
     wrapper.peft_model = peft_base
     return wrapper
