@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import torch
 from torch import Tensor
 from torch.nn.functional import binary_cross_entropy_with_logits, interpolate
 
@@ -35,3 +36,32 @@ def mask_loss(pred: Tensor, target: Tensor) -> Tensor:
     bce = binary_cross_entropy_with_logits(pred, target.float())
     dice = _dice_loss(pred, target)
     return 0.5 * dice + 0.5 * bce
+
+
+def _box_cxcywh_to_xyxy(box: Tensor) -> Tensor:
+    cx, cy, w, h = box.unbind(-1)
+    return torch.stack([cx - 0.5 * w, cy - 0.5 * h, cx + 0.5 * w, cy + 0.5 * h], dim=-1)
+
+
+def _giou_pairwise(b1: Tensor, b2: Tensor) -> Tensor:
+    """Element-wise GIoU between two (N, 4) tensors in xyxy."""
+    area1 = (b1[:, 2] - b1[:, 0]) * (b1[:, 3] - b1[:, 1])
+    area2 = (b2[:, 2] - b2[:, 0]) * (b2[:, 3] - b2[:, 1])
+    lt = torch.max(b1[:, :2], b2[:, :2])
+    rb = torch.min(b1[:, 2:], b2[:, 2:])
+    wh = (rb - lt).clamp(min=0)
+    inter = wh[:, 0] * wh[:, 1]
+    union = area1 + area2 - inter
+    iou = inter / union.clamp(min=1e-7)
+    lt_c = torch.min(b1[:, :2], b2[:, :2])
+    rb_c = torch.max(b1[:, 2:], b2[:, 2:])
+    wh_c = (rb_c - lt_c).clamp(min=0)
+    area_c = wh_c[:, 0] * wh_c[:, 1]
+    return iou - (area_c - union) / area_c.clamp(min=1e-7)
+
+
+def box_loss(pred: Tensor, target: Tensor) -> Tensor:
+    """smoothL1 + (1 - GIoU) on matched box pairs. Boxes are normalized cxcywh."""
+    smooth_l1 = torch.nn.functional.smooth_l1_loss(pred, target, reduction="mean")
+    giou = _giou_pairwise(_box_cxcywh_to_xyxy(pred), _box_cxcywh_to_xyxy(target))
+    return smooth_l1 + (1.0 - giou).mean()

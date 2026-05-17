@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from esam3.models.losses import mask_loss
+from esam3.models.losses import box_loss, mask_loss
 
 
 def test_mask_loss_zero_on_perfect_match() -> None:
@@ -30,3 +30,17 @@ def test_mask_loss_upsamples_pred_to_target_resolution() -> None:
     target = torch.zeros(2, 32, 32)
     loss = mask_loss(pred, target)
     assert torch.isfinite(loss)
+
+
+def test_box_loss_zero_on_perfect_match() -> None:
+    pred = torch.tensor([[0.5, 0.5, 0.2, 0.2]])
+    target = torch.tensor([[0.5, 0.5, 0.2, 0.2]])
+    loss = box_loss(pred, target)
+    assert loss.item() < 1e-4
+
+
+def test_box_loss_positive_when_offset() -> None:
+    pred = torch.tensor([[0.1, 0.1, 0.1, 0.1]])
+    target = torch.tensor([[0.9, 0.9, 0.1, 0.1]])
+    loss = box_loss(pred, target)
+    assert loss.item() > 0.5
