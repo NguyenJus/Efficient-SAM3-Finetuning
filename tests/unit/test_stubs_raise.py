@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import pytest
-import torch
 
 from esam3.config.schema import (
     EvalConfig,
-    ModelConfig,
     PEFTConfig,
 )
 from esam3.eval.evaluator import Evaluator
 from esam3.eval.metrics import compute_coco_map
-from esam3.models.losses import box_loss, mask_loss, objectness_loss, total_loss
-from esam3.models.sam3 import load_sam31
 from esam3.peft_adapters.lora import apply_lora
 from esam3.peft_adapters.qlora import apply_qlora
 from esam3.train.checkpoint import load_adapter, save_adapter, save_merged
@@ -23,15 +19,6 @@ from esam3.train.loop import run_epoch
 def _assert_stub(call: object) -> None:
     with pytest.raises(NotImplementedError, match="filled in by spec:"):
         call()  # type: ignore[operator]
-
-
-def test_model_stubs() -> None:
-    _assert_stub(lambda: load_sam31(ModelConfig()))
-    t = torch.zeros((1,))
-    _assert_stub(lambda: mask_loss(t, t))
-    _assert_stub(lambda: box_loss(t, t))
-    _assert_stub(lambda: objectness_loss(t, t))
-    _assert_stub(lambda: total_loss({}, {}))
 
 
 def test_peft_stubs() -> None:

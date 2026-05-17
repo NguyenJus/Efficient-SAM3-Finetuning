@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import torch
 from torch import Tensor
 from torch.nn.functional import binary_cross_entropy_with_logits, interpolate
 
@@ -36,15 +35,3 @@ def mask_loss(pred: Tensor, target: Tensor) -> Tensor:
     bce = binary_cross_entropy_with_logits(pred, target.float())
     dice = _dice_loss(pred, target)
     return 0.5 * dice + 0.5 * bce
-
-
-def box_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    raise NotImplementedError("filled in by spec: spec/model-loading")
-
-
-def objectness_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    raise NotImplementedError("filled in by spec: spec/model-loading")
-
-
-def total_loss(outputs: dict[str, torch.Tensor], targets: dict[str, torch.Tensor]) -> torch.Tensor:
-    raise NotImplementedError("filled in by spec: spec/model-loading")
