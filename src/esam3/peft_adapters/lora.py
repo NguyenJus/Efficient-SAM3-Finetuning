@@ -35,6 +35,10 @@ SCOPE_TARGETS: dict[str, list[str]] = {
         r"vision_encoder\..*\.attn\.(qkv|proj)$",
         r"mask_decoder\..*\.(self_attn|cross_attn)\.(q|k|v|out)_proj$",
     ],
+    # TODO(task-7): replace `r".*"` — currently matches every nn.Linear in the
+    # tree (including MLP / feedforward projections that are NOT adaptation
+    # targets). Pin to attention-only patterns once SCOPE_TARGETS is verified
+    # against the real SAM 3.1 module names.
     "all": [r".*"],
 }
 
