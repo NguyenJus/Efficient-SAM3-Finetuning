@@ -72,7 +72,7 @@ class _StubAdapter(nn.Module):
         raise NotImplementedError("_StubAdapter.forward is intentionally not implemented")
 
 
-def make_stub_wrapper(dim: int = 8) -> Sam3Wrapper:
+def make_stub_wrapper(dim: int = 128) -> Sam3Wrapper:
     """Build a Sam3Wrapper whose inner base is a TinySam3LoraStub."""
     base = TinySam3LoraStub(dim=dim)
     adapter = _StubAdapter(base)
