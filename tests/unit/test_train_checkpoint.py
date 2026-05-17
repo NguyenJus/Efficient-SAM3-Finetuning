@@ -113,6 +113,7 @@ def test_load_full_state_restores_optimizer_and_step(tmp_path: Path) -> None:
     save_full_state(state_dir, w_a, opt_a, sched_a, 5, 0, 0, 0.8, cfg)
 
     w_b = make_stub_wrapper(dim=8)
+    apply_lora(w_b, cfg.peft)
     opt_b = _trainable_optimizer(w_b)
     sched_b = torch.optim.lr_scheduler.LambdaLR(opt_b, lr_lambda=lambda s: 1.0)
     rs = load_full_state(state_dir, w_b, opt_b, sched_b, cfg)
@@ -164,6 +165,7 @@ def test_rng_state_restored_after_resume(tmp_path: Path) -> None:
     expected_torch = torch.rand(3).tolist()
 
     w_b = make_stub_wrapper(dim=8)
+    apply_lora(w_b, cfg.peft)
     opt_b = _trainable_optimizer(w_b)
     sched_b = torch.optim.lr_scheduler.LambdaLR(opt_b, lr_lambda=lambda s: 1.0)
     load_full_state(state_dir, w_b, opt_b, sched_b, cfg)

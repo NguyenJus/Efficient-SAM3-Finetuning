@@ -153,16 +153,6 @@ def load_full_state(
             f"{saved_method!r} but adapter dir contents say {detected_method!r}"
         )
     load_adapter(wrapper, adapter_dir)
-
-    # After load_adapter the wrapper gains new trainable LoRA params that the
-    # caller-supplied optimizer doesn't track yet (it was built before this call).
-    # Replace the param group contents with the actual new param tensors so that
-    # load_state_dict can match by group length, then clear stale optimizer state.
-    trainable = [p for p in wrapper.parameters() if p.requires_grad]
-    if len(optimizer.param_groups) == 1:
-        optimizer.param_groups[0]["params"] = trainable
-        optimizer.state = {}  # type: ignore[assignment]
-
     optimizer.load_state_dict(state["optimizer"])
     scheduler.load_state_dict(state["scheduler"])
 
