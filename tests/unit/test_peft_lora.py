@@ -195,3 +195,10 @@ def test_merge_lora_without_apply_raises() -> None:
     w = make_stub_wrapper()
     with pytest.raises(RuntimeError, match="no PeftModel"):
         merge_lora(w)
+
+
+def test_apply_lora_registered_under_peft_lora() -> None:
+    from esam3._registry import lookup
+
+    fn = lookup("peft", "lora")
+    assert fn is apply_lora
