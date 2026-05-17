@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
+import torch
 from torch import nn
 
 from esam3.config.schema import PEFTConfig
 from esam3.peft_adapters.lora import (
     SCOPE_TARGETS,
     apply_lora,
+    load_lora,
+    save_lora,
 )
 from tests.fixtures.tiny_sam3_lora_stub import make_stub_wrapper
 
@@ -127,3 +131,40 @@ def test_apply_lora_sets_peft_model_handle() -> None:
 def test_scope_targets_keys_match_lora_scope_literal() -> None:
     # Cheap guard: SCOPE_TARGETS must cover every literal value of LoraScope.
     assert set(SCOPE_TARGETS) == {"vision", "vision_decoder", "all"}
+
+
+def test_save_load_lora_roundtrip(tmp_path: Path) -> None:
+    w1 = make_stub_wrapper()
+    apply_lora(w1, PEFTConfig(method="lora"))
+    # Capture trained-side state-dict for the LoRA params.
+    sd1 = {n: p.detach().clone() for n, p in w1.model.model.named_parameters() if "lora_" in n}
+    assert sd1, "expected LoRA params on the saved wrapper"
+
+    save_lora(w1, tmp_path)
+
+    # adapter_config.json + adapter weights file should now exist.
+    assert (tmp_path / "adapter_config.json").exists()
+    weight_files = list(tmp_path.glob("adapter_model*"))
+    assert weight_files, f"no adapter weight file in {tmp_path}; got {list(tmp_path.iterdir())}"
+
+    # Fresh wrapper, load adapter, compare params bit-for-bit.
+    w2 = make_stub_wrapper()
+    load_lora(w2, tmp_path)
+    sd2 = {n: p for n, p in w2.model.model.named_parameters() if "lora_" in n}
+    assert set(sd1) == set(sd2), f"param-name mismatch: {set(sd1) ^ set(sd2)}"
+    for name, t1 in sd1.items():
+        assert torch.allclose(t1, sd2[name], atol=0.0), f"mismatch on {name}"
+
+
+def test_load_lora_idempotent_guard(tmp_path: Path) -> None:
+    w = make_stub_wrapper()
+    apply_lora(w, PEFTConfig(method="lora"))
+    save_lora(w, tmp_path)
+    with pytest.raises(RuntimeError, match="already has a PeftModel"):
+        load_lora(w, tmp_path)
+
+
+def test_save_lora_without_apply_raises(tmp_path: Path) -> None:
+    w = make_stub_wrapper()
+    with pytest.raises(RuntimeError, match="no PeftModel"):
+        save_lora(w, tmp_path)
