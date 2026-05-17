@@ -37,6 +37,8 @@ def test_train_stubs(tmp_path: object) -> None:
 
 
 def test_trainer_fit_stub() -> None:
+    # Trainer is now implemented (Task 8). Verify it raises ValueError for
+    # bbox prompt_mode (the v0 guard), not NotImplementedError.
     from esam3.config.schema import (
         DataConfig,
         DataSplit,
@@ -59,11 +61,11 @@ def test_trainer_fit_stub() -> None:
         peft=PEFTConfig(method="lora"),
         train=TrainHyperparams(epochs=1),
     )
-    trainer = Trainer(
-        model=object(),
-        train_ds=object(),  # type: ignore[arg-type]
-        val_ds=object(),  # type: ignore[arg-type]
-        tracker=NoopTracker(),
-        cfg=cfg,
-    )
-    _assert_stub(trainer.fit)
+    with pytest.raises(ValueError, match="prompt_mode='bbox'"):
+        Trainer(
+            model=object(),
+            train_ds=object(),  # type: ignore[arg-type]
+            val_ds=object(),  # type: ignore[arg-type]
+            tracker=NoopTracker(),
+            cfg=cfg,
+        )
