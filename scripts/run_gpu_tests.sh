@@ -4,7 +4,11 @@
 # Turing+ machine with bitsandbytes installed.
 set -euo pipefail
 
-pytest -v --tb=short \
+# Use `python -m pytest` (not bare `pytest`) so the test runner picks the
+# same interpreter that `pip install -e .` populated. Bare `pytest` on
+# PATH can resolve to a different Python (common in Colab) and trigger
+# `ModuleNotFoundError: No module named 'esam3'`.
+"${PYTHON:-python}" -m pytest -v --tb=short \
   -m "requires_compatible_gpu and requires_checkpoint" \
   --no-cov \
   tests/integration/
