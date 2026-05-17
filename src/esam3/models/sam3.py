@@ -7,12 +7,18 @@ the fixed class vocabulary externally.
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any
 
+import sam3  # type: ignore[import-untyped]
+import torch
 from torch import Tensor, nn
 
 from esam3.config.schema import ModelConfig
 from esam3.data.base import Prompts, TextPrompts
+
+logger = logging.getLogger(__name__)
 
 
 class Sam3Wrapper(nn.Module):
@@ -65,6 +71,104 @@ class Sam3Wrapper(nn.Module):
                 )
 
 
+def _resolve_checkpoint_path(cfg: ModelConfig) -> Path:
+    if cfg.local_dir is None:
+        raise FileNotFoundError(
+            "ModelConfig.local_dir is None and Hub fetch is not implemented. "
+            f"Set local_dir to a directory containing {cfg.checkpoint_file}. "
+            f"To download: `huggingface-cli download {cfg.name} --local-dir models/sam3.1`."
+        )
+    path = Path(cfg.local_dir) / cfg.checkpoint_file
+    if not path.exists():
+        raise FileNotFoundError(
+            f"SAM 3.1 checkpoint not found at {path}. "
+            f"Run: huggingface-cli download {cfg.name} --local-dir {cfg.local_dir}"
+        )
+    return path
+
+
+def _resolve_bpe_path(cfg: ModelConfig) -> Path:
+    """The BPE merges file is shipped alongside the checkpoint in the HF repo."""
+    if cfg.local_dir is None:
+        raise FileNotFoundError("ModelConfig.local_dir is None; cannot resolve BPE path.")
+    path = Path(cfg.local_dir) / "merges.txt"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"SAM 3.1 BPE merges file not found at {path}. Re-download the checkpoint "
+            f"directory from {cfg.name}."
+        )
+    return path
+
+
+class _Sam3ImageAdapter(nn.Module):
+    """Adapt raw Sam3Image to the (images, prompts) calling convention used by Sam3Wrapper.
+
+    Sam3Image's training-mode forward (`forward_grounding`) expects
+    `(backbone_out, find_input, find_target, geometric_prompt)`, none of which are
+    raw image tensors or our `Prompts` dataclasses. This adapter holds the inner
+    `Sam3Image` and orchestrates the conversion based on what Meta's high-level
+    methods (inspected in Step 1) expose. If Meta exposes `predict_inst` or
+    similar that takes raw images, prefer that path here.
+    """
+
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, images: Tensor, prompts: list[Prompts]) -> dict[str, Tensor]:
+        # IMPLEMENTOR: based on Step 1's inspection, fill this in.
+        # The simplest case: Sam3Image exposes a method that takes
+        # `(images, list_of_class_names)` and returns the per-image dict.
+        #
+        # For TextPrompts (which is the only supported case per Sam3Wrapper):
+        #   class_names = [p.classes[0] for p in prompts]
+        #   return self.model.<entrypoint>(images, class_names)
+        #
+        # If no such method exists, build the lower-level Sam3 inputs here
+        # (backbone_out via self.model.image_encoder(images), find_input from
+        # tokenized class names, etc.). Keep the function body small — if it
+        # exceeds ~30 lines, factor out helpers in this same file.
+        raise NotImplementedError(
+            "Sam3Image high-level forward entrypoint not yet pinned; complete this "
+            "function after running Step 1's inspection in your local environment."
+        )
+
+
 def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
-    """Load SAM 3.1 via Meta's sam3 package. Implementation lands in Task 17."""
-    raise NotImplementedError("filled in by Task 17 of spec/model-loading-revised")
+    """Load SAM 3.1 via Meta's `sam3` package and wrap it for our trainer.
+
+    Returns a `Sam3Wrapper` whose `forward(images, prompts)` returns Meta's
+    native per-class output dict (`pred_logits`, `pred_boxes`, `pred_masks`,
+    `presence_logit_dec`).
+    """
+    ckpt_path = _resolve_checkpoint_path(cfg)
+    bpe_path = _resolve_bpe_path(cfg)
+    device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+    raw_model = sam3.build_sam3_image_model(
+        bpe_path=str(bpe_path),
+        device=device,
+        eval_mode=False,  # training mode — gradients flow.
+        checkpoint_path=str(ckpt_path),
+        load_from_HF=False,
+        enable_segmentation=True,
+        enable_inst_interactivity=False,
+        compile=False,
+    )
+
+    if cfg.gradient_checkpointing:
+        if hasattr(raw_model, "set_grad_checkpointing"):
+            raw_model.set_grad_checkpointing(True)
+        else:
+            logger.warning(
+                "Meta sam3 model has no `set_grad_checkpointing`; "
+                "gradient_checkpointing=True is a no-op on this revision."
+            )
+
+    if cfg.dtype == "bfloat16":
+        raw_model = raw_model.to(dtype=torch.bfloat16)
+    elif cfg.dtype == "float16":
+        raw_model = raw_model.to(dtype=torch.float16)
+
+    adapter = _Sam3ImageAdapter(raw_model)
+    return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
