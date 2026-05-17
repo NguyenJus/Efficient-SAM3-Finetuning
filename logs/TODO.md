@@ -6,3 +6,5 @@
 [2026-05-17T18:31:34Z] [planner] training-loop spec deferred items | [DEFERRED] cosine/exp box-hint schedule shapes — add BoxHintSchedule.shape literal when needed
 [2026-05-17T18:31:34Z] [planner] training-loop spec deferred items | [DEFERRED] image-panel K parameter — hard-coded K=10 top-query merge for prediction visualization
 [2026-05-17T18:31:34Z] [planner] training-loop spec deferred items | [DEFERRED] determinism flag — torch.use_deterministic_algorithms left False due to grad-checkpointing + bnb non-determinism; resume reproducibility comes from RNG-state restore
+[2026-05-17T00:00:00Z] [implementer] test_trainer_run_dir.py deviates from plan verbatim: replaced make_stub_wrapper with _TinyWorkingBase/_WorkingAdapter so forward() participates in computation graph after apply_lora | [DEFERRED] test_apply_lora_preserves_forward_signature + test_train_stubs are pre-existing failures (not introduced by Task 8)
+[2026-05-17T19:52:51Z] [reviewer] Task 14 final verification | [DEFERRED] tests/unit/test_peft_lora.py::test_apply_lora_preserves_forward_signature fails pre-existing on main; not introduced by training-loop work. Triage in a follow-up.
