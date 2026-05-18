@@ -130,6 +130,14 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
         base,
         use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
     )
+    # peft 0.19's LoRA dispatcher (peft.tuners.lora.model:226) gates on
+    # `model.is_loaded_in_4bit` to route to bnb.Linear4bit wrappers whose
+    # merge() already handles dequant→add→repack correctly.  apply_qlora
+    # replaces Linears manually so the flag is never set; set it now before
+    # get_peft_model so peft dispatches to the bnb path, not the generic
+    # Linear path whose merge() blindly does `weight.data += delta` on
+    # packed 4-bit storage (shape mismatch → RuntimeError).
+    base.is_loaded_in_4bit = True
     peft_base = get_peft_model(base, lora_cfg)
 
     from peft import PeftModel as _PeftModel
@@ -162,12 +170,33 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
 
 
 def _infer_quant_type_from_wrapper(wrapper: Sam3Wrapper) -> str:
-    """Read the quant_type from the first Linear4bit module in the wrapped base."""
+    """Read the quant_type from the first Linear4bit module in the wrapped base.
+
+    In current bitsandbytes (the version installed on Colab alongside torch >= 2.4),
+    `quant_type` lives on the Params4bit weight (`module.weight.quant_type`), not on
+    the Linear4bit module. The legacy attribute `module.quant_type` is also checked
+    as a fallback for older bnb builds the original tests were written against.
+    """
     bnb = _import_bnb()
     assert wrapper.peft_model is not None
     for module in wrapper.peft_model.modules():
         if isinstance(module, bnb.nn.Linear4bit):
-            return cast(str, module.quant_type)
+            # Primary: bnb >= the Params4bit-quant_type refactor.
+            weight = getattr(module, "weight", None)
+            qt = getattr(weight, "quant_type", None) if weight is not None else None
+            if isinstance(qt, str):
+                return qt
+            # Fallback: legacy bnb where Linear4bit carried quant_type directly.
+            qt_legacy = getattr(module, "quant_type", None)
+            if isinstance(qt_legacy, str):
+                return qt_legacy
+            raise RuntimeError(
+                "save_qlora: could not infer quant_type from Linear4bit module. "
+                f"module repr: {module!r}; "
+                f"bnb.__version__={getattr(bnb, '__version__', '<unknown>')}; "
+                "expected `module.weight.quant_type` (current) or `module.quant_type` (legacy) "
+                "to be a str."
+            )
     raise RuntimeError(
         "save_qlora: wrapper.peft_model contains no Linear4bit modules; "
         "this should not happen after apply_qlora"
@@ -241,6 +270,11 @@ def load_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
         base,
         use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
     )
+    # Mirror the flag set in apply_qlora so peft's LoRA dispatcher routes to
+    # bnb.Linear4bit wrappers on the restored model.  Without this, load_qlora
+    # would succeed but a subsequent merge_lora call would hit the same
+    # packed-weight shape mismatch as described in apply_qlora above.
+    base.is_loaded_in_4bit = True
     peft_base = PeftModel.from_pretrained(base, str(src))
     wrapper.model.model = peft_base
     wrapper.peft_model = peft_base

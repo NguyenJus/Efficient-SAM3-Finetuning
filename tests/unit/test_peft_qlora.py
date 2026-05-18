@@ -6,6 +6,7 @@ lives in tests/integration/test_peft_qlora_real.py. These tests cover:
   - schema parse for PEFTConfig(method="qlora") and QLoRAConfig
   - lazy import of bitsandbytes (module import must succeed without bnb)
   - ImportError surface when apply_qlora is called without bnb
+  - _infer_quant_type_from_wrapper fallback chain (primary + legacy + error)
 
 TDD-red status: this file is committed BEFORE the implementation lands in
 Task 3. Three tests are expected to fail against the current
@@ -18,9 +19,12 @@ NotImplementedError stub and will go green when Task 3 lands:
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
+from typing import Any
 
 import pytest
+from torch import nn
 
 from esam3._registry import lookup
 from esam3.config.schema import PEFTConfig, QLoRAConfig
@@ -67,7 +71,6 @@ def test_import_does_not_require_bitsandbytes() -> None:
     anyway — it pins the static contract.
     """
     import ast
-    from pathlib import Path
 
     import esam3.peft_adapters.qlora as qlora_module
 
@@ -136,3 +139,108 @@ def test_load_qlora_raises_when_peft_model_already_set(tmp_path: Path) -> None:
     w.peft_model = object()
     with pytest.raises(RuntimeError, match="already has a PeftModel"):
         load_qlora(w, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# CPU unit tests for _infer_quant_type_from_wrapper fallback chain
+#
+# These tests do NOT import bitsandbytes; they use a lightweight fake that
+# mimics the `Linear4bit` / `Params4bit` shape just enough to exercise the
+# attribute-read fallbacks in `_infer_quant_type_from_wrapper`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def fake_bnb(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """Install a tiny fake `bitsandbytes` module exposing `bnb.nn.Linear4bit`."""
+    fake = types.ModuleType("bitsandbytes")
+    fake_nn = types.ModuleType("bitsandbytes.nn")
+
+    class _FakeLinear4bit(nn.Module):
+        def __init__(
+            self,
+            *,
+            weight_quant_type: str | None = None,
+            module_quant_type: str | None = None,
+        ) -> None:
+            super().__init__()
+            # Mimic a Params4bit weight with `.quant_type` directly on the weight.
+            weight = nn.Parameter(nn.functional.normalize(nn.Linear(2, 2).weight))
+            if weight_quant_type is not None:
+                weight.quant_type = weight_quant_type  # type: ignore[attr-defined]
+            self.weight = weight
+            if module_quant_type is not None:
+                self.quant_type = module_quant_type  # type: ignore[attr-defined]
+
+    fake_nn.Linear4bit = _FakeLinear4bit  # type: ignore[attr-defined]
+    fake.nn = fake_nn  # type: ignore[attr-defined]
+    fake.__version__ = "0.fake.0"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "bitsandbytes", fake)
+    monkeypatch.setitem(sys.modules, "bitsandbytes.nn", fake_nn)
+    return fake
+
+
+class _FakeWrapper:
+    """Stand-in for Sam3Wrapper holding a `peft_model` attribute."""
+
+    def __init__(self, peft_model: nn.Module) -> None:
+        self.peft_model = peft_model
+
+
+def test_infer_quant_type_primary_path(fake_bnb: types.ModuleType) -> None:
+    from esam3.peft_adapters.qlora import _infer_quant_type_from_wrapper
+
+    fake_linear4bit = fake_bnb.nn.Linear4bit(weight_quant_type="nf4")  # type: ignore[attr-defined]
+    model = nn.Sequential(fake_linear4bit)
+    wrapper: Any = _FakeWrapper(model)
+    assert _infer_quant_type_from_wrapper(wrapper) == "nf4"
+
+
+def test_infer_quant_type_legacy_fallback(fake_bnb: types.ModuleType) -> None:
+    from esam3.peft_adapters.qlora import _infer_quant_type_from_wrapper
+
+    fake_linear4bit = fake_bnb.nn.Linear4bit(module_quant_type="fp4")  # type: ignore[attr-defined]
+    model = nn.Sequential(fake_linear4bit)
+    wrapper: Any = _FakeWrapper(model)
+    assert _infer_quant_type_from_wrapper(wrapper) == "fp4"
+
+
+def test_infer_quant_type_raises_when_both_paths_missing(
+    fake_bnb: types.ModuleType,
+) -> None:
+    from esam3.peft_adapters.qlora import _infer_quant_type_from_wrapper
+
+    fake_linear4bit = fake_bnb.nn.Linear4bit()  # no quant_type set anywhere
+    model = nn.Sequential(fake_linear4bit)
+    wrapper: Any = _FakeWrapper(model)
+    with pytest.raises(RuntimeError, match="could not infer quant_type"):
+        _infer_quant_type_from_wrapper(wrapper)
+
+
+def test_has_plain_nn_linear_ignores_lora_adapter_children() -> None:
+    """The tightened predicate must ignore lora_A/lora_B nn.Linears but flag base leaks."""
+    from tests.helpers.lora_predicates import has_plain_nn_linear as _has_plain_nn_linear
+
+    # Fake LoRA adapter wrapper: holds a Linear4bit-shape sentinel as base, plus
+    # full-precision lora_A / lora_B nn.Linear adapters (mimicking peft.tuners.lora.bnb.Linear4bit).
+    class _Linear4bitSentinel(nn.Linear):
+        """Subclass of nn.Linear (mimics bnb.nn.Linear4bit subclassing)."""
+
+    class _FakeLoraWrapper(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.base_layer = _Linear4bitSentinel(4, 4)
+            self.lora_A = nn.ModuleDict({"default": nn.Linear(4, 2, bias=False)})
+            self.lora_B = nn.ModuleDict({"default": nn.Linear(2, 4, bias=False)})
+
+    # Case 1: all base Linears already swapped (only Linear4bitSentinel + lora adapters).
+    # Expected: predicate returns False.
+    clean = nn.Sequential(_FakeLoraWrapper(), _FakeLoraWrapper())
+    assert not _has_plain_nn_linear(clean), (
+        "predicate must not flag lora_A/lora_B adapter Linears as base leaks"
+    )
+
+    # Case 2: introduce a real base-Linear leak alongside the LoRA-wrapped layers.
+    # Expected: predicate returns True (the leaked plain nn.Linear is NOT under a lora_* path).
+    leaked = nn.Sequential(_FakeLoraWrapper(), nn.Linear(4, 4))
+    assert _has_plain_nn_linear(leaked), "predicate must still flag a true base nn.Linear leak"
