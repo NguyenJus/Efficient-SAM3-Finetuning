@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -56,7 +56,9 @@ class WandBTracker:
         (run_dir / _WANDB_ID_FILENAME).write_text(self._run.id)
 
     @staticmethod
-    def _maybe_resume_id(resume_from: Path | None) -> tuple[str | None, str | None]:
+    def _maybe_resume_id(
+        resume_from: Path | None,
+    ) -> tuple[str | None, Literal["allow"] | None]:
         """Walk up from ``resume_from`` looking for wandb_run_id.txt.
 
         Checks ``resume_from`` itself plus up to 3 ancestors, so a path like
