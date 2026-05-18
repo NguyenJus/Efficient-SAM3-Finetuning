@@ -23,8 +23,10 @@ def _denorm_cxcywh_to_xywh(boxes_norm: Tensor, original_hw: tuple[int, int]) -> 
     bh = boxes_norm[:, 3] * h
     x = (cx - bw / 2).clamp(min=0.0, max=float(w))
     y = (cy - bh / 2).clamp(min=0.0, max=float(h))
-    bw = bw.clamp(min=0.0, max=float(w))
-    bh = bh.clamp(min=0.0, max=float(h))
+    x2 = (cx + bw / 2).clamp(min=0.0, max=float(w))
+    y2 = (cy + bh / 2).clamp(min=0.0, max=float(h))
+    bw = (x2 - x).clamp(min=0.0)
+    bh = (y2 - y).clamp(min=0.0)
     return torch.stack([x, y, bw, bh], dim=-1)
 
 
@@ -91,6 +93,11 @@ def queries_to_coco_results(
 
     # --- boxes ---
     boxes_norm = pred_boxes.float().squeeze(0)  # (N, 4)
+    if not torch.isfinite(boxes_norm).all():
+        raise RuntimeError(
+            "non-finite box coordinates in postprocess; check model outputs "
+            "(pred_boxes contains NaN/Inf)"
+        )
     boxes_xywh = _denorm_cxcywh_to_xywh(boxes_norm, original_hw)  # (N, 4)
 
     # --- masks ---
