@@ -131,9 +131,15 @@ class Trainer:
                 cfg.peft.method,
             )
 
-    def fit(self, *, run_dir: Path, resume_from: Path | None = None) -> RunResult:
+    def fit(self, *, run_dir: Path | None = None, resume_from: Path | None = None) -> RunResult:
         cfg = self.cfg
         _seed_everything(cfg.run.seed)
+
+        if run_dir is None:
+            from datetime import UTC, datetime
+
+            stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            run_dir = Path(cfg.run.output_dir) / f"{cfg.run.name}-{stamp}"
 
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
