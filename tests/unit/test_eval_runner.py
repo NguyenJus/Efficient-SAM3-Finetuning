@@ -51,9 +51,11 @@ def test_run_eval_dispatches_dataset_via_registry(
 
     calls: list[tuple[str, str]] = []
 
+    builder_mock = MagicMock(return_value=MagicMock(__len__=lambda self: 0, class_names=[]))
+
     def fake_lookup(kind: str, name: str) -> object:
         calls.append((kind, name))
-        return lambda *a, **kw: MagicMock(__len__=lambda self: 0, class_names=[])
+        return builder_mock
 
     monkeypatch.setattr("esam3.eval.runner.lookup", fake_lookup)
     monkeypatch.setattr("esam3.eval.runner.load_sam31", lambda _m: MagicMock())
@@ -68,3 +70,9 @@ def test_run_eval_dispatches_dataset_via_registry(
     result = run_eval(cfg, checkpoint=tmp_path, split="val", output_dir=tmp_path)
     assert ("dataset", "hf") in calls
     assert result is fake_report
+    # Verify builder was called with the expected shape.
+    builder_mock.assert_called_once()
+    call_args = builder_mock.call_args
+    assert call_args.kwargs.get("pipeline") == "eval"
+    assert call_args.kwargs.get("model_name") == "facebook/sam3.1"
+    assert isinstance(call_args.args[0], dict)
