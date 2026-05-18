@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from esam3.cli.main import app
@@ -60,15 +61,58 @@ def test_doctor_runs_and_prints_not_implemented() -> None:
     assert "not yet implemented" in _plain(result.stdout).lower()
 
 
-def test_train_with_valid_config_prints_not_implemented(tmp_path: object) -> None:
-    # Depends on Task 16 example configs being committed.
-    from pathlib import Path
+def test_train_invokes_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """train CLI parses config and delegates to run_training."""
+    from unittest.mock import MagicMock
+
+    from esam3.cli import train_cmd
+    from esam3.cli.main import app
 
     repo = Path(__file__).resolve().parents[2]
     cfg = repo / "configs" / "examples" / "coco_text_lora.yaml"
-    result = runner.invoke(app, ["train", "--config", str(cfg)])
+
+    fake_result = MagicMock(
+        run_dir=tmp_path / "r",
+        adapter_path=tmp_path / "r" / "adapter",
+        final_metrics=None,
+    )
+    called: dict[str, object] = {}
+
+    def fake_run(cfg_obj, *, resume_from=None):
+        called["cfg"] = cfg_obj
+        called["resume_from"] = resume_from
+        return fake_result
+
+    monkeypatch.setattr(train_cmd, "run_training", fake_run)
+
+    local_runner = CliRunner()
+    result = local_runner.invoke(app, ["train", "--config", str(cfg)])
     assert result.exit_code == 0
-    assert "not yet implemented" in _plain(result.stdout).lower()
+    assert "run_dir=" in _plain(result.stdout)
+    assert called["resume_from"] is None
+
+
+def test_train_rejects_bbox_prompt_mode(tmp_path: Path) -> None:
+    """prompt_mode=bbox is surfaced as a CLI BadParameter, not a stack trace."""
+    from esam3.cli.main import app
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        """
+run: {name: t, output_dir: ./runs, seed: 0}
+data:
+  format: coco
+  train: {annotations: t.json, images: t/}
+  val: {annotations: v.json, images: v/}
+  prompt_mode: bbox
+peft: {method: lora}
+train: {epochs: 1}
+"""
+    )
+    local_runner = CliRunner()
+    result = local_runner.invoke(app, ["train", "--config", str(cfg_path)])
+    assert result.exit_code != 0
+    assert "bbox" in _plain(result.output).lower()
 
 
 def test_eval_command_with_split_test_missing_data_test(tmp_path: Path) -> None:
