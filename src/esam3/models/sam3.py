@@ -310,6 +310,58 @@ def _patch_pos_enc_dtype(model: nn.Module) -> None:
     )
 
 
+def _patch_roi_align_dtype() -> None:
+    """Wrap ``torchvision.ops.roi_align`` to cast ``boxes`` to the input tensor's dtype.
+
+    sam3's ``SequenceGeometryEncoder._encode_boxes``
+    (sam3/model/geometry_encoders.py:651-653) calls ``torchvision.ops.roi_align``
+    with ``rois`` hard-cast to fp32 via ``.float()``, while ``img_feats`` is bf16
+    when the model is loaded under ``ModelConfig(dtype="bfloat16")``.  torchvision's
+    C++ kernel requires both arguments to share dtype, so this raises a
+    ``RuntimeError`` on Colab T4.  We cannot modify the sam3 source (installed
+    package), and we cannot wrap the call in ``torch.autocast`` because that
+    re-triggers the bf16-vs-fp32 collision inside
+    ``sam3/model/decoder.py::forward_ffn``'s ``with torch.amp.autocast(enabled=False)``
+    region — the same constraint that drove the cast-on-output approach adopted in
+    PR #13.
+
+    This function installs a thin module-level wrapper on ``torchvision.ops.roi_align``
+    that coerces ``boxes`` (both the list-of-tensors form and the single-tensor form)
+    to ``input.dtype`` before delegating to the original kernel.  The patch is
+    idempotent: repeated calls are no-ops once the sentinel attribute is set.
+
+    Notes:
+    - This is a module-level monkey-patch (not class/instance-level) because the
+      call site we are working around is inside sam3's installed package, not a
+      submodule of the model we can traverse.
+    - We do NOT introduce any ``torch.autocast`` scope; doing so re-triggered the
+      bf16-vs-fp32 collision inside ``sam3/model/decoder.py::forward_ffn``'s
+      ``with torch.amp.autocast(enabled=False)`` region during PR #13's v2 work.
+      The cast-before-call approach side-steps that entirely.
+    - Re-evaluate every sam3 version bump; track long-term fix in logs/TODO.md.
+    """
+    import torchvision.ops as tvo
+
+    if getattr(tvo, "_esam3_roi_align_dtype_patched", False):
+        return
+    _original = tvo.roi_align
+
+    def _roi_align_dtype_aware(input, boxes, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if isinstance(boxes, (list, tuple)):
+            boxes = type(boxes)(
+                b.to(dtype=input.dtype) if b.dtype != input.dtype else b for b in boxes
+            )
+        elif hasattr(boxes, "dtype") and boxes.dtype != input.dtype:
+            boxes = boxes.to(dtype=input.dtype)
+        return _original(input, boxes, *args, **kwargs)
+
+    tvo.roi_align = _roi_align_dtype_aware
+    tvo._esam3_roi_align_dtype_patched = True
+    logger.info(
+        "Patched torchvision.ops.roi_align for dtype awareness (boxes cast to input dtype)."
+    )
+
+
 def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     """Load SAM 3.1 via Meta's `sam3` package and wrap it for our trainer.
 
@@ -348,6 +400,10 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     # fp32 inputs feeding bf16 Linear weights in the geometry encoder.
     # See _patch_pos_enc_dtype for full rationale.
     _patch_pos_enc_dtype(raw_model)
+
+    # Cast roi_align boxes to input dtype to avoid fp32 rois fed to bf16 img_feats
+    # in sam3's geometry encoder. See _patch_roi_align_dtype for full rationale.
+    _patch_roi_align_dtype()
 
     adapter = _Sam3ImageAdapter(raw_model, image_size=1008)
     return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
