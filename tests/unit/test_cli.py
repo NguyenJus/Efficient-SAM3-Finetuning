@@ -55,10 +55,10 @@ def test_init_help_exits_zero() -> None:
     assert result.exit_code == 0
 
 
-def test_doctor_runs_and_prints_not_implemented() -> None:
+def test_doctor_runs_and_reports_environment() -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "not yet implemented" in _plain(result.stdout).lower()
+    assert "torch" in _plain(result.stdout).lower()
 
 
 def test_train_invokes_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
