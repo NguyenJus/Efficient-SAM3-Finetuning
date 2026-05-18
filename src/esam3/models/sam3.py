@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from peft import PeftModel
@@ -209,7 +209,8 @@ class _Sam3ImageAdapter(nn.Module):
     ) -> dict[str, Tensor]:
         if not all(isinstance(p, TextPrompts) for p in prompts):
             raise ValueError("_Sam3ImageAdapter only supports TextPrompts in v0")
-        class_names = [p.classes[0] for p in prompts]
+        text_prompts = cast(list[TextPrompts], prompts)
+        class_names = [p.classes[0] for p in text_prompts]
         if len(set(class_names)) > 1:
             raise ValueError(
                 "All prompts in a batch must share the same class name "
@@ -219,8 +220,10 @@ class _Sam3ImageAdapter(nn.Module):
         device = images.device
         b = images.shape[0]
         model_dtype = next(self.model.parameters()).dtype
-        backbone_out = self.model.backbone.forward_image(images)
-        text_outputs = self.model.backbone.forward_text([class_names[0]], device=device)
+        backbone_out = self.model.backbone.forward_image(images)  # type: ignore[union-attr, operator]
+        text_outputs = self.model.backbone.forward_text(  # type: ignore[union-attr, operator]
+            [class_names[0]], device=device
+        )
         backbone_out.update(text_outputs)
         find_input = FindStage(
             img_ids=torch.arange(b, device=device, dtype=torch.long),
@@ -243,13 +246,265 @@ class _Sam3ImageAdapter(nn.Module):
                 point_embeddings=torch.zeros(0, b, 2, device=device, dtype=model_dtype),
                 point_mask=torch.zeros(b, 0, device=device, dtype=torch.bool),
             )
-        outputs: dict[str, Tensor] = self.model.forward_grounding(
+        outputs: dict[str, Tensor] = self.model.forward_grounding(  # type: ignore[operator]
             backbone_out=backbone_out,
             find_input=find_input,
             find_target=None,
             geometric_prompt=gp,
         )
         return outputs
+
+
+def _patch_pos_enc_dtype(model: nn.Module) -> None:
+    """Wrap every PositionEmbeddingSine._encode_xy to honor input dtype.
+
+    sam3's ``PositionEmbeddingSine._encode_xy``
+    (sam3/model/position_encoding.py:60-77) builds its frequency table as
+    ``dim_t = torch.arange(..., dtype=torch.float32, ...)`` regardless of the
+    input dtype.  Downstream broadcasts produce fp32 output, which then feeds a
+    bf16-weight ``points_pos_enc_project`` Linear in
+    ``PointGeometryEncoder._encode_points`` (sam3/model/geometry_encoders.py:623)
+    and raises ``RuntimeError: mat1 and mat2 must have the same dtype`` on Colab
+    T4 with ``ModelConfig(dtype="bfloat16")``.  This is true even for zero-length
+    point sequences because ``F.linear`` validates dtypes regardless of seq len.
+
+    We wrap each ``_encode_xy`` method to cast its (pos_x, pos_y) outputs to the
+    dtype of the input ``x`` tensor BEFORE returning.  The bound method is
+    replaced via ``MethodType`` on each ``PositionEmbeddingSine`` instance so the
+    patch persists across forward calls and survives ``.to(device)`` /
+    ``.to(dtype)`` (only parameters move; methods do not).
+
+    This is a localized stop-gap.  The right long-term fix is upstream in
+    sam3's pos-enc to honor input dtype directly (tracked as a follow-up
+    in logs/TODO.md).  Re-evaluate every sam3 version bump.
+
+    Notes:
+    - We use a per-instance ``MethodType`` replacement (NOT class-level
+      monkey-patch) to avoid affecting other consumers of sam3 in the same
+      process.
+    - We do NOT introduce any ``torch.autocast`` scope; doing so re-triggered
+      the bf16-vs-fp32 collision inside ``sam3/model/decoder.py::forward_ffn``'s
+      ``with torch.amp.autocast(enabled=False)`` region during PR #13's v2 work.
+      The cast-on-return approach side-steps that entirely.
+    """
+    from types import MethodType
+
+    from sam3.model.position_encoding import PositionEmbeddingSine
+
+    patched_count = 0
+    for submodule in model.modules():
+        if not isinstance(submodule, PositionEmbeddingSine):
+            continue
+        if getattr(submodule, "_esam3_pos_enc_dtype_patched", False):
+            continue
+        original = submodule._encode_xy
+
+        def _encode_xy_dtype_aware(self, x, y, _orig=original):  # type: ignore[no-untyped-def]
+            pos_x, pos_y = _orig(x, y)
+            return pos_x.to(dtype=x.dtype), pos_y.to(dtype=x.dtype)
+
+        submodule._encode_xy = MethodType(_encode_xy_dtype_aware, submodule)
+        submodule._esam3_pos_enc_dtype_patched = True  # idempotency marker
+        patched_count += 1
+
+    logger.info(
+        "Patched %d PositionEmbeddingSine._encode_xy callsites for dtype awareness.",
+        patched_count,
+    )
+
+
+def _patch_roi_align_dtype() -> None:
+    """Wrap ``torchvision.ops.roi_align`` to cast ``boxes`` to the input tensor's dtype.
+
+    sam3's ``SequenceGeometryEncoder._encode_boxes``
+    (sam3/model/geometry_encoders.py:651-653) calls ``torchvision.ops.roi_align``
+    with ``rois`` hard-cast to fp32 via ``.float()``, while ``img_feats`` is bf16
+    when the model is loaded under ``ModelConfig(dtype="bfloat16")``.  torchvision's
+    C++ kernel requires both arguments to share dtype, so this raises a
+    ``RuntimeError`` on Colab T4.  We cannot modify the sam3 source (installed
+    package), and we cannot wrap the call in ``torch.autocast`` because that
+    re-triggers the bf16-vs-fp32 collision inside
+    ``sam3/model/decoder.py::forward_ffn``'s ``with torch.amp.autocast(enabled=False)``
+    region — the same constraint that drove the cast-on-output approach adopted in
+    PR #13.
+
+    This function installs a thin module-level wrapper on ``torchvision.ops.roi_align``
+    that coerces ``boxes`` (both the list-of-tensors form and the single-tensor form)
+    to ``input.dtype`` before delegating to the original kernel.  The patch is
+    idempotent: repeated calls are no-ops once the sentinel attribute is set.
+
+    Notes:
+    - This is a module-level monkey-patch (not class/instance-level) because the
+      call site we are working around is inside sam3's installed package, not a
+      submodule of the model we can traverse.
+    - We do NOT introduce any ``torch.autocast`` scope; doing so re-triggered the
+      bf16-vs-fp32 collision inside ``sam3/model/decoder.py::forward_ffn``'s
+      ``with torch.amp.autocast(enabled=False)`` region during PR #13's v2 work.
+      The cast-before-call approach side-steps that entirely.
+    - Re-evaluate every sam3 version bump; track long-term fix in logs/TODO.md.
+    """
+    import torchvision.ops as tvo  # type: ignore[import-untyped]
+
+    if getattr(tvo, "_esam3_roi_align_dtype_patched", False):
+        return
+    _original = tvo.roi_align
+
+    def _roi_align_dtype_aware(input, boxes, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if isinstance(boxes, (list, tuple)):
+            boxes = type(boxes)(
+                b.to(dtype=input.dtype) if b.dtype != input.dtype else b for b in boxes
+            )
+        elif hasattr(boxes, "dtype") and boxes.dtype != input.dtype:
+            boxes = boxes.to(dtype=input.dtype)
+        return _original(input, boxes, *args, **kwargs)
+
+    tvo.roi_align = _roi_align_dtype_aware
+    tvo._esam3_roi_align_dtype_patched = True
+    logger.info(
+        "Patched torchvision.ops.roi_align for dtype awareness (boxes cast to input dtype)."
+    )
+
+
+def _patch_encode_prompt_dtype(model: nn.Module) -> None:
+    """Cast ``_encode_prompt``'s returned ``prompt`` to the model's parameter dtype.
+
+    sam3's ``SAM3Image._encode_prompt``
+    (sam3/model/sam3_image.py:196-198) builds a fallback ``visual_prompt_embed``
+    via ``torch.zeros((0, *geo_feats.shape[1:]), device=...)`` with NO ``dtype=``
+    argument, so it defaults to ``torch.float32``.  Even though the tensor is
+    zero-length in dim 0, the immediately-following
+    ``torch.cat([txt_feats, geo_feats, visual_prompt_embed], dim=0)`` triggers
+    PyTorch's type-promotion rule and returns an fp32 ``prompt`` when the
+    model is loaded under ``ModelConfig(dtype="bfloat16")``.  The fp32 prompt
+    then flows into ``TransformerEncoderFusion`` as ``memory``; the encoder
+    layer's ``cross_attn_image`` does ``key = memory`` and feeds it to a
+    Linear with bf16 weight, producing
+    ``RuntimeError: mat1 and mat2 must have the same dtype, but got Float and BFloat16``.
+
+    We cannot modify sam3 source (installed package), and we cannot wrap the
+    call in ``torch.autocast`` for the same reason as the prior two patches:
+    sam3's ``decoder.py::forward_ffn`` contains an explicit
+    ``with torch.amp.autocast(enabled=False)`` region that re-triggers the
+    bf16/fp32 collision.
+
+    The patch rebinds ``_encode_prompt`` per instance via ``MethodType`` and
+    casts the returned ``prompt`` (and ``prompt_mask`` is left alone — it's
+    boolean) to the model's parameter dtype before returning.  When the model
+    is loaded in fp32 the cast is a no-op.
+
+    Notes:
+    - We use a per-instance ``MethodType`` replacement (NOT class-level
+      monkey-patch) so we don't affect other consumers of sam3 in the same
+      process.
+    - Idempotency sentinel mirrors ``_patch_pos_enc_dtype``.
+    - Re-evaluate every sam3 version bump; track upstream fix in logs/TODO.md.
+    """
+    from types import MethodType
+
+    if not hasattr(model, "_encode_prompt"):
+        return
+    if getattr(model, "_esam3_encode_prompt_dtype_patched", False):
+        return
+    original = model._encode_prompt
+    target_dtype = next(model.parameters()).dtype
+
+    def _encode_prompt_dtype_aware(self, *args, _orig=original, _dtype=target_dtype, **kwargs):  # type: ignore[no-untyped-def]
+        prompt, prompt_mask, backbone_out = _orig(*args, **kwargs)
+        if prompt.dtype != _dtype:
+            prompt = prompt.to(dtype=_dtype)
+        return prompt, prompt_mask, backbone_out
+
+    model._encode_prompt = MethodType(_encode_prompt_dtype_aware, model)  # type: ignore[assignment]
+    model._esam3_encode_prompt_dtype_patched = True  # type: ignore[assignment]
+    logger.info(
+        "Patched SAM3Image._encode_prompt for dtype awareness (prompt cast to %s).",
+        target_dtype,
+    )
+
+
+# Modules that own a `weight` parameter and require their floating-point
+# input to match that weight's dtype. We hook the forward pre-call on each
+# instance to cast input[0] in-flight. Embedding is intentionally excluded
+# (integer input). Attention-style fused modules (e.g. nn.MultiheadAttention)
+# are excluded because they take multiple tensor inputs with non-uniform
+# dtype expectations; sam3's attention is built from raw Linears anyway.
+_DTYPE_SENSITIVE_MODULE_TYPES: tuple[type[nn.Module], ...] = (
+    nn.Linear,
+    nn.LayerNorm,
+    nn.Conv1d,
+    nn.Conv2d,
+    nn.Conv3d,
+)
+
+
+def _patch_module_input_dtype(model: nn.Module) -> None:
+    """Install a generic fp-input-dtype backstop on every dtype-sensitive submodule.
+
+    Several places in sam3 build activation tensors with hardcoded fp32
+    (e.g. ``torch.arange(..., dtype=torch.float32)`` in
+    ``model_misc.gen_sineembed_for_position`` at sam3/model/model_misc.py:915,
+    ``.float()`` in ``get_valid_ratio`` at sam3/model/model_misc.py:910).
+    When the model is loaded under ``ModelConfig(dtype="bfloat16")``, those
+    fp32 tensors flow into bf16-weighted ``nn.Linear``/``nn.LayerNorm``/conv
+    modules and raise ``RuntimeError: mat1 and mat2 must have the same
+    dtype, but got Float and BFloat16`` on Colab T4.  We've already patched
+    three specific producers (``_patch_pos_enc_dtype``,
+    ``_patch_roi_align_dtype``, ``_patch_encode_prompt_dtype``); this is the
+    generic backstop that catches any remaining or future cascading site by
+    coercing dtype at the *consumer* boundary.
+
+    The hook fires before each forward call, casts a floating-point first
+    positional input to the module's first-parameter dtype, and returns the
+    rewritten args tuple.  Non-tensor inputs and integer/bool tensors are
+    passed through untouched (preserves ``nn.Embedding`` semantics, though
+    Embedding is excluded from the iterated module-type set anyway).
+    Parameter-free submodules (no ``.parameters()``) are skipped.
+
+    The patch is idempotent per instance via a sentinel attribute.  Hooks
+    survive ``.to(dtype=)`` / ``.to(device)`` calls because they are
+    attached to the module, not its parameters.
+
+    Notes:
+    - This is a *consumer-side* defense.  We retain the producer-side
+      patches above for sites we already know about, partly to keep the
+      precision close to source and partly so the existing test suite for
+      those producer patches keeps documenting the upstream bug surface.
+      The two layers compose without redundancy in the happy path: the
+      consumer hook is a no-op once the producer already matches.
+    - We do NOT use ``torch.autocast`` because that re-triggers the bf16/fp32
+      collision in ``sam3/model/decoder.py::forward_ffn``'s
+      ``with torch.amp.autocast(enabled=False)`` region (PR #13 constraint).
+    - Re-evaluate every sam3 version bump; track upstream fix in logs/TODO.md.
+    """
+
+    def _input_dtype_hook(module: nn.Module, args: tuple[Any, ...]):  # type: ignore[no-untyped-def]
+        if not args:
+            return None
+        x = args[0]
+        if not isinstance(x, torch.Tensor) or not x.is_floating_point():
+            return None
+        try:
+            target_dtype = next(module.parameters()).dtype
+        except StopIteration:
+            return None
+        if x.dtype == target_dtype:
+            return None
+        return (x.to(dtype=target_dtype), *args[1:])
+
+    patched_count = 0
+    for submodule in model.modules():
+        if not isinstance(submodule, _DTYPE_SENSITIVE_MODULE_TYPES):
+            continue
+        if getattr(submodule, "_esam3_module_input_dtype_patched", False):
+            continue
+        submodule.register_forward_pre_hook(_input_dtype_hook)
+        submodule._esam3_module_input_dtype_patched = True  # type: ignore[assignment]
+        patched_count += 1
+
+    logger.info(
+        "Patched %d dtype-sensitive modules (Linear/LayerNorm/Conv) with input-dtype hook.",
+        patched_count,
+    )
 
 
 def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
@@ -285,6 +540,27 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
         raw_model = raw_model.to(dtype=torch.bfloat16)
     elif cfg.dtype == "float16":
         raw_model = raw_model.to(dtype=torch.float16)
+
+    # Cast PositionEmbeddingSine._encode_xy outputs to input dtype to avoid
+    # fp32 inputs feeding bf16 Linear weights in the geometry encoder.
+    # See _patch_pos_enc_dtype for full rationale.
+    _patch_pos_enc_dtype(raw_model)
+
+    # Cast roi_align boxes to input dtype to avoid fp32 rois fed to bf16 img_feats
+    # in sam3's geometry encoder. See _patch_roi_align_dtype for full rationale.
+    _patch_roi_align_dtype()
+
+    # Cast _encode_prompt's `prompt` to model dtype — sam3 builds a fallback
+    # fp32 visual_prompt_embed via torch.zeros() without dtype=, and
+    # torch.cat type-promotes the concatenated prompt to fp32 even when
+    # txt_feats/geo_feats are bf16. See _patch_encode_prompt_dtype.
+    _patch_encode_prompt_dtype(raw_model)
+
+    # Generic backstop: cast fp inputs to weight dtype at every
+    # nn.Linear/LayerNorm/Conv* in the model. Catches any remaining or
+    # future cascading fp32 producer site we haven't patched directly.
+    # See _patch_module_input_dtype for full rationale.
+    _patch_module_input_dtype(raw_model)
 
     adapter = _Sam3ImageAdapter(raw_model, image_size=1008)
     return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
