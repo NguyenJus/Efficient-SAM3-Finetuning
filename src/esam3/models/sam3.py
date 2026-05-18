@@ -419,6 +419,91 @@ def _patch_encode_prompt_dtype(model: nn.Module) -> None:
     )
 
 
+# Modules that own a `weight` parameter and require their floating-point
+# input to match that weight's dtype. We hook the forward pre-call on each
+# instance to cast input[0] in-flight. Embedding is intentionally excluded
+# (integer input). Attention-style fused modules (e.g. nn.MultiheadAttention)
+# are excluded because they take multiple tensor inputs with non-uniform
+# dtype expectations; sam3's attention is built from raw Linears anyway.
+_DTYPE_SENSITIVE_MODULE_TYPES: tuple[type[nn.Module], ...] = (
+    nn.Linear,
+    nn.LayerNorm,
+    nn.Conv1d,
+    nn.Conv2d,
+    nn.Conv3d,
+)
+
+
+def _patch_module_input_dtype(model: nn.Module) -> None:
+    """Install a generic fp-input-dtype backstop on every dtype-sensitive submodule.
+
+    Several places in sam3 build activation tensors with hardcoded fp32
+    (e.g. ``torch.arange(..., dtype=torch.float32)`` in
+    ``model_misc.gen_sineembed_for_position`` at sam3/model/model_misc.py:915,
+    ``.float()`` in ``get_valid_ratio`` at sam3/model/model_misc.py:910).
+    When the model is loaded under ``ModelConfig(dtype="bfloat16")``, those
+    fp32 tensors flow into bf16-weighted ``nn.Linear``/``nn.LayerNorm``/conv
+    modules and raise ``RuntimeError: mat1 and mat2 must have the same
+    dtype, but got Float and BFloat16`` on Colab T4.  We've already patched
+    three specific producers (``_patch_pos_enc_dtype``,
+    ``_patch_roi_align_dtype``, ``_patch_encode_prompt_dtype``); this is the
+    generic backstop that catches any remaining or future cascading site by
+    coercing dtype at the *consumer* boundary.
+
+    The hook fires before each forward call, casts a floating-point first
+    positional input to the module's first-parameter dtype, and returns the
+    rewritten args tuple.  Non-tensor inputs and integer/bool tensors are
+    passed through untouched (preserves ``nn.Embedding`` semantics, though
+    Embedding is excluded from the iterated module-type set anyway).
+    Parameter-free submodules (no ``.parameters()``) are skipped.
+
+    The patch is idempotent per instance via a sentinel attribute.  Hooks
+    survive ``.to(dtype=)`` / ``.to(device)`` calls because they are
+    attached to the module, not its parameters.
+
+    Notes:
+    - This is a *consumer-side* defense.  We retain the producer-side
+      patches above for sites we already know about, partly to keep the
+      precision close to source and partly so the existing test suite for
+      those producer patches keeps documenting the upstream bug surface.
+      The two layers compose without redundancy in the happy path: the
+      consumer hook is a no-op once the producer already matches.
+    - We do NOT use ``torch.autocast`` because that re-triggers the bf16/fp32
+      collision in ``sam3/model/decoder.py::forward_ffn``'s
+      ``with torch.amp.autocast(enabled=False)`` region (PR #13 constraint).
+    - Re-evaluate every sam3 version bump; track upstream fix in logs/TODO.md.
+    """
+
+    def _input_dtype_hook(module: nn.Module, args: tuple[Any, ...]):  # type: ignore[no-untyped-def]
+        if not args:
+            return None
+        x = args[0]
+        if not isinstance(x, torch.Tensor) or not x.is_floating_point():
+            return None
+        try:
+            target_dtype = next(module.parameters()).dtype
+        except StopIteration:
+            return None
+        if x.dtype == target_dtype:
+            return None
+        return (x.to(dtype=target_dtype), *args[1:])
+
+    patched_count = 0
+    for submodule in model.modules():
+        if not isinstance(submodule, _DTYPE_SENSITIVE_MODULE_TYPES):
+            continue
+        if getattr(submodule, "_esam3_module_input_dtype_patched", False):
+            continue
+        submodule.register_forward_pre_hook(_input_dtype_hook)
+        submodule._esam3_module_input_dtype_patched = True
+        patched_count += 1
+
+    logger.info(
+        "Patched %d dtype-sensitive modules (Linear/LayerNorm/Conv) with input-dtype hook.",
+        patched_count,
+    )
+
+
 def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     """Load SAM 3.1 via Meta's `sam3` package and wrap it for our trainer.
 
@@ -467,6 +552,12 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     # torch.cat type-promotes the concatenated prompt to fp32 even when
     # txt_feats/geo_feats are bf16. See _patch_encode_prompt_dtype.
     _patch_encode_prompt_dtype(raw_model)
+
+    # Generic backstop: cast fp inputs to weight dtype at every
+    # nn.Linear/LayerNorm/Conv* in the model. Catches any remaining or
+    # future cascading fp32 producer site we haven't patched directly.
+    # See _patch_module_input_dtype for full rationale.
+    _patch_module_input_dtype(raw_model)
 
     adapter = _Sam3ImageAdapter(raw_model, image_size=1008)
     return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
