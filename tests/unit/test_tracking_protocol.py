@@ -1,0 +1,38 @@
+"""Tracker Protocol conformance — catches signature drift early."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from esam3.tracking.base import Tracker
+from esam3.tracking.noop import NoopTracker
+
+
+def test_noop_is_a_tracker() -> None:
+    assert isinstance(NoopTracker(), Tracker)
+
+
+def test_missing_start_run_is_not_a_tracker() -> None:
+    class Incomplete:
+        def log_scalars(self, step: int, values: dict[str, float]) -> None: ...
+        def log_images(self, step: int, images: dict[str, np.ndarray[Any, Any]]) -> None: ...
+        def close(self) -> None: ...
+
+    assert not isinstance(Incomplete(), Tracker)
+
+
+def test_missing_close_is_not_a_tracker() -> None:
+    class Incomplete:
+        def start_run(
+            self,
+            run_dir: Path,
+            config: dict[str, Any],
+            resume_from: Path | None = None,
+        ) -> None: ...
+        def log_scalars(self, step: int, values: dict[str, float]) -> None: ...
+        def log_images(self, step: int, images: dict[str, np.ndarray[Any, Any]]) -> None: ...
+
+    assert not isinstance(Incomplete(), Tracker)
