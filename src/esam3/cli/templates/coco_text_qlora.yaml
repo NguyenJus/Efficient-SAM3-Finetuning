@@ -1,4 +1,4 @@
-# esam3 starter config — text-prompt LoRA finetune on COCO-format data.
+# esam3 starter config — text-prompt QLoRA finetune on COCO-format data.
 # Edit the paths in the `data:` section, then run:
 #   esam3 train --config config.yaml
 run:
