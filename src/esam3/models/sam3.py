@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from peft import PeftModel
@@ -209,7 +209,8 @@ class _Sam3ImageAdapter(nn.Module):
     ) -> dict[str, Tensor]:
         if not all(isinstance(p, TextPrompts) for p in prompts):
             raise ValueError("_Sam3ImageAdapter only supports TextPrompts in v0")
-        class_names = [p.classes[0] for p in prompts]
+        text_prompts = cast(list[TextPrompts], prompts)
+        class_names = [p.classes[0] for p in text_prompts]
         if len(set(class_names)) > 1:
             raise ValueError(
                 "All prompts in a batch must share the same class name "
@@ -219,8 +220,10 @@ class _Sam3ImageAdapter(nn.Module):
         device = images.device
         b = images.shape[0]
         model_dtype = next(self.model.parameters()).dtype
-        backbone_out = self.model.backbone.forward_image(images)
-        text_outputs = self.model.backbone.forward_text([class_names[0]], device=device)
+        backbone_out = self.model.backbone.forward_image(images)  # type: ignore[union-attr, operator]
+        text_outputs = self.model.backbone.forward_text(  # type: ignore[union-attr, operator]
+            [class_names[0]], device=device
+        )
         backbone_out.update(text_outputs)
         find_input = FindStage(
             img_ids=torch.arange(b, device=device, dtype=torch.long),
@@ -243,7 +246,7 @@ class _Sam3ImageAdapter(nn.Module):
                 point_embeddings=torch.zeros(0, b, 2, device=device, dtype=model_dtype),
                 point_mask=torch.zeros(b, 0, device=device, dtype=torch.bool),
             )
-        outputs: dict[str, Tensor] = self.model.forward_grounding(
+        outputs: dict[str, Tensor] = self.model.forward_grounding(  # type: ignore[operator]
             backbone_out=backbone_out,
             find_input=find_input,
             find_target=None,
@@ -340,7 +343,7 @@ def _patch_roi_align_dtype() -> None:
       The cast-before-call approach side-steps that entirely.
     - Re-evaluate every sam3 version bump; track long-term fix in logs/TODO.md.
     """
-    import torchvision.ops as tvo
+    import torchvision.ops as tvo  # type: ignore[import-untyped]
 
     if getattr(tvo, "_esam3_roi_align_dtype_patched", False):
         return
@@ -411,8 +414,8 @@ def _patch_encode_prompt_dtype(model: nn.Module) -> None:
             prompt = prompt.to(dtype=_dtype)
         return prompt, prompt_mask, backbone_out
 
-    model._encode_prompt = MethodType(_encode_prompt_dtype_aware, model)
-    model._esam3_encode_prompt_dtype_patched = True
+    model._encode_prompt = MethodType(_encode_prompt_dtype_aware, model)  # type: ignore[assignment]
+    model._esam3_encode_prompt_dtype_patched = True  # type: ignore[assignment]
     logger.info(
         "Patched SAM3Image._encode_prompt for dtype awareness (prompt cast to %s).",
         target_dtype,
@@ -495,7 +498,7 @@ def _patch_module_input_dtype(model: nn.Module) -> None:
         if getattr(submodule, "_esam3_module_input_dtype_patched", False):
             continue
         submodule.register_forward_pre_hook(_input_dtype_hook)
-        submodule._esam3_module_input_dtype_patched = True
+        submodule._esam3_module_input_dtype_patched = True  # type: ignore[assignment]
         patched_count += 1
 
     logger.info(
