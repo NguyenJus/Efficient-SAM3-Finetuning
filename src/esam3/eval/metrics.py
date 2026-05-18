@@ -65,15 +65,27 @@ def compute_coco_map(
     coco_eval.params.iouThrs = np.asarray(iou_thresholds, dtype=np.float64)
     _silent_evaluate(coco_eval)
 
-    overall: dict[str, float] = {"mAP": float(coco_eval.stats[0])}
-    if 0.5 in iou_thresholds:
-        overall["mAP_50"] = float(coco_eval.stats[1])
-    if 0.75 in iou_thresholds:
-        overall["mAP_75"] = float(coco_eval.stats[2])
+    precision = coco_eval.eval["precision"]  # (T, R, K, A, M)
+    iou_list = list(iou_thresholds)
+
+    # mAP: mean over all T thresholds, all categories, area="all", maxDets last
+    valid_all = precision[:, :, :, 0, -1]
+    valid_all = valid_all[valid_all > -1]
+    overall: dict[str, float] = {"mAP": float(valid_all.mean()) if valid_all.size else 0.0}
+
+    if 0.5 in iou_list:
+        idx50 = iou_list.index(0.5)
+        p50 = precision[idx50, :, :, 0, -1]
+        v50 = p50[p50 > -1]
+        overall["mAP_50"] = float(v50.mean()) if v50.size else 0.0
+    if 0.75 in iou_list:
+        idx75 = iou_list.index(0.75)
+        p75 = precision[idx75, :, :, 0, -1]
+        v75 = p75[p75 > -1]
+        overall["mAP_75"] = float(v75.mean()) if v75.size else 0.0
 
     per_class: dict[str, dict[str, float]] = {}
     if include_per_class:
-        precision = coco_eval.eval["precision"]  # (T, R, K, A, M)
         cat_ids = coco_eval.params.catIds
         for k, cat_id in enumerate(cat_ids):
             p = precision[:, :, k, 0, -1]
@@ -82,12 +94,12 @@ def compute_coco_map(
                 continue  # class with no GT — skip
             ap = float(valid.mean())
             row: dict[str, float] = {"AP": ap}
-            if 0.5 in iou_thresholds:
-                idx = list(iou_thresholds).index(0.5)
-                p50 = precision[idx, :, k, 0, -1]
-                v50 = p50[p50 > -1]
-                if v50.size:
-                    row["AP_50"] = float(v50.mean())
+            if 0.5 in iou_list:
+                idx = iou_list.index(0.5)
+                p50_k = precision[idx, :, k, 0, -1]
+                v50_k = p50_k[p50_k > -1]
+                if v50_k.size:
+                    row["AP_50"] = float(v50_k.mean())
             cat_name = ground_truth.cats[cat_id]["name"]
             per_class[cat_name] = row
 
