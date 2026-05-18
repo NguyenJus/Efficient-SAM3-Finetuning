@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from esam3._registry import lookup
+from esam3.config.schema import TrainConfig
 from esam3.tracking.base import Tracker
 
 if TYPE_CHECKING:
@@ -12,7 +14,27 @@ if TYPE_CHECKING:
     # (see architecture §11).
     from esam3.eval.metrics import MetricsReport
 
-__all__ = ["Tracker", "flatten_metrics_report"]
+__all__ = ["Tracker", "build_tracker", "flatten_metrics_report"]
+
+
+def build_tracker(cfg: TrainConfig) -> Tracker:
+    """Resolve cfg.tracking.backend to a concrete Tracker.
+
+    Imports the chosen backend module lazily so missing optional extras only
+    surface when that backend is actually requested. The @register decorator
+    in each backend module wires the factory into _registry on first import.
+    """
+    backend = cfg.tracking.backend  # Literal["tensorboard", "wandb", "none"]
+    if backend == "tensorboard":
+        from esam3.tracking import tensorboard as _tb  # noqa: F401
+    elif backend == "wandb":
+        from esam3.tracking import wandb as _wb  # noqa: F401
+    elif backend == "none":
+        from esam3.tracking import noop as _noop  # noqa: F401
+    else:  # pragma: no cover — pydantic Literal rejects this at config-load
+        raise ValueError(f"unknown tracking.backend: {backend!r}")
+    factory = lookup("tracker", backend)
+    return cast(Tracker, factory(cfg))
 
 
 def flatten_metrics_report(
