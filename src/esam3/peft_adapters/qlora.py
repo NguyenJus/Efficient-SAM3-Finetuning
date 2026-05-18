@@ -130,6 +130,14 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
         base,
         use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
     )
+    # peft 0.19's LoRA dispatcher (peft.tuners.lora.model:226) gates on
+    # `model.is_loaded_in_4bit` to route to bnb.Linear4bit wrappers whose
+    # merge() already handles dequant→add→repack correctly.  apply_qlora
+    # replaces Linears manually so the flag is never set; set it now before
+    # get_peft_model so peft dispatches to the bnb path, not the generic
+    # Linear path whose merge() blindly does `weight.data += delta` on
+    # packed 4-bit storage (shape mismatch → RuntimeError).
+    base.is_loaded_in_4bit = True  # type: ignore[assignment]
     peft_base = get_peft_model(base, lora_cfg)
 
     from peft import PeftModel as _PeftModel
@@ -262,6 +270,11 @@ def load_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
         base,
         use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
     )
+    # Mirror the flag set in apply_qlora so peft's LoRA dispatcher routes to
+    # bnb.Linear4bit wrappers on the restored model.  Without this, load_qlora
+    # would succeed but a subsequent merge_lora call would hit the same
+    # packed-weight shape mismatch as described in apply_qlora above.
+    base.is_loaded_in_4bit = True  # type: ignore[assignment]
     peft_base = PeftModel.from_pretrained(base, str(src))
     wrapper.model.model = peft_base
     wrapper.peft_model = peft_base
