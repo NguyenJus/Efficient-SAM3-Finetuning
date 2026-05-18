@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from esam3._registry import (
+    _REGISTRY,
     RegistryError,
     list_registered,
     lookup,
@@ -14,8 +17,18 @@ from esam3._registry import (
 
 
 @pytest.fixture(autouse=True)
-def _reset() -> None:
+def _reset() -> Iterator[None]:
+    """Snapshot the registry, give each test a clean slate, then restore.
+
+    Without restore, the cleared registry leaks into later test files that
+    depend on @register side effects from already-imported backend modules
+    (those decorators won't fire a second time).
+    """
+    saved = {k: dict(v) for k, v in _REGISTRY.items()}
     reset_registry()
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(saved)
 
 
 def test_register_and_lookup_roundtrip() -> None:
