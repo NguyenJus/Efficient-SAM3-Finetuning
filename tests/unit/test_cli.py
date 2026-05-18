@@ -99,26 +99,40 @@ train: {epochs: 1}
 
 def test_eval_command_save_predictions_flag_parses(monkeypatch: object, tmp_path: Path) -> None:
     """--save-predictions / --no-save-predictions override cfg.eval.save_predictions."""
+    from unittest.mock import MagicMock
+
     import esam3.cli.eval_cmd as eval_cmd
     from esam3.cli.main import app
 
     captured: dict[str, bool | None] = {}
 
     def fake_run(
+        cfg,
         *,
-        config: Path,
         checkpoint: Path,
         split: str,
-        output: Path | None,
+        output_dir: Path | None,
         save_predictions: bool | None,
-    ) -> None:
+    ):
         captured["save_predictions"] = save_predictions
+        return MagicMock(overall={})
 
-    monkeypatch.setattr(eval_cmd, "_run_eval", fake_run)
+    monkeypatch.setattr(eval_cmd, "run_eval", fake_run)
 
     local_runner = CliRunner()
     cfg_path = tmp_path / "c.yaml"
-    cfg_path.write_text("placeholder")
+    cfg_path.write_text(
+        """
+run: {name: t, output_dir: ./runs, seed: 0}
+data:
+  format: coco
+  train: {annotations: t.json, images: t/}
+  val: {annotations: v.json, images: v/}
+  prompt_mode: text
+peft: {method: lora}
+train: {epochs: 1}
+"""
+    )
     local_runner.invoke(
         app,
         ["eval", "--config", str(cfg_path), "--checkpoint", str(tmp_path), "--save-predictions"],
