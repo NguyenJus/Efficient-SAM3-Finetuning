@@ -47,12 +47,14 @@ def test_run_training_dispatches_via_registry(
         calls.append((kind, name))
         if kind == "peft":
             return lambda wrapper, _peft_cfg: wrapper
-        if kind == "tracker":
-            return lambda _cfg: MagicMock(close=MagicMock())
         return lambda *a, **kw: MagicMock(__len__=lambda self: 0, class_names=[])
 
     monkeypatch.setattr("esam3.train.runner.lookup", fake_lookup)
     monkeypatch.setattr("esam3.train.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr(
+        "esam3.train.runner.build_tracker",
+        lambda _cfg: MagicMock(close=MagicMock(), start_run=MagicMock()),
+    )
 
     fake_result = MagicMock()
 
@@ -64,4 +66,4 @@ def test_run_training_dispatches_via_registry(
     result = run_training(cfg)
     assert result is fake_result
     kinds = {k for k, _ in calls}
-    assert kinds == {"dataset", "peft", "tracker"}
+    assert kinds == {"dataset", "peft"}

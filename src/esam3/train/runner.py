@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from esam3._registry import lookup
-from esam3.config.schema import TrackingConfig, TrainConfig
+from esam3.config.schema import TrainConfig
 from esam3.data.base import Dataset
 from esam3.models.sam3 import load_sam31
-from esam3.tracking.base import Tracker
+from esam3.tracking import build_tracker
 from esam3.train.trainer import RunResult, Trainer
 
 
@@ -28,24 +28,6 @@ def _build_dataset(cfg: TrainConfig, pipeline: str) -> Dataset:
     return cast(Dataset, result)
 
 
-def build_tracker(cfg: TrackingConfig, run_dir: Path) -> Tracker:
-    """Dispatch the registered tracker factory with backend-specific kwargs."""
-    factory = lookup("tracker", cfg.backend)
-    if cfg.backend == "tensorboard":
-        return cast(Tracker, factory({"log_dir": str(run_dir / "tb")}))
-    if cfg.backend == "wandb":
-        return cast(
-            Tracker,
-            factory(
-                {
-                    "project": cfg.wandb.project,
-                    "entity": cfg.wandb.entity,
-                }
-            ),
-        )
-    return cast(Tracker, factory({}))
-
-
 def run_training(
     cfg: TrainConfig,
     *,
@@ -58,6 +40,6 @@ def run_training(
     wrapper: Any = load_sam31(cfg.model)
     peft_factory = lookup("peft", cfg.peft.method)
     peft_factory(wrapper, cfg.peft)
-    tracker = build_tracker(cfg.tracking, run_dir)
+    tracker = build_tracker(cfg)
     trainer = Trainer(wrapper, train_ds, val_ds, tracker, cfg)
     return trainer.fit(run_dir=run_dir, resume_from=resume_from)
