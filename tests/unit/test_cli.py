@@ -129,3 +129,29 @@ def test_eval_command_save_predictions_flag_parses(monkeypatch: object, tmp_path
         ["eval", "--config", str(cfg_path), "--checkpoint", str(tmp_path), "--no-save-predictions"],
     )
     assert captured["save_predictions"] is False
+
+
+def test_eval_command_rejects_qlora_method(tmp_path: Path) -> None:
+    """esam3 eval --checkpoint errors when peft.method is not lora."""
+    from esam3.cli.main import app
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(
+        """
+run: {name: t, output_dir: ./runs, seed: 0}
+data:
+  format: coco
+  train: {annotations: t.json, images: t/}
+  val: {annotations: v.json, images: v/}
+  prompt_mode: text
+peft: {method: qlora}
+train: {epochs: 1}
+"""
+    )
+    local_runner = CliRunner()
+    result = local_runner.invoke(
+        app,
+        ["eval", "--config", str(cfg_path), "--checkpoint", str(tmp_path)],
+    )
+    assert result.exit_code != 0
+    assert "qlora" in _plain(result.output).lower() or "only lora" in _plain(result.output).lower()

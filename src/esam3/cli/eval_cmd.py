@@ -2,26 +2,20 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import typer
 from rich import print as rprint
 
 from esam3.config.loader import load_config
+from esam3.config.schema import DataSplit, TrainConfig
 
-_LOG = logging.getLogger(__name__)
 
-
-def _build_dataset(cfg: object, split: object) -> object:  # type: ignore[type-arg]
+def _build_dataset(cfg: TrainConfig, split: DataSplit) -> object:  # type: ignore[type-arg]
     """Build a dataset for the given split config.
 
     Only COCO format is supported today; HF and other formats are a TODO.
     """
-    from esam3.config.schema import TrainConfig
-
-    assert isinstance(cfg, TrainConfig)
-
     if cfg.data.format == "coco":
         from esam3.data.coco import COCODataset
         from esam3.data.transforms import build_eval_transforms
@@ -31,9 +25,7 @@ def _build_dataset(cfg: object, split: object) -> object:  # type: ignore[type-a
             model_name=cfg.model.name,
             normalize=cfg.data.normalize,
         )
-        from esam3.config.schema import DataSplit
 
-        assert isinstance(split, DataSplit)
         return COCODataset(
             annotations=split.annotations,
             images=split.images,
@@ -57,6 +49,13 @@ def _run_eval(
     save_predictions: bool | None,
 ) -> None:
     cfg = load_config(config)
+
+    if cfg.peft.method != "lora":
+        raise typer.BadParameter(
+            f"--checkpoint loading currently supports only LoRA adapters; "
+            f"got peft.method={cfg.peft.method!r}",
+            param_hint="--checkpoint",
+        )
 
     if split == "val":
         data_split = cfg.data.val
