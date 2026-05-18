@@ -8,7 +8,6 @@ from esam3.config.schema import (
     EvalConfig,
 )
 from esam3.eval.evaluator import Evaluator
-from esam3.eval.metrics import compute_coco_map
 
 
 def _assert_stub(call: object) -> None:
@@ -17,7 +16,7 @@ def _assert_stub(call: object) -> None:
 
 
 def test_eval_stubs() -> None:
-    _assert_stub(lambda: compute_coco_map(object(), object(), [0.5]))
+    # compute_coco_map is implemented (Task 3); only Evaluator.evaluate remains a stub.
     ev = Evaluator(EvalConfig())
     _assert_stub(lambda: ev.evaluate(object(), object()))  # type: ignore[arg-type]
 

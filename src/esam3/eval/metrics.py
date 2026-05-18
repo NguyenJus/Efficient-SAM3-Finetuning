@@ -1,8 +1,17 @@
-"""Evaluation metrics — MetricsReport contract + stub computation."""
+"""COCO mAP + per-class AP via pycocotools."""
 
 from __future__ import annotations
 
+import contextlib
+import io
+import logging
 from dataclasses import dataclass, field
+
+import numpy as np
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -15,10 +24,76 @@ class MetricsReport:
     n_predictions: int = 0
 
 
+def _silent_evaluate(coco_eval: COCOeval) -> None:
+    """Run COCOeval.evaluate/accumulate/summarize without pycocotools' prints."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
+
+
+def _zero_overall() -> dict[str, float]:
+    return {"mAP": 0.0, "mAP_50": 0.0, "mAP_75": 0.0}
+
+
 def compute_coco_map(
-    predictions: object,
-    ground_truth: object,
+    predictions: list[dict],
+    ground_truth: COCO,
     iou_thresholds: list[float],
+    include_per_class: bool,
 ) -> MetricsReport:
-    """Compute COCO-style mAP + per-class AP. Stub — see spec/eval."""
-    raise NotImplementedError("filled in by spec: spec/eval")
+    """Score predictions against ground_truth and return a MetricsReport.
+
+    Predictions are COCO results entries (one per query, with RLE mask). The
+    function uses segmentation IoU (not box IoU) for matching. ``mAP`` is the
+    mean over ``iou_thresholds``; ``mAP_50`` and ``mAP_75`` are slices at the
+    corresponding thresholds (only when those thresholds appear in
+    ``iou_thresholds``; otherwise the slice is omitted).
+    """
+    n_images = len(ground_truth.imgs)
+    if not predictions:
+        _LOG.warning("compute_coco_map: no predictions; returning zeroed report")
+        return MetricsReport(
+            overall=_zero_overall(),
+            per_class={},
+            n_images=n_images,
+            n_predictions=0,
+        )
+
+    coco_dt = ground_truth.loadRes(predictions)
+    coco_eval = COCOeval(ground_truth, coco_dt, iouType="segm")
+    coco_eval.params.iouThrs = np.asarray(iou_thresholds, dtype=np.float64)
+    _silent_evaluate(coco_eval)
+
+    overall: dict[str, float] = {"mAP": float(coco_eval.stats[0])}
+    if 0.5 in iou_thresholds:
+        overall["mAP_50"] = float(coco_eval.stats[1])
+    if 0.75 in iou_thresholds:
+        overall["mAP_75"] = float(coco_eval.stats[2])
+
+    per_class: dict[str, dict[str, float]] = {}
+    if include_per_class:
+        precision = coco_eval.eval["precision"]  # (T, R, K, A, M)
+        cat_ids = coco_eval.params.catIds
+        for k, cat_id in enumerate(cat_ids):
+            p = precision[:, :, k, 0, -1]
+            valid = p[p > -1]
+            if valid.size == 0:
+                continue  # class with no GT — skip
+            ap = float(valid.mean())
+            row: dict[str, float] = {"AP": ap}
+            if 0.5 in iou_thresholds:
+                idx = list(iou_thresholds).index(0.5)
+                p50 = precision[idx, :, k, 0, -1]
+                v50 = p50[p50 > -1]
+                if v50.size:
+                    row["AP_50"] = float(v50.mean())
+            cat_name = ground_truth.cats[cat_id]["name"]
+            per_class[cat_name] = row
+
+    return MetricsReport(
+        overall=overall,
+        per_class=per_class,
+        n_images=n_images,
+        n_predictions=len(predictions),
+    )
