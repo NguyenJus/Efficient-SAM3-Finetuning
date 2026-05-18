@@ -215,3 +215,32 @@ def test_infer_quant_type_raises_when_both_paths_missing(
     wrapper: Any = _FakeWrapper(model)
     with pytest.raises(RuntimeError, match="could not infer quant_type"):
         _infer_quant_type_from_wrapper(wrapper)
+
+
+def test_has_plain_nn_linear_ignores_lora_adapter_children() -> None:
+    """The tightened predicate must ignore lora_A/lora_B nn.Linears but flag base leaks."""
+    from tests.integration.test_peft_qlora_real import _has_plain_nn_linear
+
+    # Fake LoRA adapter wrapper: holds a Linear4bit-shape sentinel as base, plus
+    # full-precision lora_A / lora_B nn.Linear adapters (mimicking peft.tuners.lora.bnb.Linear4bit).
+    class _Linear4bitSentinel(nn.Linear):
+        """Subclass of nn.Linear (mimics bnb.nn.Linear4bit subclassing)."""
+
+    class _FakeLoraWrapper(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.base_layer = _Linear4bitSentinel(4, 4)
+            self.lora_A = nn.ModuleDict({"default": nn.Linear(4, 2, bias=False)})
+            self.lora_B = nn.ModuleDict({"default": nn.Linear(2, 4, bias=False)})
+
+    # Case 1: all base Linears already swapped (only Linear4bitSentinel + lora adapters).
+    # Expected: predicate returns False.
+    clean = nn.Sequential(_FakeLoraWrapper(), _FakeLoraWrapper())
+    assert not _has_plain_nn_linear(clean), (
+        "predicate must not flag lora_A/lora_B adapter Linears as base leaks"
+    )
+
+    # Case 2: introduce a real base-Linear leak alongside the LoRA-wrapped layers.
+    # Expected: predicate returns True (the leaked plain nn.Linear is NOT under a lora_* path).
+    leaked = nn.Sequential(_FakeLoraWrapper(), nn.Linear(4, 4))
+    assert _has_plain_nn_linear(leaked), "predicate must still flag a true base nn.Linear leak"
