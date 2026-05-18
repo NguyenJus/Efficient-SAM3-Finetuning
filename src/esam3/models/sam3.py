@@ -362,6 +362,63 @@ def _patch_roi_align_dtype() -> None:
     )
 
 
+def _patch_encode_prompt_dtype(model: nn.Module) -> None:
+    """Cast ``_encode_prompt``'s returned ``prompt`` to the model's parameter dtype.
+
+    sam3's ``SAM3Image._encode_prompt``
+    (sam3/model/sam3_image.py:196-198) builds a fallback ``visual_prompt_embed``
+    via ``torch.zeros((0, *geo_feats.shape[1:]), device=...)`` with NO ``dtype=``
+    argument, so it defaults to ``torch.float32``.  Even though the tensor is
+    zero-length in dim 0, the immediately-following
+    ``torch.cat([txt_feats, geo_feats, visual_prompt_embed], dim=0)`` triggers
+    PyTorch's type-promotion rule and returns an fp32 ``prompt`` when the
+    model is loaded under ``ModelConfig(dtype="bfloat16")``.  The fp32 prompt
+    then flows into ``TransformerEncoderFusion`` as ``memory``; the encoder
+    layer's ``cross_attn_image`` does ``key = memory`` and feeds it to a
+    Linear with bf16 weight, producing
+    ``RuntimeError: mat1 and mat2 must have the same dtype, but got Float and BFloat16``.
+
+    We cannot modify sam3 source (installed package), and we cannot wrap the
+    call in ``torch.autocast`` for the same reason as the prior two patches:
+    sam3's ``decoder.py::forward_ffn`` contains an explicit
+    ``with torch.amp.autocast(enabled=False)`` region that re-triggers the
+    bf16/fp32 collision.
+
+    The patch rebinds ``_encode_prompt`` per instance via ``MethodType`` and
+    casts the returned ``prompt`` (and ``prompt_mask`` is left alone — it's
+    boolean) to the model's parameter dtype before returning.  When the model
+    is loaded in fp32 the cast is a no-op.
+
+    Notes:
+    - We use a per-instance ``MethodType`` replacement (NOT class-level
+      monkey-patch) so we don't affect other consumers of sam3 in the same
+      process.
+    - Idempotency sentinel mirrors ``_patch_pos_enc_dtype``.
+    - Re-evaluate every sam3 version bump; track upstream fix in logs/TODO.md.
+    """
+    from types import MethodType
+
+    if not hasattr(model, "_encode_prompt"):
+        return
+    if getattr(model, "_esam3_encode_prompt_dtype_patched", False):
+        return
+    original = model._encode_prompt
+    target_dtype = next(model.parameters()).dtype
+
+    def _encode_prompt_dtype_aware(self, *args, _orig=original, _dtype=target_dtype, **kwargs):  # type: ignore[no-untyped-def]
+        prompt, prompt_mask, backbone_out = _orig(*args, **kwargs)
+        if prompt.dtype != _dtype:
+            prompt = prompt.to(dtype=_dtype)
+        return prompt, prompt_mask, backbone_out
+
+    model._encode_prompt = MethodType(_encode_prompt_dtype_aware, model)
+    model._esam3_encode_prompt_dtype_patched = True
+    logger.info(
+        "Patched SAM3Image._encode_prompt for dtype awareness (prompt cast to %s).",
+        target_dtype,
+    )
+
+
 def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     """Load SAM 3.1 via Meta's `sam3` package and wrap it for our trainer.
 
@@ -404,6 +461,12 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     # Cast roi_align boxes to input dtype to avoid fp32 rois fed to bf16 img_feats
     # in sam3's geometry encoder. See _patch_roi_align_dtype for full rationale.
     _patch_roi_align_dtype()
+
+    # Cast _encode_prompt's `prompt` to model dtype — sam3 builds a fallback
+    # fp32 visual_prompt_embed via torch.zeros() without dtype=, and
+    # torch.cat type-promotes the concatenated prompt to fp32 even when
+    # txt_feats/geo_feats are bf16. See _patch_encode_prompt_dtype.
+    _patch_encode_prompt_dtype(raw_model)
 
     adapter = _Sam3ImageAdapter(raw_model, image_size=1008)
     return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
