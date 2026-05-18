@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from esam3._registry import register
+from esam3.config.schema import TrainConfig
 
 
 class NoopTracker:
     """Tracker that drops all calls on the floor."""
+
+    def start_run(
+        self,
+        run_dir: Path,
+        config: dict[str, Any],
+        resume_from: Path | None = None,
+    ) -> None:
+        return None
 
     def log_scalars(self, step: int, values: dict[str, float]) -> None:
         return None
@@ -23,6 +33,6 @@ class NoopTracker:
 
 
 @register("tracker", "none")
-def build_noop(_cfg: dict[str, Any]) -> NoopTracker:
-    """Factory called by trainer's tracker-building dispatch."""
+def build_noop(_cfg: TrainConfig) -> NoopTracker:
+    """Factory called by build_tracker for backend='none'."""
     return NoopTracker()
