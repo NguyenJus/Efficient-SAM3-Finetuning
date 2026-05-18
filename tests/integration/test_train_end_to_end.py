@@ -88,8 +88,9 @@ def test_fit_end_to_end_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> Non
         ),
     )
     apply_lora(wrapper, cfg.peft)
+    run_dir = tmp_path / f"{cfg.run.name}-test"
     trainer = Trainer(wrapper, ds_train, ds_val, NoopTracker(), cfg)
-    result = trainer.fit()
+    result = trainer.fit(run_dir=run_dir)
 
     assert result.run_dir.exists()
     assert (result.run_dir / "adapter" / "adapter_config.json").exists()

@@ -6,7 +6,6 @@ import json
 import logging
 import random
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -132,12 +131,10 @@ class Trainer:
                 cfg.peft.method,
             )
 
-    def fit(self, resume_from: Path | None = None) -> RunResult:
+    def fit(self, *, run_dir: Path, resume_from: Path | None = None) -> RunResult:
         cfg = self.cfg
         _seed_everything(cfg.run.seed)
 
-        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        run_dir = Path(cfg.run.output_dir) / f"{cfg.run.name}-{timestamp}"
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
 
