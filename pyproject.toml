@@ -91,6 +91,7 @@ module = [
   "scipy.*",
   "sam3.*",
   "peft.*",
+  "google.colab",
 ]
 ignore_missing_imports = true
 

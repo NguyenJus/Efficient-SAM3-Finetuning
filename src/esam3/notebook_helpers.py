@@ -44,7 +44,7 @@ def check_local_checkpoint(local_dir: Path, checkpoint_file: str) -> bool:
 
 def _resolve_colab_token() -> str | None:
     try:
-        from google.colab import userdata  # type: ignore[import-not-found]
+        from google.colab import userdata
     except ImportError:
         return None
     result: str | None = userdata.get("HF_TOKEN")
