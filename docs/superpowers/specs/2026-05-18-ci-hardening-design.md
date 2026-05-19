@@ -9,7 +9,7 @@
 ## 1. Current State
 
 | Surface | State today | This spec |
-|---|---|---|
+| --- | --- | --- |
 | `.github/workflows/ci.yml` | One `test` job on `ubuntu-latest`: `setup-uv@v3` → `uv python install 3.13` → `uv sync --all-extras` → ruff check → ruff format --check → mypy strict on `src/esam3` → pytest. Action refs are floating `@v3`/`@v4` tags. No concurrency control. | **Extended.** Adds `lock-check` and `lint-hygiene` jobs, an HTML-coverage upload step on `test`, top-level concurrency, SHA-pinned third-party Actions. |
 | `.github/workflows/security.yml` | Does not exist. | **New.** Two jobs (`pip-audit`, `gitleaks`), same concurrency + SHA-pin posture. |
 | `.github/dependabot.yml` | Does not exist. | **New.** `pip` + `github-actions` ecosystems, weekly, grouped. |
@@ -49,7 +49,7 @@ The repo is currently **private** (going public later). That is the reason CodeQ
 
 ## 3. Files Touched / Module Layout
 
-```
+```text
 .github/
   workflows/
     ci.yml              # CHANGED — concurrency, SHA-pins, +lock-check, +lint-hygiene, +coverage upload
@@ -71,13 +71,13 @@ No file under `src/esam3/` is modified. The rollout (§6) inserts other commits 
 
 ## 4. Job Map
 
-| Workflow         | Job             | Purpose                                                                                                    | Blocking? |
-|------------------|-----------------|------------------------------------------------------------------------------------------------------------|-----------|
-| `ci.yml`         | `test`          | (existing) ruff check, ruff format --check, mypy strict, pytest `--cov-fail-under=80`, upload HTML coverage | yes       |
-| `ci.yml`         | `lock-check`    | (new) `uv lock --check` — fail if `uv.lock` drifted from `pyproject.toml`                                   | yes       |
-| `ci.yml`         | `lint-hygiene`  | (new) actionlint + yamllint + markdownlint-cli2 + shellcheck                                                | yes       |
-| `security.yml`   | `pip-audit`     | (new) `uv run --with pip-audit pip-audit --strict` against the synced env                                   | yes       |
-| `security.yml`   | `gitleaks`      | (new) OSS CLI binary downloaded + checksum-verified; full history on PRs, push range on push                | yes       |
+| Workflow | Job | Purpose | Blocking? |
+| --- | --- | --- | --- |
+| `ci.yml` | `test` | (existing) ruff check, ruff format --check, mypy strict, pytest `--cov-fail-under=80`, upload HTML coverage | yes |
+| `ci.yml` | `lock-check` | (new) `uv lock --check` — fail if `uv.lock` drifted from `pyproject.toml` | yes |
+| `ci.yml` | `lint-hygiene` | (new) actionlint + yamllint + markdownlint-cli2 + shellcheck | yes |
+| `security.yml` | `pip-audit` | (new) `uv run --with pip-audit pip-audit --strict` against the synced env | yes |
+| `security.yml` | `gitleaks` | (new) OSS CLI binary downloaded + checksum-verified; full history on PRs, push range on push | yes |
 
 **Parallelism.** All five jobs run in parallel — no `needs:` chains. The serial chain is solely *inside* `test` (lint → format → mypy → pytest), which is unchanged.
 
@@ -296,7 +296,7 @@ Existing `ci.yml` is **unchanged** in this step. The existing `uv run ruff check
 Each sub-step is one commit. Sub-steps are ordered to minimize re-work (lockfile last so it captures any dep pin that earlier steps add).
 
 | Sub-step | Local command | Fix mechanism |
-|---|---|---|
+| --- | --- | --- |
 | 6.2.a | `uv run ruff check` | Fix new `S` findings in `src/`, `scripts/`. Add `scripts/**/*.py = ["S603","S607"]` per-file ignore *only if violations remain after a real fix attempt*. |
 | 6.2.b | `npx --yes markdownlint-cli2 "**/*.md" "#node_modules"` | Edit Markdown files to satisfy default rules (excluding the disabled `MD013`). |
 | 6.2.c | `uv run --with yamllint yamllint .` | Edit YAML files. |
@@ -359,7 +359,7 @@ Push the branch (or open the PR for draft CI). Confirm:
 Project license: **Apache-2.0** (`pyproject.toml`). All tools added by this PR are OSS and free for personal and commercial use.
 
 | Tool | License |
-|---|---|
+| --- | --- |
 | ruff, mypy, pytest, pytest-cov | MIT |
 | uv | Apache-2.0 OR MIT |
 | pip-audit | Apache-2.0 |
