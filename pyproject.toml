@@ -22,6 +22,7 @@ dependencies = [
   "opencv-python-headless>=4.10",
   "scipy>=1.10",
   "einops>=0.7",
+  "huggingface-hub>=0.30",
   "sam3 @ git+https://github.com/facebookresearch/sam3@2814fa619404a722d03e9a012e083e4f293a4e53",
 ]
 
@@ -68,7 +69,7 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 "src/esam3/cli/*_cmd.py" = ["B008"]
 "tests/unit/test_data_*.py" = ["E402"]
-"tests/**/*.py" = ["S101", "S311"]
+"tests/**/*.py" = ["S101", "S105", "S311"]
 # Colab notebook: subprocess.run("git", ...) with partial path is intentional in a Colab
 # environment where git is always on PATH; asserts are runtime environment guards.
 "notebooks/**" = ["S101", "S603", "S607"]
