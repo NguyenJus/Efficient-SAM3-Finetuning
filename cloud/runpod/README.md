@@ -39,6 +39,7 @@ Same beginner flow as Colab — fill in dataset path, format, and run name in th
 ## What you get back
 
 Every run writes a `runs/<id>/` directory with:
+
 - `summary.md` — headline metric, run timing, hardware, sample overlays.
 - `samples/*.png` — up to 6 best / median / worst predictions.
 - `adapter/` — the LoRA / QLoRA adapter weights.
