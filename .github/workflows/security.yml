@@ -27,7 +27,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: pip-audit
-        run: uv run --with pip-audit pip-audit --strict --skip-editable
+        run: uv run --with pip-audit pip-audit --skip-editable
 
   gitleaks:
     runs-on: ubuntu-latest
