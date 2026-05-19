@@ -46,22 +46,55 @@ def download_model(
     Idempotent unless ``force=True``: when ``local_dir`` exists and is
     non-empty, returns immediately without contacting the Hub.
 
-    The consumer who knows the expected filename (e.g. ``_resolve_checkpoint_path``)
-    should re-check file-level presence after this returns — the "non-empty"
-    skip condition is intentionally weak.
+    The consumer who knows the expected filename should re-check file-level
+    presence after this returns — the "non-empty" skip condition is
+    intentionally weak.
 
     Returns ``local_dir`` on success.
+
+    Error mapping (verified against ``huggingface_hub==1.15.0``):
+      - ``huggingface_hub.errors.GatedRepoError``        → ``RuntimeError``
+      - ``huggingface_hub.errors.RepositoryNotFoundError`` → ``RuntimeError``
+      - ``huggingface_hub.errors.HfHubHTTPError`` (generic) → ``RuntimeError``
+    Other exception types (including ``OSError`` for network timeouts) are
+    NOT wrapped. The resolved token is never embedded in any mapped message.
     """
+    from huggingface_hub.errors import (
+        GatedRepoError,
+        HfHubHTTPError,
+        RepositoryNotFoundError,
+    )
+
     if not force and local_dir.exists() and any(local_dir.iterdir()):
         return local_dir
 
     resolved = resolve_hf_token(token)
     logger.info("fetching %s → %s", repo_id, local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
-    huggingface_hub.snapshot_download(
-        repo_id=repo_id,
-        local_dir=str(local_dir),
-        revision=revision,
-        token=resolved,
-    )
+    try:
+        huggingface_hub.snapshot_download(
+            repo_id=repo_id,
+            local_dir=str(local_dir),
+            revision=revision,
+            token=resolved,
+        )
+    except GatedRepoError as e:
+        raise RuntimeError(
+            f"could not download '{repo_id}': the repo is gated. "
+            f"Accept the license at https://huggingface.co/{repo_id} and then "
+            f"`export HF_TOKEN=<your-token>`."
+        ) from e
+    except RepositoryNotFoundError as e:
+        raise RuntimeError(
+            f"could not download '{repo_id}': repo not found, or your token "
+            f"lacks access. Check the repo id and verify your token."
+        ) from e
+    except HfHubHTTPError as e:
+        status: str
+        resp = getattr(e, "response", None)
+        status = str(getattr(resp, "status_code", "?"))
+        raise RuntimeError(
+            f"could not download '{repo_id}': Hub request failed ({status}). "
+            f"Check network and `export HF_TOKEN=...` if the repo is private/gated."
+        ) from e
     return local_dir

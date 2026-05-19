@@ -187,3 +187,102 @@ def test_download_model_logs_fetch_line_without_token(
     messages = [r.getMessage() for r in caplog.records]
     assert any("fetching repo" in m and str(local_dir) in m for m in messages), messages
     assert all("secret-token" not in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# download_model — error mapping
+# ---------------------------------------------------------------------------
+
+
+def _fake_response() -> object:
+    """Build a minimal ``httpx.Response`` for synthesising Hub error classes.
+
+    All three error classes in huggingface_hub==1.15.0 require a keyword-only
+    ``response: httpx.Response`` argument; httpx is in the transitive dep set
+    via huggingface-hub itself.
+    """
+    import httpx
+
+    req = httpx.Request("GET", "https://huggingface.co/repo")
+    return httpx.Response(403, headers={}, request=req)
+
+
+def _raise_factory(exc: BaseException):
+    def _raiser(**_kwargs: object) -> str:
+        raise exc
+
+    return _raiser
+
+
+def test_download_model_maps_gated_repo_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from huggingface_hub.errors import GatedRepoError
+
+    monkeypatch.setenv("HF_TOKEN", "env-tok")
+    monkeypatch.setattr(
+        "esam3.utils.huggingface.huggingface_hub.snapshot_download",
+        _raise_factory(GatedRepoError("gated", response=_fake_response())),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        download_model("facebook/sam3.1", tmp_path / "models")
+
+    msg = str(excinfo.value)
+    assert "facebook/sam3.1" in msg
+    assert "gated" in msg.lower() or "accept the license" in msg.lower()
+    assert "HF_TOKEN" in msg
+    assert "env-tok" not in msg  # token MUST NOT leak
+
+
+def test_download_model_maps_repository_not_found_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    monkeypatch.setenv("HF_TOKEN", "env-tok")
+    monkeypatch.setattr(
+        "esam3.utils.huggingface.huggingface_hub.snapshot_download",
+        _raise_factory(RepositoryNotFoundError("missing", response=_fake_response())),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        download_model("facebook/sam3.1", tmp_path / "models")
+
+    msg = str(excinfo.value)
+    assert "facebook/sam3.1" in msg
+    assert "not found" in msg.lower() or "access" in msg.lower()
+    assert "env-tok" not in msg
+
+
+def test_download_model_maps_generic_hf_hub_http_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from huggingface_hub.errors import HfHubHTTPError
+
+    monkeypatch.setenv("HF_TOKEN", "env-tok")
+    monkeypatch.setattr(
+        "esam3.utils.huggingface.huggingface_hub.snapshot_download",
+        _raise_factory(HfHubHTTPError("boom", response=_fake_response())),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        download_model("facebook/sam3.1", tmp_path / "models")
+
+    msg = str(excinfo.value)
+    assert "facebook/sam3.1" in msg
+    assert "Hub request failed" in msg or "request failed" in msg.lower()
+    assert "env-tok" not in msg
+
+
+def test_download_model_propagates_other_exceptions_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HF_TOKEN", "env-tok")
+    monkeypatch.setattr(
+        "esam3.utils.huggingface.huggingface_hub.snapshot_download",
+        _raise_factory(OSError("network down")),
+    )
+
+    with pytest.raises(OSError, match="network down"):
+        download_model("facebook/sam3.1", tmp_path / "models")
