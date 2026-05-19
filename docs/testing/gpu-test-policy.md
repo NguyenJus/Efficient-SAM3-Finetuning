@@ -19,7 +19,7 @@ runtime images, transient OOM from other notebook sessions sharing the
 same physical host, and NaN values produced under non-deterministic CUDA
 kernel scheduling — and each spurious failure costs a re-run and erodes
 contributor trust. This policy tracks all three costs by tiering the
-11 GPU-gated tests into a cheap structural tier and an expensive
+12 GPU-gated tests into a cheap structural tier and an expensive
 training-smoke tier, and by constraining the validated hardware target and
 the minimum dataset size so future tests cannot silently widen the cost
 envelope. The CPU-only CI workflow (`ci.yml`, `ubuntu-latest`) never runs
@@ -57,14 +57,19 @@ triggering any training-loop regression.
 - **Cadence guidance:** run before a tagged release, or when training-loop /
   tracker / optimizer code changes land.
 - **Runner invocation:** `bash scripts/run_gpu_tests.sh release`
-- **What's in the tier:** two training-smoke tests in `tests/gpu/` —
-  `test_real_train_overfits.py::test_overfits_in_50_steps` and
-  `test_real_train_qlora.py::test_qlora_overfits_in_50_steps`. Each test
-  drives the full `run_training` call graph: data loading, forward pass,
+- **What's in the tier:** three smoke tests in `tests/gpu/` — two training
+  overfits (LoRA, QLoRA) plus an end-to-end CLI `esam3 run` test:
+  `test_real_train_overfits.py::test_overfits_in_50_steps`,
+  `test_real_train_qlora.py::test_qlora_overfits_in_50_steps`, and
+  `test_run_end_to_end_gpu.py::test_run_end_to_end_writes_bundle`. The first
+  two drive the full `run_training` call graph: data loading, forward pass,
   loss computation, backward pass, optimizer step, and scalar logging,
-  repeated for 50 gradient updates on `tiny_coco`. The test asserts that
-  the loss curve converges, peak VRAM stays within the T4 ceiling, and every
-  logged scalar is finite.
+  repeated for 50 gradient updates on `tiny_coco`, asserting loss
+  convergence, peak VRAM within the T4 ceiling, and finite logged scalars.
+  The third drives `esam3 run` end-to-end via `CliRunner` against a copy of
+  `gpu_smoke_lora.yaml` and asserts on the on-disk bundle (adapter files,
+  `metrics.json` parses with numeric `overall.mAP`, `summary.md` present,
+  `samples/` has ≤ 6 PNGs, no `merged/` since `export.merge=false`).
 
 Tier 2 tests are appropriate as a release gate and for PRs that change the
 training runner (`esam3/train/`), the tracker interface (`esam3/tracking/`),
@@ -77,10 +82,10 @@ until a real training run.
 There is no hosted GPU CI runner in this project. Both tiers run via the
 same `notebooks/colab_gpu_tests.ipynb` notebook on a manually provisioned
 Colab T4 runtime. Cell 6 invokes `bash scripts/run_gpu_tests.sh` with no
-argument, which defaults to `all` and runs all 11 tests — both tiers — in
+argument, which defaults to `all` and runs all 12 tests — both tiers — in
 one Colab session. A contributor can override Cell 6 to run a single tier:
 pass `inspection` to run only the 9 Tier 1 tests (`bash
-scripts/run_gpu_tests.sh inspection`), or `release` to run only the 2 Tier
+scripts/run_gpu_tests.sh inspection`), or `release` to run only the 3 Tier
 2 tests (`bash scripts/run_gpu_tests.sh release`). The script can also be
 invoked directly on any local Turing+ machine that has the SAM3.1 checkpoint
 and bitsandbytes installed. The tier policy is trigger-agnostic: the same
@@ -94,8 +99,8 @@ expression and a path filter:
 | Tier argument | Marker expression | Path filter | Tests collected |
 | --- | --- | --- | --- |
 | `inspection` | `gpu_inspection` | `tests/integration/` | 9 |
-| `release` | `gpu` | `tests/gpu/` | 2 |
-| `all` (default, no argument) | `gpu or gpu_inspection` | `tests/gpu/ tests/integration/` | 11 |
+| `release` | `gpu` | `tests/gpu/` | 3 |
+| `all` (default, no argument) | `gpu or gpu_inspection` | `tests/gpu/ tests/integration/` | 12 |
 
 An unknown argument exits with code 2 and prints a usage line on stderr. The
 script uses `"${PYTHON:-python}" -m pytest` rather than bare `pytest` so the
@@ -105,7 +110,7 @@ runner picks the same interpreter that `pip install -e .` populated — bare
 
 ## 3. Inventory
 
-The table below covers all 11 GPU-gated tests as of the
+The table below covers all 12 GPU-gated tests as of the
 [#37](https://github.com/NguyenJus/Efficient-SAM3-Finetuning/issues/37)
 audit. Each row is derived from reading the corresponding test file:
 its module-level docstring (which names the GPU dependency), the assertions
@@ -140,6 +145,7 @@ three buckets:
 | `tests/integration/test_peft_qlora_real.py::test_merge_lora_unloads_qlora_wrapper` | inspection | `merge_lora` detaches the PEFT wrapper (`peft_model is None`) while leaving `model.model` accessible after the merge. | Requires `apply_qlora` (bitsandbytes Turing+ quant kernels) and `load_sam31` with real weights; `PositionEmbeddingSine` hardcodes `device='cuda'`. | none — needs real SAM3.1 weights |
 | `tests/gpu/test_real_train_overfits.py::test_overfits_in_50_steps` | release | 50-step LoRA overfit on tiny_coco via `run_training(gpu_smoke_lora.yaml)`; asserts loss drops ≥ 30%, peak VRAM ≤ 14 GB, all logged scalars finite. | End-to-end real training: real SAM3.1 weights, real PEFT, real CUDA kernels, real optimizer step. | none — needs real SAM3.1 weights |
 | `tests/gpu/test_real_train_qlora.py::test_qlora_overfits_in_50_steps` | release | 50-step QLoRA overfit on tiny_coco via `run_training(gpu_smoke_qlora.yaml)`; asserts loss drops ≥ 25%, peak VRAM ≤ 10 GB, all logged scalars finite. | End-to-end real training with 4-bit base + bf16 LoRA + 8-bit optimizer; requires bitsandbytes quant kernels (Turing+) and real SAM3.1 weights. | none — needs real SAM3.1 weights |
+| `tests/gpu/test_run_end_to_end_gpu.py::test_run_end_to_end_writes_bundle` | release | `esam3 run` CLI end-to-end on tiny_coco: writes adapter, `metrics.json`, `summary.md`, samples; no `merged/`. | End-to-end real training via the CLI Typer entry; real SAM3.1 weights, real PEFT, real optimizer step. | none — needs real SAM3.1 weights |
 
 ## 4. T4 validation policy
 
@@ -249,4 +255,5 @@ meaningful assertion — loss convergence, gradient flow, VRAM under a real
 optimizer state — it belongs in Tier 2 (`gpu`). When in doubt, prefer
 Tier 1 and document the rationale in the test docstring. The Section 3
 inventory shows that all current structural and adapter tests fit
-comfortably in Tier 1; only the two training-smoke tests justify Tier 2.
+comfortably in Tier 1; only the three smoke tests (two training overfits
+plus the end-to-end CLI `esam3 run` test) justify Tier 2.

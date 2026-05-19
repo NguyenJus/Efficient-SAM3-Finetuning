@@ -2,7 +2,7 @@
 
 **Status:** Draft (2026-05-19)
 **Tracking issue:** #37
-**Scope:** Audit the 11 GPU-gated tests across `tests/gpu/` and `tests/integration/`, tier them into `gpu_inspection` (cheap structural) and `gpu` (expensive training-smoke), publish a short policy doc at `docs/testing/gpu-test-policy.md`, register the new marker, and rewrite `scripts/run_gpu_tests.sh` to take a tier argument. Pure docs + test-metadata + shell-script diff; no `src/esam3/` change, no CI workflow change, no new dependencies.
+**Scope:** Audit the 12 GPU-gated tests across `tests/gpu/` and `tests/integration/`, tier them into `gpu_inspection` (cheap structural) and `gpu` (expensive training-smoke), publish a short policy doc at `docs/testing/gpu-test-policy.md`, register the new marker, and rewrite `scripts/run_gpu_tests.sh` to take a tier argument. Pure docs + test-metadata + shell-script diff; no `src/esam3/` change, no CI workflow change, no new dependencies.
 
 ---
 
@@ -10,16 +10,16 @@
 
 | Surface | State today | This spec |
 | --- | --- | --- |
-| GPU-gated tests in `tests/gpu/` | 2 tests in `test_real_train_overfits.py` and `test_real_train_qlora.py`, both marked `@pytest.mark.gpu`, `@requires_compatible_gpu`, `@requires_checkpoint`. Added by #28. Expensive: minutes of real training each. | **Tier 2 — Release.** Selector unchanged (`-m gpu`). Files untouched. |
+| GPU-gated tests in `tests/gpu/` | 3 tests in `test_real_train_overfits.py`, `test_real_train_qlora.py`, and `test_run_end_to_end_gpu.py` (the last added by #46 after the original audit), all marked `@pytest.mark.gpu`, `@requires_compatible_gpu`, `@requires_checkpoint`. Added by #28 and #46. Expensive: minutes of real training each. | **Tier 2 — Release.** Selector unchanged (`-m gpu`). Files untouched. |
 | GPU-gated tests in `tests/integration/` | 9 tests total: `test_load_sam31_real.py` (2 tests, per-test decorators), `test_peft_lora_real.py` (3 tests, module-level `pytestmark`), `test_peft_qlora_real.py` (4 tests, module-level `pytestmark` + per-test `skipif`). All carry `requires_compatible_gpu` + `requires_checkpoint`. None carry `gpu`. Cheap: load + structural inspection only, no training. | **Tier 1 — Inspection.** New selector `-m gpu_inspection` added at module level on all three files. `test_load_sam31_real.py` is converted from per-test decorators to module-level `pytestmark` as a drive-by. |
 | `@pytest.mark.gpu_inspection` marker | Not registered. | Registered in `tests/conftest.py` alongside the existing three markers, with description pointing at the policy doc. |
 | `@pytest.mark.gpu` marker | Registered in the `markers` list in `pyproject.toml` (line ~94), alongside `integration`, `requires_checkpoint`, and `requires_compatible_gpu`. The repo also enables `--strict-markers` globally via `addopts` (line ~100). The existing semantic is "release-tier real-GPU training smoke." | Semantic preserved — `gpu` continues to mean "release-tier training smoke." No retag of existing usage. The new `gpu_inspection` marker is registered in `tests/conftest.py` (see §6.1); whether to also add it to `pyproject.toml` is the implementer's call (see §6.1 update below). |
-| `scripts/run_gpu_tests.sh` | Hard-coded to `pytest -m "requires_compatible_gpu and requires_checkpoint" --no-cov tests/integration/`. Silently skips the 2 `tests/gpu/` tests — latent bug surfaced by this audit. | **Rewritten** to accept `inspection | release | all` (default `all`). New default matches user expectation: "run everything GPU-gated." See §4. |
-| `notebooks/colab_gpu_tests.ipynb` Cell 6 | Invokes `bash scripts/run_gpu_tests.sh` with no argument. | Unchanged — the no-arg default in the rewritten script keeps Cell 6 behavior backwards-compatible. The notebook now runs all 11 tests instead of just 9. |
-| Policy doc | None. The audit, tiering rationale, T4 policy, data-size policy, and "should I add a GPU test?" criteria are not written down anywhere. | **New** `docs/testing/gpu-test-policy.md` — six sections, 250–350 lines, inventory table covering all 11 tests. |
+| `scripts/run_gpu_tests.sh` | Hard-coded to `pytest -m "requires_compatible_gpu and requires_checkpoint" --no-cov tests/integration/`. Silently skips the 3 `tests/gpu/` tests — latent bug surfaced by this audit. | **Rewritten** to accept `inspection | release | all` (default `all`). New default matches user expectation: "run everything GPU-gated." See §4. |
+| `notebooks/colab_gpu_tests.ipynb` Cell 6 | Invokes `bash scripts/run_gpu_tests.sh` with no argument. | Unchanged — the no-arg default in the rewritten script keeps Cell 6 behavior backwards-compatible. The notebook now runs all 12 tests instead of just 9 (the 3 release-tier tests in `tests/gpu/` + the 9 inspection-tier tests in `tests/integration/`). |
+| Policy doc | None. The audit, tiering rationale, T4 policy, data-size policy, and "should I add a GPU test?" criteria are not written down anywhere. | **New** `docs/testing/gpu-test-policy.md` — six sections, 250–350 lines, inventory table covering all 12 tests. |
 | CI workflow | `ci.yml` runs `uv run pytest` on `ubuntu-latest`. `tests/conftest.py:44-53` autoskips anything marked `requires_compatible_gpu` (no GPU on the runner) or `requires_checkpoint` (no `models/sam3.1/sam3.1_multiplex.pt` on the runner). | Unchanged. There is no hosted GPU CI runner; both tiers run via the same Colab notebook today. |
 
-The CI autoskip mechanism at `tests/conftest.py:44-53` reads `requires_compatible_gpu` and `requires_checkpoint` keywords on items at collection time and applies a `pytest.mark.skip` to each match. Both markers are also registered with descriptions at `tests/conftest.py:18-31`. This spec adds a fourth marker (`gpu_inspection`) at the same registration site; it does **not** add a new autoskip rule — autoskip remains driven by `requires_compatible_gpu` + `requires_checkpoint`, which every GPU-gated test in both tiers carries.
+The CI autoskip mechanism at `tests/conftest.py:44-53` reads `requires_compatible_gpu` and `requires_checkpoint` keywords on items at collection time and applies a `pytest.mark.skip` to each match. Both markers are also registered with descriptions at `tests/conftest.py:18-31`. This spec adds a fourth marker (`gpu_inspection`) at the same registration site; it does **not** add a new autoskip rule — autoskip remains driven by `requires_compatible_gpu` + `requires_checkpoint`, which every GPU-gated test in both tiers carries. (Updated 2026-05-19: a third release-tier test, `tests/gpu/test_run_end_to_end_gpu.py::test_run_end_to_end_writes_bundle`, was added by PR #46 after the original audit; counts have been bumped throughout this spec to reflect the post-merge state.)
 
 ---
 
@@ -28,7 +28,7 @@ The CI autoskip mechanism at `tests/conftest.py:44-53` reads `requires_compatibl
 **Goals.**
 
 - Make the cost of running GPU tests legible: split the suite into Tier 1 (cheap, ~load time per test) and Tier 2 (expensive, ~minutes per test) by marker so a contributor can choose the right tier for the change they made.
-- Fix the latent bug in `scripts/run_gpu_tests.sh` — its current invocation silently skips the 2 `tests/gpu/` tests because the path filter excludes them.
+- Fix the latent bug in `scripts/run_gpu_tests.sh` — its current invocation silently skips the 3 `tests/gpu/` tests because the path filter excludes them.
 - Write down the T4-only validation policy and the `tiny_coco` data-size floor so future GPU tests don't drift.
 - Give reviewers a five-question checklist they can paste into a PR to gate new GPU tests against scope creep.
 - Keep the rollout trigger-agnostic: both tiers run via the same Colab notebook today; the runner's CLI arg picks the tier. No new CI infra.
@@ -111,15 +111,15 @@ The repo enables `--strict-markers` globally via `addopts` in `pyproject.toml` (
 | Tier | Marker expression | Path filter | Tests collected on a Turing+ box |
 | --- | --- | --- | --- |
 | `inspection` | `gpu_inspection` | `tests/integration/` | 9 — the three `*_real.py` files |
-| `release` | `gpu` | `tests/gpu/` | 2 — the two `test_real_train_*.py` files |
-| `all` (default, no-arg) | `gpu or gpu_inspection` | `tests/gpu/ tests/integration/` | 11 — all of the above |
+| `release` | `gpu` | `tests/gpu/` | 3 — the two `test_real_train_*.py` files plus `test_run_end_to_end_gpu.py` |
+| `all` (default, no-arg) | `gpu or gpu_inspection` | `tests/gpu/ tests/integration/` | 12 — all of the above |
 | anything else | — | — | exit 2, usage line on stderr |
 
 This table is the contract; §6 exit criteria pin it.
 
 ### 4.4 Colab notebook impact
 
-`notebooks/colab_gpu_tests.ipynb` Cell 6 invokes `bash scripts/run_gpu_tests.sh` with no argument. Under the new script, no-arg defaults to `all`, which runs all 11 tests instead of the 9 the current script runs. This is a deliberate fix of the latent bug §1 calls out — the 2 `tests/gpu/` tests should always have been part of the Colab run when triggered against a release-relevant change, and contributors deliberately invoking the notebook for a routine PR can switch to `bash scripts/run_gpu_tests.sh inspection` to skip the expensive training smokes.
+`notebooks/colab_gpu_tests.ipynb` Cell 6 invokes `bash scripts/run_gpu_tests.sh` with no argument. Under the new script, no-arg defaults to `all`, which runs all 12 tests instead of the 9 the current script runs. This is a deliberate fix of the latent bug §1 calls out — the 3 `tests/gpu/` tests should always have been part of the Colab run when triggered against a release-relevant change, and contributors deliberately invoking the notebook for a routine PR can switch to `bash scripts/run_gpu_tests.sh inspection` to skip the expensive training smokes.
 
 The notebook itself is not edited by this spec — the behavior change comes from the runner script. The policy doc's Section 2 (see §5.2 below) calls out the no-arg default explicitly so a contributor reading the policy understands what Cell 6 runs.
 
@@ -153,7 +153,7 @@ Followed by a single paragraph noting:
 
 ### 5.3 Section 3: "Inventory table"
 
-A single Markdown table, one row per GPU-gated test, 11 rows total. Columns:
+A single Markdown table, one row per GPU-gated test, 12 rows total. Columns:
 
 | Column | Contents | Source |
 | --- | --- | --- |
@@ -171,7 +171,7 @@ For each test, classify into one of three buckets:
 - **`partial — could cover X but loses Y`** — a structural assertion (e.g. "trainable ratio < 5%", "Linear modules swapped") can be covered by a CPU stub that mimics the same module-tree shape, but the test would lose its end-to-end signal (e.g. "the real model under real PEFT actually produces a finite forward pass"). Name X and Y in the cell.
 - **`viable — see follow-up #N`** — the test makes assertions a `TinySam3Stub` (or equivalent CPU mock) can satisfy with no real-model dependency. Implementer files a GitHub issue (`gh issue create --assignee @me`) and puts the issue number in the cell. The follow-up issue title pattern: "CPU-stub replacement for `<file>::<test>`."
 
-The implementer must read each of the 11 tests once to fill the row. No per-test runtime numbers — they would rot the moment hardware or model versions shift.
+The implementer must read each of the 12 tests once to fill the row. No per-test runtime numbers — they would rot the moment hardware or model versions shift.
 
 #### 5.3.2 Example rows (template for the implementer)
 
@@ -182,7 +182,7 @@ The doc includes two example rows verbatim — one inspection, one release — s
 | `tests/gpu/test_real_train_overfits.py::test_overfits_in_50_steps` | release | 50-step LoRA overfit on tiny_coco via `run_training(gpu_smoke_lora.yaml)`; asserts loss drops ≥ 30%, peak VRAM ≤ 14 GB, all logged scalars finite. | End-to-end real training: real SAM3.1 weights, real PEFT, real CUDA kernels, real optimizer step. | none — needs real SAM3.1 weights |
 ```
 
-These two example rows are part of the final doc — they are also valid rows in the 11-row inventory, not placeholders. The implementer fills the remaining 9 rows by reading the corresponding tests.
+These two example rows are part of the final doc — they are also valid rows in the 12-row inventory, not placeholders. The implementer fills the remaining 10 rows by reading the corresponding tests.
 
 ### 5.4 Section 4: "T4 validation policy"
 
@@ -324,7 +324,7 @@ The four existing test functions, the module-level `_bnb_available()` and `_has_
 
 **Code / docs.**
 
-- [ ] `docs/testing/gpu-test-policy.md` exists. Six sections per §5. Inventory table covers all 11 GPU-gated tests with tier + CPU-stub viability. T4 validation policy and `tiny_coco` policy stated. Five-question reviewer checklist present and pasteable. Length 250–350 lines.
+- [ ] `docs/testing/gpu-test-policy.md` exists. Six sections per §5. Inventory table covers all 12 GPU-gated tests with tier + CPU-stub viability. T4 validation policy and `tiny_coco` policy stated. Five-question reviewer checklist present and pasteable. Length 250–350 lines.
 - [ ] `tests/conftest.py` registers the `gpu_inspection` marker with a description that mentions `docs/testing/gpu-test-policy.md`.
 - [ ] `tests/integration/test_load_sam31_real.py` uses module-level `pytestmark = [requires_checkpoint, requires_compatible_gpu, gpu_inspection]`. Per-test `@pytest.mark.requires_checkpoint` and `@pytest.mark.requires_compatible_gpu` decorators are removed.
 - [ ] `tests/integration/test_peft_lora_real.py` `pytestmark` list contains `pytest.mark.gpu_inspection` in addition to the two existing markers.
@@ -335,8 +335,8 @@ The four existing test functions, the module-level `_bnb_available()` and `_has_
 
 - [ ] `ruff check && uv run ruff format --check && uv run mypy src/esam3 && uv run pytest` green.
 - [ ] `pytest --collect-only -m gpu_inspection` collects exactly 9 tests (the three `*_real.py` files). On a CPU box, those 9 are then auto-skipped at collection time by the `requires_compatible_gpu` autoskip in `tests/conftest.py:44-53`.
-- [ ] `pytest --collect-only -m gpu` collects exactly 2 tests (`test_real_train_overfits.py::test_overfits_in_50_steps` and `test_real_train_qlora.py::test_qlora_overfits_in_50_steps`).
-- [ ] `pytest --collect-only -m "gpu or gpu_inspection"` collects exactly 11 tests.
+- [ ] `pytest --collect-only -m gpu` collects exactly 3 tests (`test_real_train_overfits.py::test_overfits_in_50_steps`, `test_real_train_qlora.py::test_qlora_overfits_in_50_steps`, and `test_run_end_to_end_gpu.py::test_run_end_to_end_writes_bundle`).
+- [ ] `pytest --collect-only -m "gpu or gpu_inspection"` collects exactly 12 tests.
 - [ ] On a CPU box, each of `bash scripts/run_gpu_tests.sh`, `bash scripts/run_gpu_tests.sh inspection`, `bash scripts/run_gpu_tests.sh release`, `bash scripts/run_gpu_tests.sh all` runs cleanly to autoskip (no collection error, no marker-warning, exit code 0 because pytest treats all-skipped as success).
 - [ ] `bash scripts/run_gpu_tests.sh garbage` exits 2 with the usage line on stderr.
 - [ ] `markdownlint` clean on `docs/testing/gpu-test-policy.md`. The repo-root `.markdownlint.json` rules (per `2026-05-18-ci-hardening-design.md` §5.5) apply — the doc is a new live doc, NOT under `docs/superpowers/`, so the directory-scoped relaxation does NOT apply; all default markdownlint rules except `MD013` are in force.
