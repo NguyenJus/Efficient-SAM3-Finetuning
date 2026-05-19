@@ -403,6 +403,7 @@ Walk the report. Typical `S` rules and fixes:
 | `S105`/`S106`/`S107` (hardcoded password) | Pull from env or test fixture. |
 | `S108` (insecure /tmp file) | Use `tempfile.NamedTemporaryFile` / `tmp_path` fixture. |
 | `S603` (`subprocess` no validation) / `S607` (partial path) | Use absolute path + `shell=False` + literal `args=[...]`. |
+| `S311` | If non-security-sensitive (deterministic sampling, fixture seeding), add `# noqa: S311` with rationale OR extend the per-file-ignores. If genuinely security-sensitive, switch to `secrets`. |
 
 Where a finding is in `scripts/**/*.py` and the safe fix would distort the script (e.g. an intentional `subprocess.run(["bash", "scripts/x.sh"])` that legitimately needs `partial path`), the spec permits adding `"scripts/**/*.py" = ["S603", "S607"]` to `[tool.ruff.lint.per-file-ignores]`. Today `scripts/` contains only one shell script, so this is most likely a no-op.
 
@@ -428,6 +429,8 @@ git commit -m "fix(ruff-s): clear pre-existing ruff S family findings"
 ```
 
 (If no files changed — `git status` is clean — skip the commit; record in the PR description that `ruff S` was already clean.)
+
+> **Rollout note (captured 2026-05-18):** Phase 2.1 surfaced 8 `S101` assertions in `src/esam3/{peft_adapters/qlora.py, tracking/tensorboard.py, tracking/wandb.py}` (converted to `if not … raise`), and 3 `S311` `random` usages in `src/esam3/{data/coco.py, data/hf.py, train/loop.py}` (annotated with `# noqa: S311` + rationale per spec §5.1). The `tests/**` per-file-ignore was extended to include `S311`; a new `notebooks/**` per-file-ignore was added for `S101`/`S603`/`S607`. `scripts/**` did not require any per-file-ignore — the only shell script (`scripts/run_gpu_tests.sh`) is not Python.
 
 ---
 
@@ -475,6 +478,8 @@ git commit -m "fix(markdownlint): clear pre-existing markdown violations"
 
 (Skip if no files changed.)
 
+> **Rollout note (captured 2026-05-18):** Phase 2.2 surfaced 700+ cosmetic violations in the archival `docs/superpowers/{specs,plans}/` subtree. Resolution per spec §5.6: added `docs/superpowers/.markdownlint.json` (directory-scoped relaxation of 13 cosmetic rules) and `.markdownlint-cli2.jsonc` (sets `ignores: [".venv/**"]`). Live docs (README.md, ARCHITECTURE.md) and the current PR's own `docs/superpowers/specs/2026-05-18-ci-hardening-design.md` received only formatting normalizations (table separator style, code-fence language tags); content unchanged.
+
 ---
 
 ## Task 2.3: Fix `yamllint` findings
@@ -520,6 +525,8 @@ git commit -m "fix(yamllint): clear pre-existing yaml violations"
 
 (Skip if no files changed.)
 
+> **Rollout note (captured 2026-05-18):** Phase 2.3 surfaced `too many spaces after colon` warnings in 4 pre-existing YAML config files (`configs/examples/coco_text_lora.yaml`, `coco_text_qlora.yaml`, `src/esam3/cli/templates/coco_text_lora.yaml`, `coco_text_qlora.yaml`) — fixed in place. Added `ignore: .venv/` to `.yamllint.yml` (out-of-tree venv) and `document-start: disable` (project-wide style choice; all YAML omits the leading `---`). Both updates are reflected in spec §5.5.
+
 ---
 
 ## Task 2.4: Fix `shellcheck` findings
@@ -564,6 +571,8 @@ git commit -m "fix(shellcheck): clear pre-existing shellcheck findings in script
 
 (Skip if no files changed.)
 
+> **Rollout note (captured 2026-05-18):** no-op — clean on first run.
+
 ---
 
 ## Task 2.5: Fix `pip-audit` findings (vulnerable deps)
@@ -577,7 +586,7 @@ Spec §6.2.e, §5.7. The audit runs against the synced env so the audit environm
 
 ```bash
 uv sync --all-extras
-uv run --with pip-audit pip-audit --strict 2>&1 | tee /tmp/audit.txt
+uv run --with pip-audit pip-audit --strict --skip-editable 2>&1 | tee /tmp/audit.txt
 ```
 Expected: either `No known vulnerabilities found` or a table of `Name | Version | ID | Fix Versions`.
 
@@ -589,7 +598,7 @@ In `pyproject.toml`, raise the pin on the vulnerable dependency to a version lis
 
 ```bash
 uv sync --all-extras
-uv run --with pip-audit pip-audit --strict
+uv run --with pip-audit pip-audit --strict --skip-editable
 ```
 Expected: `No known vulnerabilities found`. If new vulns surfaced from the bump, repeat 2.5b until clean.
 
@@ -600,7 +609,7 @@ Expected: `No known vulnerabilities found`. If new vulns surfaced from the bump,
 1. Either accept the risk and open a *separate, post-merge* follow-up PR that adds the single `--ignore-vuln <ID>` flag to the `security.yml` `pip-audit` invocation with an inline comment naming the advisory.
 2. Or revisit the dep selection.
 
-In either path, **this** PR cannot proceed past Phase 2.5 until `pip-audit --strict` exits clean **with no ignore flags**.
+In either path, **this** PR cannot proceed past Phase 2.5 until `pip-audit --strict --skip-editable` exits clean **with no ignore flags**.
 
 - [ ] **Step 2.5e: Commit (only if `pyproject.toml` was modified)**
 
@@ -610,6 +619,8 @@ git commit -m "fix(deps): bump pinned deps to address pip-audit findings"
 ```
 
 (Skip if no files changed.)
+
+> **Rollout note (captured 2026-05-18):** `pip-audit --strict` (without `--skip-editable`) always fails on this repo because the local `efficient-sam3-finetuning` package is an editable distribution not on PyPI — pip-audit attempts to look it up and errors. With `--skip-editable` added (see spec §5.7 amendment), the audit runs clean: `No known vulnerabilities found`. No dependency bumps were required.
 
 ---
 
@@ -665,6 +676,8 @@ git commit -m "fix(gitleaks): allowlist verified false positives with rationale"
 
 (Skip if no files changed.)
 
+> **Rollout note (captured 2026-05-18):** no-op — clean on first run.
+
 ---
 
 ## Task 2.7: Refresh `uv.lock`
@@ -711,6 +724,8 @@ git commit -m "chore(deps): refresh uv.lock"
 
 (Skip if no files changed.)
 
+> **Rollout note (captured 2026-05-18):** no-op — clean on first run.
+
 ---
 
 ## Phase 2 exit check
@@ -722,7 +737,7 @@ uv run ruff check . \
   && npx --yes markdownlint-cli2 "**/*.md" "#node_modules" \
   && uv run --with yamllint yamllint . \
   && shellcheck scripts/*.sh \
-  && uv run --with pip-audit pip-audit --strict \
+  && uv run --with pip-audit pip-audit --strict --skip-editable \
   && gitleaks detect --no-banner --redact --verbose \
   && uv lock --check \
   && uv run pytest -x -q \
@@ -994,7 +1009,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: pip-audit
-        run: uv run --with pip-audit pip-audit --strict
+        run: uv run --with pip-audit pip-audit --strict --skip-editable
 
   gitleaks:
     runs-on: ubuntu-latest

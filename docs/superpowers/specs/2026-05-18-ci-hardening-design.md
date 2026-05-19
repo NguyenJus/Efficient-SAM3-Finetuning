@@ -58,6 +58,8 @@ The repo is currently **private** (going public later). That is the reason CodeQ
 
 .gitleaks.toml          # NEW — extends defaults; empty [allowlist]
 .markdownlint.json      # NEW — MD013 off; defaults otherwise
+.markdownlint-cli2.jsonc          # NEW — markdownlint-cli2 config; sets ignores:[".venv/**"]
+docs/superpowers/.markdownlint.json # NEW — directory-scoped relaxation for archival planning docs
 .yamllint.yml           # NEW — extends default; line-length off; truthy.check-keys false
 
 pyproject.toml          # EDITED — ruff lint.select gains "S"; per-file ignores;
@@ -76,7 +78,7 @@ No file under `src/esam3/` is modified. The rollout (§6) inserts other commits 
 | `ci.yml` | `test` | (existing) ruff check, ruff format --check, mypy strict, pytest `--cov-fail-under=80`, upload HTML coverage | yes |
 | `ci.yml` | `lock-check` | (new) `uv lock --check` — fail if `uv.lock` drifted from `pyproject.toml` | yes |
 | `ci.yml` | `lint-hygiene` | (new) actionlint + yamllint + markdownlint-cli2 + shellcheck | yes |
-| `security.yml` | `pip-audit` | (new) `uv run --with pip-audit pip-audit --strict` against the synced env | yes |
+| `security.yml` | `pip-audit` | (new) `uv run --with pip-audit pip-audit --strict --skip-editable` against the synced env | yes |
 | `security.yml` | `gitleaks` | (new) OSS CLI binary downloaded + checksum-verified; full history on PRs, push range on push | yes |
 
 **Parallelism.** All five jobs run in parallel — no `needs:` chains. The serial chain is solely *inside* `test` (lint → format → mypy → pytest), which is unchanged.
@@ -94,11 +96,13 @@ No file under `src/esam3/` is modified. The rollout (§6) inserts other commits 
 Per-file ignores added under `[tool.ruff.lint.per-file-ignores]`:
 
 ```toml
-"tests/**/*.py"   = ["S101"]              # allow `assert` in tests
-"scripts/**/*.py" = ["S603", "S607"]      # only if violations exist; remove otherwise
+"tests/**/*.py"   = ["S101", "S311"]       # allow `assert` and `random` (test fixtures use seeded RNG)
+"notebooks/**"   = ["S101", "S603", "S607"] # Colab notebooks: runtime-guard `assert`, `subprocess(git ...)`
 ```
 
 The `scripts/**` ignore is conditional on the rollout step (§6.1) actually surfacing a violation; if `scripts/` is clean under `S`, the second line is not added. (Today `scripts/` contains only a shell script, so the `S603/S607` ignore likely will not be needed and the entry should be omitted. Decide during §6.1.)
+
+Inline `# noqa: S311` is allowed on individual `src/` lines that use `random.Random(seed)` or `random.random()` for deterministic sampling (not security-sensitive). Each occurrence carries a rationale comment. The three current sites are `src/esam3/data/coco.py`, `src/esam3/data/hf.py`, and `src/esam3/train/loop.py`.
 
 ### 5.2 `uv lock --check` — new `ci.yml: lock-check` job
 
@@ -129,11 +133,16 @@ Pinned version `1.7.7` (current latest as of 2026-05). The upstream `download-ac
 
 ```yaml
 extends: default
+ignore: |
+  .venv/
 rules:
   line-length: disable
+  document-start: disable   # project-wide style omits leading ---
   truthy:
     check-keys: false        # GitHub `on:` triggers truthy false-positives by default
 ```
+
+`ignore: .venv/` excludes the local Python venv from yamllint scope. `document-start: disable` reflects a project-wide style choice — all YAML files in this repo (workflows, dependabot, configs/examples, src/esam3/cli/templates) omit the leading `---`.
 
 ### 5.5 markdownlint-cli2 — `ci.yml: lint-hygiene`
 
@@ -150,7 +159,40 @@ Node is pre-installed on `ubuntu-latest`. `.markdownlint.json`:
 }
 ```
 
+```jsonc
+// .markdownlint-cli2.jsonc — runner config
+{
+  "config": { "MD013": false },
+  "ignores": [".venv/**"]
+}
+```
+
+```json
+// docs/superpowers/.markdownlint.json — directory-scoped relaxation for the
+// archival planning subtree (specs/, plans/). Disables 13 cosmetic rules so
+// frozen historical docs do not block CI. The repo-root config still applies
+// to README.md, ARCHITECTURE.md, and any future Markdown outside this subtree.
+{
+  "MD004": false,
+  "MD013": false,
+  "MD022": false,
+  "MD024": false,
+  "MD025": false,
+  "MD031": false,
+  "MD032": false,
+  "MD033": false,
+  "MD034": false,
+  "MD036": false,
+  "MD038": false,
+  "MD040": false,
+  "MD056": false,
+  "MD060": false
+}
+```
+
 `MD013` (line-length) is off; everything else stays at default (headings, links, lists). Add ignore globs if the rollout surfaces generated/vendored markdown that shouldn't be linted.
+
+The directory-scoped relaxation reflects a deliberate scope decision: archival planning documents under `docs/superpowers/` are frozen historical artifacts; mass-fixing 700+ cosmetic violations across them would distort the planning record without a clear payoff. Live documentation (README.md, ARCHITECTURE.md, future docs) and any new file outside `docs/superpowers/` is still subject to the default ruleset (minus MD013).
 
 ### 5.6 shellcheck — `ci.yml: lint-hygiene`
 
@@ -165,10 +207,10 @@ Pre-installed on `ubuntu-latest`. No config file; default rules. Today the glob 
 
 ```yaml
 - name: pip-audit
-  run: uv run --with pip-audit pip-audit --strict
+  run: uv run --with pip-audit pip-audit --strict --skip-editable
 ```
 
-`--strict` returns non-zero on any vulnerability. Run after `uv sync --all-extras` so the audited environment matches the env tests run against. No `--ignore-vuln` initially. Policy for the first transitive vuln with no upstream fix: open a follow-up PR adding a single `--ignore-vuln <ID>` flag with a comment naming the advisory and linking the upstream issue. The flag is not added preemptively.
+`--strict` returns non-zero on any vulnerability. Run after `uv sync --all-extras` so the audited environment matches the env tests run against. No `--ignore-vuln` initially. Policy for the first transitive vuln with no upstream fix: open a follow-up PR adding a single `--ignore-vuln <ID>` flag with a comment naming the advisory and linking the upstream issue. The flag is not added preemptively. `--skip-editable` excludes the locally-installed `efficient-sam3-finetuning` package (an editable distribution not on PyPI). Without it, the audit always fails on this repo regardless of actual vulnerability state.
 
 ### 5.8 gitleaks — `security.yml: gitleaks`
 
@@ -301,7 +343,7 @@ Each sub-step is one commit. Sub-steps are ordered to minimize re-work (lockfile
 | 6.2.b | `npx --yes markdownlint-cli2 "**/*.md" "#node_modules"` | Edit Markdown files to satisfy default rules (excluding the disabled `MD013`). |
 | 6.2.c | `uv run --with yamllint yamllint .` | Edit YAML files. |
 | 6.2.d | `shellcheck scripts/*.sh` | Edit `scripts/run_gpu_tests.sh`. |
-| 6.2.e | `uv run --with pip-audit pip-audit --strict` | Bump pinned deps in `pyproject.toml` to a fixed version. If a transitive vulnerability has no upstream fix, the rollout halts here: a follow-up PR (post-merge) adds the targeted `--ignore-vuln <ID>` flag to the `security.yml` invocation with a comment naming the advisory. The first CI green of `security.yml` (Step 4) is gated on this sub-step producing a clean `pip-audit --strict` run with **no** ignore flags. |
+| 6.2.e | `uv run --with pip-audit pip-audit --strict --skip-editable` | Bump pinned deps in `pyproject.toml` to a fixed version. If a transitive vulnerability has no upstream fix, the rollout halts here: a follow-up PR (post-merge) adds the targeted `--ignore-vuln <ID>` flag to the `security.yml` invocation with a comment naming the advisory. The first CI green of `security.yml` (Step 4) is gated on this sub-step producing a clean `pip-audit --strict --skip-editable` run with **no** ignore flags. |
 | 6.2.f | `gitleaks detect --no-banner --redact --verbose` | If any finding is a real secret: rotate, then `git filter-repo` (separate operation, coordinated with the user). If any finding is a verified false positive: add a narrowly-scoped entry to `.gitleaks.toml` `[allowlist]` with a rationale comment. |
 | 6.2.g | `uv lock --check` (then `uv lock` if it failed) | Commit updated `uv.lock`. |
 
