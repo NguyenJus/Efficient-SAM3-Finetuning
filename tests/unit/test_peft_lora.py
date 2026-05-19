@@ -273,15 +273,19 @@ def test_resolve_targets_supports_custom_linear_types() -> None:
     cfg = PEFTConfig(method="qlora", scope="vision")
 
     # Default linear_types=(nn.Linear,) finds nothing.
-    with pytest.raises(ValueError, match=r"no nn\.Linear modules matched"):
+    with pytest.raises(ValueError, match=r"no Linear modules matched"):
         _resolve_targets(base, cfg)
 
-    # Custom linear_types=(FakeLinear4bit,) finds the two attention modules.
+    # Custom linear_types=(FakeLinear4bit,) finds the two attention modules,
+    # and a mismatch under that override surfaces the correct type label.
     matched = _resolve_targets(base, cfg, linear_types=(FakeLinear4bit,))
     assert sorted(matched) == [
         "backbone.vision_backbone.trunk.blocks.0.attn.proj",
         "backbone.vision_backbone.trunk.blocks.0.attn.qkv",
     ]
+    empty_cfg = PEFTConfig(method="qlora", scope="vision", target_modules=["does_not_match"])
+    with pytest.raises(ValueError, match=r"no FakeLinear4bit modules matched"):
+        _resolve_targets(base, empty_cfg, linear_types=(FakeLinear4bit,))
 
 
 def test_resolve_targets_default_still_filters_to_nn_linear() -> None:

@@ -67,10 +67,11 @@ def _resolve_targets(
         if any(c.search(name) for c in compiled):
             matched.append(name)
     if not matched:
-        sample = ", ".join(linears[:50]) if linears else "<no nn.Linear modules found>"
+        type_label = "/".join(t.__name__ for t in linear_types)
+        sample = ", ".join(linears[:50]) if linears else f"<no {type_label} modules found>"
         raise ValueError(
-            f"apply_lora: no nn.Linear modules matched patterns {patterns}. "
-            f"Linear modules actually present (first 50): {sample}"
+            f"apply_lora: no {type_label} modules matched patterns {patterns}. "
+            f"{type_label} modules actually present (first 50): {sample}"
         )
     return matched
 
