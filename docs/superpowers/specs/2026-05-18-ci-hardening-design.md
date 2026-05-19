@@ -78,7 +78,7 @@ No file under `src/esam3/` is modified. The rollout (§6) inserts other commits 
 | `ci.yml` | `test` | (existing) ruff check, ruff format --check, mypy strict, pytest `--cov-fail-under=80`, upload HTML coverage | yes |
 | `ci.yml` | `lock-check` | (new) `uv lock --check` — fail if `uv.lock` drifted from `pyproject.toml` | yes |
 | `ci.yml` | `lint-hygiene` | (new) actionlint + yamllint + markdownlint-cli2 + shellcheck | yes |
-| `security.yml` | `pip-audit` | (new) `uv run --with pip-audit pip-audit --strict --skip-editable` against the synced env | yes |
+| `security.yml` | `pip-audit` | (new) `uv run --with pip-audit pip-audit --skip-editable` against the synced env | yes |
 | `security.yml` | `gitleaks` | (new) OSS CLI binary downloaded + checksum-verified; full history on PRs, push range on push | yes |
 
 **Parallelism.** All five jobs run in parallel — no `needs:` chains. The serial chain is solely *inside* `test` (lint → format → mypy → pytest), which is unchanged.
@@ -207,10 +207,10 @@ Pre-installed on `ubuntu-latest`. No config file; default rules. Today the glob 
 
 ```yaml
 - name: pip-audit
-  run: uv run --with pip-audit pip-audit --strict --skip-editable
+  run: uv run --with pip-audit pip-audit --skip-editable
 ```
 
-`--strict` returns non-zero on any vulnerability. Run after `uv sync --all-extras` so the audited environment matches the env tests run against. No `--ignore-vuln` initially. Policy for the first transitive vuln with no upstream fix: open a follow-up PR adding a single `--ignore-vuln <ID>` flag with a comment naming the advisory and linking the upstream issue. The flag is not added preemptively. `--skip-editable` excludes the locally-installed `efficient-sam3-finetuning` package (an editable distribution not on PyPI). Without it, the audit always fails on this repo regardless of actual vulnerability state.
+Run after `uv sync --all-extras` so the audited environment matches the env tests run against. No `--ignore-vuln` initially. Policy for the first transitive vuln with no upstream fix: open a follow-up PR adding a single `--ignore-vuln <ID>` flag with a comment naming the advisory and linking the upstream issue. The flag is not added preemptively. `--skip-editable` excludes the locally-installed `efficient-sam3-finetuning` package (an editable distribution not on PyPI). `--strict` is intentionally **not** used here: pip-audit treats every skipped distribution (including `--skip-editable` skips) as a collection failure under `--strict`, making the two flags mutually incompatible in this repo. pip-audit's default mode still exits non-zero on real vulnerability findings, which is the gate we want.
 
 ### 5.8 gitleaks — `security.yml: gitleaks`
 
@@ -343,7 +343,7 @@ Each sub-step is one commit. Sub-steps are ordered to minimize re-work (lockfile
 | 6.2.b | `npx --yes markdownlint-cli2 "**/*.md" "#node_modules"` | Edit Markdown files to satisfy default rules (excluding the disabled `MD013`). |
 | 6.2.c | `uv run --with yamllint yamllint .` | Edit YAML files. |
 | 6.2.d | `shellcheck scripts/*.sh` | Edit `scripts/run_gpu_tests.sh`. |
-| 6.2.e | `uv run --with pip-audit pip-audit --strict --skip-editable` | Bump pinned deps in `pyproject.toml` to a fixed version. If a transitive vulnerability has no upstream fix, the rollout halts here: a follow-up PR (post-merge) adds the targeted `--ignore-vuln <ID>` flag to the `security.yml` invocation with a comment naming the advisory. The first CI green of `security.yml` (Step 4) is gated on this sub-step producing a clean `pip-audit --strict --skip-editable` run with **no** ignore flags. |
+| 6.2.e | `uv run --with pip-audit pip-audit --skip-editable` | Bump pinned deps in `pyproject.toml` to a fixed version. If a transitive vulnerability has no upstream fix, the rollout halts here: a follow-up PR (post-merge) adds the targeted `--ignore-vuln <ID>` flag to the `security.yml` invocation with a comment naming the advisory. The first CI green of `security.yml` (Step 4) is gated on this sub-step producing a clean `pip-audit --skip-editable` run with **no** ignore flags. |
 | 6.2.f | `gitleaks detect --no-banner --redact --verbose` | If any finding is a real secret: rotate, then `git filter-repo` (separate operation, coordinated with the user). If any finding is a verified false positive: add a narrowly-scoped entry to `.gitleaks.toml` `[allowlist]` with a rationale comment. |
 | 6.2.g | `uv lock --check` (then `uv lock` if it failed) | Commit updated `uv.lock`. |
 

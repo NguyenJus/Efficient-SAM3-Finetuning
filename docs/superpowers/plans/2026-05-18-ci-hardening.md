@@ -586,7 +586,7 @@ Spec §6.2.e, §5.7. The audit runs against the synced env so the audit environm
 
 ```bash
 uv sync --all-extras
-uv run --with pip-audit pip-audit --strict --skip-editable 2>&1 | tee /tmp/audit.txt
+uv run --with pip-audit pip-audit --skip-editable 2>&1 | tee /tmp/audit.txt
 ```
 Expected: either `No known vulnerabilities found` or a table of `Name | Version | ID | Fix Versions`.
 
@@ -598,7 +598,7 @@ In `pyproject.toml`, raise the pin on the vulnerable dependency to a version lis
 
 ```bash
 uv sync --all-extras
-uv run --with pip-audit pip-audit --strict --skip-editable
+uv run --with pip-audit pip-audit --skip-editable
 ```
 Expected: `No known vulnerabilities found`. If new vulns surfaced from the bump, repeat 2.5b until clean.
 
@@ -609,7 +609,7 @@ Expected: `No known vulnerabilities found`. If new vulns surfaced from the bump,
 1. Either accept the risk and open a *separate, post-merge* follow-up PR that adds the single `--ignore-vuln <ID>` flag to the `security.yml` `pip-audit` invocation with an inline comment naming the advisory.
 2. Or revisit the dep selection.
 
-In either path, **this** PR cannot proceed past Phase 2.5 until `pip-audit --strict --skip-editable` exits clean **with no ignore flags**.
+In either path, **this** PR cannot proceed past Phase 2.5 until `pip-audit --skip-editable` exits clean **with no ignore flags**.
 
 - [ ] **Step 2.5e: Commit (only if `pyproject.toml` was modified)**
 
@@ -620,7 +620,7 @@ git commit -m "fix(deps): bump pinned deps to address pip-audit findings"
 
 (Skip if no files changed.)
 
-> **Rollout note (captured 2026-05-18):** `pip-audit --strict` (without `--skip-editable`) always fails on this repo because the local `efficient-sam3-finetuning` package is an editable distribution not on PyPI — pip-audit attempts to look it up and errors. With `--skip-editable` added (see spec §5.7 amendment), the audit runs clean: `No known vulnerabilities found`. No dependency bumps were required.
+> **Rollout note (captured 2026-05-18):** `pip-audit --strict` (without `--skip-editable`) always fails on this repo because the local `efficient-sam3-finetuning` package is an editable distribution not on PyPI — pip-audit attempts to look it up and errors. With `--skip-editable` added (see spec §5.7 amendment), the audit runs clean: `No known vulnerabilities found`. No dependency bumps were required. Update (CI run 26075697664, 2026-05-19): `pip-audit --strict --skip-editable` *also* failed in CI — `--strict` treats `--skip-editable` skips as collection failures (the two flags are mutually incompatible in this repo). Final invocation is `pip-audit --skip-editable` alone; spec §5.7 explains the trade-off.
 
 ---
 
@@ -737,7 +737,7 @@ uv run ruff check . \
   && npx --yes markdownlint-cli2 "**/*.md" "#node_modules" \
   && uv run --with yamllint yamllint . \
   && shellcheck scripts/*.sh \
-  && uv run --with pip-audit pip-audit --strict --skip-editable \
+  && uv run --with pip-audit pip-audit --skip-editable \
   && gitleaks detect --no-banner --redact --verbose \
   && uv lock --check \
   && uv run pytest -x -q \
@@ -1009,7 +1009,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: pip-audit
-        run: uv run --with pip-audit pip-audit --strict --skip-editable
+        run: uv run --with pip-audit pip-audit --skip-editable
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -1211,7 +1211,7 @@ The PR description should include (copy-paste from spec §7):
 | §5.4 yamllint | 1.3 (config), 3.2 (job), 2.3 (fix) |
 | §5.5 markdownlint-cli2 | 1.2 (config), 3.2 (job), 2.2 (fix) |
 | §5.6 shellcheck | 3.2 (job), 2.4 (fix) |
-| §5.7 pip-audit (`--strict`; **halt** on unfixable vuln, no `--ignore-vuln` in this PR) | 4.2 (job), 2.5 (fix); halt encoded in 2.5d |
+| §5.7 pip-audit (`--skip-editable`; **halt** on unfixable vuln, no `--ignore-vuln` in this PR) | 4.2 (job), 2.5 (fix); halt encoded in 2.5d |
 | §5.8 gitleaks (OSS CLI binary, NOT `gitleaks-action`; SHA-256 verified; event-conditional checkout & invocation) | 4.1 (hash), 4.2 (job), 2.6 (fix), 1.1 (config) |
 | §5.9 Coverage HTML artifact (`retention-days: 3`, `if: always()`) | 1.5 (pytest addopts), 3.2 (upload step) |
 | §5.10 Dependabot (pip + github-actions, weekly, `dev-deps` + `patch-updates` groups) | 1.4 |
