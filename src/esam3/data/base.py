@@ -17,7 +17,11 @@ class TextPrompts:
 
 @dataclass(frozen=True)
 class BoxPrompts:
-    """Per-image box prompts and their target class ids."""
+    """Per-image box prompts and their target class ids.
+
+    `boxes` is `(N, 4)` xyxy in pixel coords; converted to normalized cxcywh
+    at the collator boundary before reaching the matcher/losses.
+    """
 
     boxes: torch.Tensor  # (N, 4) xyxy, pixel coords
     class_ids: torch.Tensor  # (N,) int64
@@ -28,11 +32,15 @@ Prompts = TextPrompts | BoxPrompts
 
 @dataclass(frozen=True)
 class Instance:
-    """Ground-truth instance for one mask in one image."""
+    """Ground-truth instance for one mask in one image.
+
+    `box` is `(4,)` xyxy in pixel coords; converted to normalized cxcywh at
+    the collator boundary before reaching the matcher/losses.
+    """
 
     mask: torch.Tensor  # (H, W) bool
     class_id: int
-    box: torch.Tensor  # (4,) xyxy
+    box: torch.Tensor  # (4,) xyxy, pixel coords
 
 
 @dataclass(frozen=True)
