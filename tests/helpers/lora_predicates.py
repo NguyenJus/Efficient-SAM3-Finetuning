@@ -2,7 +2,7 @@
 
 Kept here (not in `tests/integration/`) so the lightweight unit suite can
 import the predicate without pulling in the integration module's heavy
-top-level imports (torch, sam3, esam3.peft_adapters.qlora, etc.).
+top-level imports (torch, sam3, custom_sam_peft.peft_adapters.qlora, etc.).
 """
 
 from __future__ import annotations

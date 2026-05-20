@@ -1,4 +1,4 @@
-"""CPU smoke tests for esam3.peft_adapters.qlora.
+"""CPU smoke tests for custom_sam_peft.peft_adapters.qlora.
 
 The real work (4-bit module swap + LoRA on quantized base) is GPU-only and
 lives in tests/integration/test_peft_qlora_real.py. These tests cover:
@@ -26,14 +26,14 @@ from typing import Any
 import pytest
 from torch import nn
 
-from esam3._registry import lookup
-from esam3.config.schema import PEFTConfig, QLoRAConfig
+from custom_sam_peft._registry import lookup
+from custom_sam_peft.config.schema import PEFTConfig, QLoRAConfig
 from tests.fixtures.tiny_sam3_lora_stub import make_stub_wrapper
 
 
 def test_registry_lookup() -> None:
     """apply_qlora is registered under ('peft', 'qlora')."""
-    from esam3.peft_adapters.qlora import apply_qlora
+    from custom_sam_peft.peft_adapters.qlora import apply_qlora
 
     assert lookup("peft", "qlora") is apply_qlora
 
@@ -72,7 +72,7 @@ def test_import_does_not_require_bitsandbytes() -> None:
     """
     import ast
 
-    import esam3.peft_adapters.qlora as qlora_module
+    import custom_sam_peft.peft_adapters.qlora as qlora_module
 
     # The module is already importable (this very import succeeded) — that
     # alone proves importing qlora does not require bitsandbytes at module
@@ -105,11 +105,11 @@ def test_apply_qlora_raises_helpful_importerror_when_bnb_missing(
 
     Setting sys.modules["bitsandbytes"] = None makes a fresh `import
     bitsandbytes` inside apply_qlora's lazy-import helper fail with
-    ImportError. We do NOT evict esam3.peft_adapters.qlora from sys.modules
+    ImportError. We do NOT evict custom_sam_peft.peft_adapters.qlora from sys.modules
     here — re-importing it would re-fire the @register("peft", "qlora")
     decorator, which the registry rejects as a duplicate.
     """
-    from esam3.peft_adapters.qlora import apply_qlora
+    from custom_sam_peft.peft_adapters.qlora import apply_qlora
 
     monkeypatch.setitem(sys.modules, "bitsandbytes", None)
 
@@ -121,7 +121,7 @@ def test_apply_qlora_raises_helpful_importerror_when_bnb_missing(
 
 def test_save_qlora_raises_when_no_peft_model(tmp_path: Path) -> None:
     """save_qlora requires apply_qlora to have run first."""
-    from esam3.peft_adapters.qlora import save_qlora
+    from custom_sam_peft.peft_adapters.qlora import save_qlora
 
     w = make_stub_wrapper()
     assert w.peft_model is None
@@ -131,7 +131,7 @@ def test_save_qlora_raises_when_no_peft_model(tmp_path: Path) -> None:
 
 def test_load_qlora_raises_when_peft_model_already_set(tmp_path: Path) -> None:
     """load_qlora refuses to overwrite a wrapper that already has an adapter."""
-    from esam3.peft_adapters.qlora import load_qlora
+    from custom_sam_peft.peft_adapters.qlora import load_qlora
 
     w = make_stub_wrapper()
     # Fake a previously-applied state. The real type is PeftModel; for this
@@ -188,7 +188,7 @@ class _FakeWrapper:
 
 
 def test_infer_quant_type_primary_path(fake_bnb: types.ModuleType) -> None:
-    from esam3.peft_adapters.qlora import _infer_quant_type_from_wrapper
+    from custom_sam_peft.peft_adapters.qlora import _infer_quant_type_from_wrapper
 
     fake_linear4bit = fake_bnb.nn.Linear4bit(weight_quant_type="nf4")  # type: ignore[attr-defined]
     model = nn.Sequential(fake_linear4bit)
@@ -197,7 +197,7 @@ def test_infer_quant_type_primary_path(fake_bnb: types.ModuleType) -> None:
 
 
 def test_infer_quant_type_legacy_fallback(fake_bnb: types.ModuleType) -> None:
-    from esam3.peft_adapters.qlora import _infer_quant_type_from_wrapper
+    from custom_sam_peft.peft_adapters.qlora import _infer_quant_type_from_wrapper
 
     fake_linear4bit = fake_bnb.nn.Linear4bit(module_quant_type="fp4")  # type: ignore[attr-defined]
     model = nn.Sequential(fake_linear4bit)
@@ -208,7 +208,7 @@ def test_infer_quant_type_legacy_fallback(fake_bnb: types.ModuleType) -> None:
 def test_infer_quant_type_raises_when_both_paths_missing(
     fake_bnb: types.ModuleType,
 ) -> None:
-    from esam3.peft_adapters.qlora import _infer_quant_type_from_wrapper
+    from custom_sam_peft.peft_adapters.qlora import _infer_quant_type_from_wrapper
 
     fake_linear4bit = fake_bnb.nn.Linear4bit()  # no quant_type set anywhere
     model = nn.Sequential(fake_linear4bit)
