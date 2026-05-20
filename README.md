@@ -1,13 +1,15 @@
 # efficient-sam3-finetuning
 
+[![CI](https://github.com/NguyenJus/Efficient-SAM3-Finetuning/actions/workflows/ci.yml/badge.svg)](https://github.com/NguyenJus/Efficient-SAM3-Finetuning/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](pyproject.toml)
+
 Parameter-efficient finetuning of [SAM3.1](https://huggingface.co/facebook/sam3.1)
 on niche image instance-segmentation datasets — runnable on a single
 consumer GPU.
 
-> **Status:** v0 scaffolding only. The CLI and library surfaces exist;
-> training/eval/data-loading bodies land in subsequent specs. See
-> `docs/superpowers/specs/` for design and `docs/superpowers/plans/`
-> for the build sequence.
+> **⚠️ Work in progress — not ready to run.**
+> v0.5.0 is an active development snapshot. The CLI surfaces (`train`, `eval`, `export`, `run`, `init`, `doctor`) exist and exercise real subsystems (LoRA / QLoRA adapters, W&B tracking), but the project has not been validated end-to-end on production workloads. Expect breaking changes. Use at your own risk; pin to a tagged release if you need stability.
 
 ## Beginner — train in 3 clicks
 
@@ -83,31 +85,13 @@ For testing: run `pytest -m integration` for end-to-end stub tests, or `pytest -
 
 See `ARCHITECTURE.md` for the module map and data flow.
 
-### Development
+## Developer setup
 
-```bash
-uv run ruff check
-uv run ruff format --check
-uv run mypy src/esam3
-uv run pytest
-```
-
-GPU smoke test (requires CUDA + SAM3.1 weights):
-
-```bash
-uv run pytest -m gpu
-```
-
-### GPU test automation
-
-Run the GPU-gated tests on a free Colab T4 (no local GPU required):
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/NguyenJus/Efficient-SAM3-Finetuning/blob/main/notebooks/colab_gpu_tests.ipynb)
-
-In Colab Secrets, set `HF_TOKEN` (Hugging Face token with read access to
-gated `facebook/sam3.1`), plus `GH_TOKEN` (GitHub fine-grained PAT with
-`Contents: Read`) **if this repo is private**. Choose a T4 (or better)
-runtime, then Run All. See [`docs/superpowers/specs/2026-05-17-peft-qlora-design.md`](docs/superpowers/specs/2026-05-17-peft-qlora-design.md) §11 for details.
+Dev loop, GPU test automation, and repo layout live in
+[`README-dev.md`](README-dev.md). See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the project's contribution
+posture (solo research; forks welcome, external PRs not currently
+accepted).
 
 ## License
 

@@ -1,0 +1,57 @@
+name: PR Colab badge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  inject-badge:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd             # v6.0.2
+
+      - name: Inject per-branch Colab badge into PR body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          encoded_branch="$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe='/'))" "${BRANCH}")"
+          badge_url="https://colab.research.google.com/github/${GITHUB_REPOSITORY}/blob/${encoded_branch}/notebooks/colab_gpu_tests.ipynb"
+          new_block="$(printf '<!-- colab-badge-start -->\n[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](%s)\n<!-- colab-badge-end -->\n' "${badge_url}")"
+
+          current_body="$(gh pr view "${PR_NUMBER}" --json body --jq .body)"
+
+          if printf '%s' "${current_body}" | grep -q '<!-- colab-badge-start -->'; then
+            new_body="$(printf '%s' "${current_body}" | NEW_BLOCK="${new_block}" python3 -c '
+          import os, re, sys
+          body = sys.stdin.read()
+          replacement = os.environ["NEW_BLOCK"]
+          new = re.sub(
+              r"<!-- colab-badge-start -->.*?<!-- colab-badge-end -->\n?",
+              lambda _m: replacement,
+              body,
+              count=1,
+              flags=re.DOTALL,
+          )
+          sys.stdout.write(new)
+          ')"
+          else
+            new_body="$(printf '%s\n\n%s' "${current_body}" "${new_block}")"
+          fi
+
+          if [ "${new_body}" = "${current_body}" ]; then
+            echo "PR body already contains the correct badge; no edit."
+            exit 0
+          fi
+          printf '%s' "${new_body}" | gh pr edit "${PR_NUMBER}" --body-file -
