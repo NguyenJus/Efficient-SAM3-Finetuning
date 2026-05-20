@@ -136,10 +136,19 @@ class HungarianMatcher:
                     )
                 )
                 continue
+            # Matching is @torch.no_grad and the per-image volume is small
+            # (queries x targets is at most a few hundred), so we upcast model
+            # outputs to fp32 here. torch.cdist has no bf16/fp16 kernel on
+            # CPU or CUDA (NotImplementedError "cdist_cuda" / "cdist" for
+            # BFloat16), and downstream cost terms expect a consistent dtype.
+            # Targets are already fp32 from the dataset.
+            pred_boxes_i = outputs.pred_boxes[i].float()
+            pred_masks_i = outputs.pred_masks[i].float()
+
             tgt_boxes = torch.stack([t.box for t in tgts]).to(outputs.pred_boxes.device)
-            cost_l1 = torch.cdist(outputs.pred_boxes[i], tgt_boxes, p=1)
+            cost_l1 = torch.cdist(pred_boxes_i, tgt_boxes, p=1)
             cost_giou = -_giou(
-                _box_cxcywh_to_xyxy(outputs.pred_boxes[i]),
+                _box_cxcywh_to_xyxy(pred_boxes_i),
                 _box_cxcywh_to_xyxy(tgt_boxes),
             )
 
@@ -150,7 +159,7 @@ class HungarianMatcher:
                 mode="bilinear",
                 align_corners=False,
             )[0]
-            cost_mask = _dice_cost(outputs.pred_masks[i], tgt_masks_low)
+            cost_mask = _dice_cost(pred_masks_i, tgt_masks_low)
 
             cost = (
                 self.lambda_l1 * cost_l1

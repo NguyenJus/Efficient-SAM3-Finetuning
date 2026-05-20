@@ -63,6 +63,41 @@ def test_matcher_handles_more_targets_than_queries() -> None:
     assert tgt_idx.numel() == 2
 
 
+def test_matcher_accepts_bf16_predictions() -> None:
+    """Matcher must accept bf16 pred_boxes/pred_masks (fp32 targets).
+
+    When the wrapper is cast to bf16 (the LoRA/QLoRA compute_dtype) its
+    ``pred_boxes`` and ``pred_masks`` are bf16, but ``torch.cdist`` (used for
+    the L1 cost) implements neither CPU nor CUDA kernels for bf16:
+    ``NotImplementedError: "cdist_cuda" not implemented for 'BFloat16'`` (and
+    the symmetric error on CPU).  The matcher is ``@torch.no_grad()`` so it
+    can safely upcast to fp32 internally — this test pins that contract.
+    """
+    matcher = HungarianMatcher(lambda_l1=5.0, lambda_giou=2.0, lambda_mask=5.0)
+    outputs = CanonicalOutputs(
+        obj_logits=torch.zeros(1, 4, dtype=torch.bfloat16),
+        pred_boxes=torch.tensor(
+            [
+                [
+                    [0.5, 0.5, 0.1, 0.1],
+                    [0.2, 0.2, 0.1, 0.1],
+                    [0.8, 0.8, 0.1, 0.1],
+                    [0.1, 0.9, 0.1, 0.1],
+                ]
+            ],
+            dtype=torch.bfloat16,
+        ),
+        pred_masks=torch.zeros(1, 4, 16, 16, dtype=torch.bfloat16),
+        img_presence=torch.zeros(1, dtype=torch.bfloat16),
+    )
+    targets = [[_instance([0.5, 0.5, 0.1, 0.1]), _instance([0.2, 0.2, 0.1, 0.1])]]
+    indices = matcher(outputs, targets)
+    pred_idx, tgt_idx = indices[0]
+    assert pred_idx.numel() == 2
+    assert tgt_idx.numel() == 2
+    assert sorted(tgt_idx.tolist()) == [0, 1]
+
+
 def test_matcher_batched() -> None:
     matcher = HungarianMatcher(lambda_l1=5.0, lambda_giou=2.0, lambda_mask=5.0)
     outputs = CanonicalOutputs(
