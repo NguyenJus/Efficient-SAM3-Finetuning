@@ -88,3 +88,25 @@ jobs:
 
       - name: shellcheck
         run: shellcheck scripts/*.sh
+
+  gpu-deselect-check:
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd             # v6.0.2
+
+      - name: Fail if scripts/run_gpu_tests.sh contains stray --deselect
+        # The --deselect convention is documented in the script's header.
+        # Operators add --deselect flags as tests pass on real GPU hardware;
+        # the FINAL all-green pass strips all such flags. This check enforces
+        # that no flags remain at merge time. Grep ignores pure-comment lines
+        # so the convention doc in the script's header doesn't self-trip.
+        run: |
+          set -euo pipefail
+          if grep -nE -- '(^|[[:space:]])--deselect([[:space:]]|=)' scripts/run_gpu_tests.sh \
+              | grep -v "^[^:]*:[[:space:]]*#"; then
+            echo "ERROR: scripts/run_gpu_tests.sh contains a non-comment --deselect flag." >&2
+            echo "Strip it and re-run the full GPU suite before merging." >&2
+            exit 1
+          fi
+          echo "OK: no stray --deselect flags."
