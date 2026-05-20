@@ -81,10 +81,10 @@ jobs:
         run: ./actionlint -color
 
       - name: yamllint
-        run: uv run --with yamllint yamllint .
+        run: uv run --with yamllint yamllint -c .config/yamllint.yml .
 
       - name: markdownlint
-        run: npx --yes markdownlint-cli2 "**/*.md" "#node_modules"
+        run: npx --yes markdownlint-cli2 --config .config/markdownlint-cli2.jsonc "**/*.md" "#node_modules"
 
       - name: shellcheck
         run: shellcheck scripts/*.sh
