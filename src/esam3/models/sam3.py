@@ -342,54 +342,95 @@ def _patch_pos_enc_dtype(model: nn.Module) -> None:
 
 
 def _patch_roi_align_dtype() -> None:
-    """Wrap ``torchvision.ops.roi_align`` to cast ``boxes`` to the input tensor's dtype.
+    """Wrap ``torchvision.ops.roi_align`` to handle bf16-incompatible kernels and dtype skew.
 
-    sam3's ``SequenceGeometryEncoder._encode_boxes``
-    (sam3/model/geometry_encoders.py:651-653) calls ``torchvision.ops.roi_align``
-    with ``rois`` hard-cast to fp32 via ``.float()``, while ``img_feats`` is bf16
-    when the model is loaded under ``ModelConfig(dtype="bfloat16")``.  torchvision's
-    C++ kernel requires both arguments to share dtype, so this raises a
-    ``RuntimeError`` on Colab T4.  We cannot modify the sam3 source (installed
-    package), and we cannot wrap the call in ``torch.autocast`` because that
-    re-triggers the bf16-vs-fp32 collision inside
-    ``sam3/model/decoder.py::forward_ffn``'s ``with torch.amp.autocast(enabled=False)``
-    region — the same constraint that drove the cast-on-output approach adopted in
-    PR #13.
+    Two cooperating problems:
 
-    This function installs a thin module-level wrapper on ``torchvision.ops.roi_align``
-    that coerces ``boxes`` (both the list-of-tensors form and the single-tensor form)
-    to ``input.dtype`` before delegating to the original kernel.  The patch is
-    idempotent: repeated calls are no-ops once the sentinel attribute is set.
+    1) **sam3 passes mismatched dtypes**: ``SequenceGeometryEncoder._encode_boxes``
+       (``sam3/model/geometry_encoders.py:651-653``) calls
+       ``torchvision.ops.roi_align`` with ``rois`` hard-cast to fp32 via ``.float()``,
+       while ``img_feats`` is bf16 when the model is loaded under
+       ``ModelConfig(dtype="bfloat16")``.  torchvision's C++ kernel requires both
+       arguments to share dtype, so this raises a ``RuntimeError`` on Colab T4.
+
+    2) **torchvision's CUDA roi_align kernel does not implement bfloat16**: even
+       after matching dtypes, calling the kernel with bf16 input + bf16 boxes
+       raises ``NotImplementedError: "roi_align_forward_kernel" not implemented for
+       'BFloat16'`` (observed on torchvision 0.x shipped with torch 2.10 on Colab
+       T4).  fp16 is supported; bf16 is not.  So simply casting boxes down to
+       input dtype isn't sufficient — bf16 inputs need to be upcast to fp32 for
+       the kernel call, then cast back.
+
+    The wrapper handles both:
+      - When ``input.dtype`` is bf16: upcast input and boxes to fp32, run kernel,
+        cast output back to bf16.  Trivial precision cost (roi_align is a 7x7
+        pooling; fp32 is more accurate than bf16 anyway).
+      - When ``input.dtype`` is fp32/fp16: keep the original "match boxes to input"
+        behavior so sam3's hardcoded ``.float()`` rois don't crash against fp16 input.
+
+    We patch BOTH ``torchvision.ops.roi_align`` (the package-level re-export, used
+    by sam3's functional call) AND ``torchvision.ops.roi_align.roi_align`` (the
+    submodule-local name used by ``torchvision.ops.RoIAlign.forward``).  Without
+    the submodule patch, ``RoIAlign`` instances (e.g.,
+    ``sam3/model/decoder.py:289``) keep calling the un-patched original.  Single
+    sentinel covers both rebindings (idempotent re-apply).
 
     Notes:
-    - This is a module-level monkey-patch (not class/instance-level) because the
-      call site we are working around is inside sam3's installed package, not a
-      submodule of the model we can traverse.
-    - We do NOT introduce any ``torch.autocast`` scope; doing so re-triggered the
+    - We do NOT introduce any ``torch.autocast`` scope; doing so re-triggers the
       bf16-vs-fp32 collision inside ``sam3/model/decoder.py::forward_ffn``'s
-      ``with torch.amp.autocast(enabled=False)`` region during PR #13's v2 work.
-      The cast-before-call approach side-steps that entirely.
-    - Re-evaluate every sam3 version bump; track long-term fix in logs/TODO.md.
+      ``with torch.amp.autocast(enabled=False)`` region — the same constraint
+      that drove the cast-on-output approach adopted in PR #13.
+    - The right long-term fix is upstream: either sam3 stops hardcoding
+      ``.float()`` on rois, or torchvision adds a bf16 kernel.  Re-evaluate every
+      torchvision/sam3 version bump.
     """
+    import sys
+
     import torchvision.ops as tvo  # type: ignore[import-untyped]
+
+    # ``torchvision.ops.__init__`` re-exports the ``roi_align`` FUNCTION under the
+    # same name as the submodule, so ``import torchvision.ops.roi_align`` resolves
+    # to the function, not the module.  Reach the actual submodule via
+    # ``sys.modules`` so we can patch its module-local ``roi_align`` symbol — the
+    # one that ``torchvision.ops.RoIAlign.forward`` resolves at call time.
+    tvo_ra_mod = sys.modules["torchvision.ops.roi_align"]
 
     if getattr(tvo, "_esam3_roi_align_dtype_patched", False):
         return
     _original = tvo.roi_align
 
     def _roi_align_dtype_aware(input, boxes, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if isinstance(boxes, (list, tuple)):
-            boxes = type(boxes)(
-                b.to(dtype=input.dtype) if b.dtype != input.dtype else b for b in boxes
-            )
-        elif hasattr(boxes, "dtype") and boxes.dtype != input.dtype:
-            boxes = boxes.to(dtype=input.dtype)
-        return _original(input, boxes, *args, **kwargs)
+        original_dtype = input.dtype
+        # torchvision's CUDA roi_align kernel doesn't implement bf16.  Upcast
+        # both input and boxes to fp32 for the kernel; cast output back below.
+        if original_dtype == torch.bfloat16:
+            input = input.float()
+            if isinstance(boxes, (list, tuple)):
+                boxes = type(boxes)(b.float() for b in boxes)
+            elif hasattr(boxes, "float"):
+                boxes = boxes.float()
+        else:
+            # input dtype is kernel-supported; match boxes to input.
+            if isinstance(boxes, (list, tuple)):
+                boxes = type(boxes)(
+                    b.to(dtype=input.dtype) if b.dtype != input.dtype else b for b in boxes
+                )
+            elif hasattr(boxes, "dtype") and boxes.dtype != input.dtype:
+                boxes = boxes.to(dtype=input.dtype)
+        out = _original(input, boxes, *args, **kwargs)
+        if out.dtype != original_dtype:
+            out = out.to(dtype=original_dtype)
+        return out
 
     tvo.roi_align = _roi_align_dtype_aware
+    # Also patch the submodule-local symbol so torchvision.ops.RoIAlign.forward
+    # (which looks up `roi_align` in its own module namespace) routes through
+    # the wrapper too.
+    tvo_ra_mod.roi_align = _roi_align_dtype_aware
     tvo._esam3_roi_align_dtype_patched = True
     logger.info(
-        "Patched torchvision.ops.roi_align for dtype awareness (boxes cast to input dtype)."
+        "Patched torchvision.ops.roi_align (functional + RoIAlign class) "
+        "for bf16-safe execution; bf16 inputs run via fp32 upcast."
     )
 
 
