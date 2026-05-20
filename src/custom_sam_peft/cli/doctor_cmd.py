@@ -1,4 +1,4 @@
-"""`esam3 doctor` — environment diagnostics formatter."""
+"""`custom-sam-peft doctor` — environment diagnostics formatter."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from esam3.diagnostics import DoctorReport, run_doctor
+from custom_sam_peft.diagnostics import DoctorReport, run_doctor
 
 
 def _render_table(report: DoctorReport) -> None:

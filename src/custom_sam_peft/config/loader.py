@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from esam3.config.schema import TrainConfig
+from custom_sam_peft.config.schema import TrainConfig
 
 _PATH_KEYS: tuple[tuple[str, ...], ...] = (
     ("data", "train", "annotations"),

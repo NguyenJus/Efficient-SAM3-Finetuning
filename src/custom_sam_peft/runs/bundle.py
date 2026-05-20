@@ -6,7 +6,7 @@ Three public functions in dependency order:
 2. ``render_overlay`` — pure: image + pred/gt masks → PIL image with caption.
 3. ``write_bundle`` — composes the above, runs per-sample re-inference, writes disk.
 
-The orchestrator (``esam3 run``) assembles a frozen ``BundleContext`` and
+The orchestrator (``custom_sam_peft run``) assembles a frozen ``BundleContext`` and
 calls ``write_bundle(ctx, …)``. The notebook does not import this module.
 
 Spec: docs/superpowers/specs/2026-05-18-simplify-ux-design.md §6.
@@ -25,8 +25,8 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-from esam3.data.base import Dataset, Example, TextPrompts
-from esam3.eval.metrics import MetricsReport
+from custom_sam_peft.data.base import Dataset, Example, TextPrompts
+from custom_sam_peft.eval.metrics import MetricsReport
 
 _LOG = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ _LOG = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class BundleContext:
-    """All run-context fields the bundler needs, assembled by `esam3 run`."""
+    """All run-context fields the bundler needs, assembled by `custom_sam_peft run`."""
 
     run_dir: Path
     config_path: Path

@@ -6,9 +6,9 @@ import torch
 from torch import Tensor
 from torch.nn.functional import binary_cross_entropy_with_logits, interpolate
 
-from esam3.config.schema import LossConfig
-from esam3.data.base import Instance
-from esam3.models.matching import (
+from custom_sam_peft.config.schema import LossConfig
+from custom_sam_peft.data.base import Instance
+from custom_sam_peft.models.matching import (
     CanonicalOutputs,
     HungarianMatcher,
     meta_to_canonical,

@@ -7,8 +7,8 @@ from typing import Any
 
 import numpy as np
 
-from esam3._registry import register
-from esam3.config.schema import TrainConfig
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import TrainConfig
 
 
 class NoopTracker:

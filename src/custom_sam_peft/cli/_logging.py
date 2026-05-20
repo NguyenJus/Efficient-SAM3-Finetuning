@@ -6,7 +6,7 @@ import logging
 
 
 def configure_logging(verbose: bool) -> None:
-    """Configure root logging for an esam3 CLI invocation."""
+    """Configure root logging for a custom-sam-peft CLI invocation."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,

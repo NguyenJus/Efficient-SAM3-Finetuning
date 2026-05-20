@@ -1,11 +1,11 @@
-"""`esam3` CLI entry point — wires subcommands into a Typer app."""
+"""`custom-sam-peft` CLI entry point — wires subcommands into a Typer app."""
 
 from __future__ import annotations
 
 import typer
 
-import esam3._bootstrap  # noqa: F401  # populate plugin registry before subcommand imports
-from esam3.cli import (
+import custom_sam_peft._bootstrap  # noqa: F401  # populate plugin registry before subcommand imports
+from custom_sam_peft.cli import (
     doctor_cmd,
     eval_cmd,
     export_cmd,
@@ -15,7 +15,7 @@ from esam3.cli import (
 )
 
 app = typer.Typer(
-    name="esam3",
+    name="custom-sam-peft",
     help="Parameter-efficient finetuning of SAM3.1.",
     no_args_is_help=True,
     add_completion=False,

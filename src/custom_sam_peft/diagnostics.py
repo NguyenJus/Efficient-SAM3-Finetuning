@@ -32,7 +32,7 @@ class WeightsInfo:
 
 @dataclass(frozen=True)
 class HuggingFaceAuthInfo:
-    """Local-only HF token status. Mirrors esam3.utils.huggingface.resolve_hf_token's
+    """Local-only HF token status. Mirrors custom_sam_peft.utils.huggingface.resolve_hf_token's
     probe order but reports the *source*, not the token value. Never hits the network.
     """
 
@@ -109,7 +109,7 @@ def _hf_auth_info() -> HuggingFaceAuthInfo:
 
 
 def _default_weights_path() -> Path:
-    from esam3.config.schema import ModelConfig
+    from custom_sam_peft.config.schema import ModelConfig
 
     m = ModelConfig()
     return Path(m.local_dir or "") / m.checkpoint_file

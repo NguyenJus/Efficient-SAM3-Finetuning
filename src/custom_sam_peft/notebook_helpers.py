@@ -1,4 +1,4 @@
-"""Helpers used by `notebooks/esam3_train.ipynb` for env detection,
+"""Helpers used by `notebooks/custom_sam_peft_train.ipynb` for env detection,
 local-checkpoint short-circuit, and HF-token resolution.
 
 CLI never imports this module. Tests and the notebook do.

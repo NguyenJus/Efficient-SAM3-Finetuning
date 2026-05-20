@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import yaml
 
-from esam3._registry import register
-from esam3.config.schema import TrainConfig
-from esam3.tracking.base import _validate_image
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.tracking.base import _validate_image
 
 if TYPE_CHECKING:
     from torch.utils.tensorboard import SummaryWriter

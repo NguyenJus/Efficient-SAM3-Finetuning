@@ -1,4 +1,4 @@
-"""Pydantic v2 schema for esam3 training configurations.
+"""Pydantic v2 schema for custom_sam_peft training configurations.
 
 This module is the source of truth for every default and constraint. The
 loader merges YAML + CLI overrides into a plain dict, then validates once
@@ -260,7 +260,7 @@ class EvalConfig(_Strict):
 
 
 class WandbConfig(_Strict):
-    project: str = "esam3"
+    project: str = "custom_sam_peft"
     entity: str | None = None
 
 

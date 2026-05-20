@@ -63,7 +63,7 @@ def meta_to_canonical(outputs: dict[str, Tensor]) -> CanonicalOutputs:
 from scipy.optimize import linear_sum_assignment  # noqa: E402
 from torch.nn.functional import interpolate  # noqa: E402
 
-from esam3.data.base import Instance  # noqa: E402
+from custom_sam_peft.data.base import Instance  # noqa: E402
 
 
 def _box_cxcywh_to_xyxy(box: Tensor) -> Tensor:

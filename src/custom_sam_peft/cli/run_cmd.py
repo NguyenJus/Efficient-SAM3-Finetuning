@@ -1,4 +1,4 @@
-"""`esam3 run` — train + eval + (optional) export + bundle in one shot.
+"""`custom-sam-peft run` — train + eval + (optional) export + bundle in one shot.
 
 Body is ≤ 30 lines per the cli-design boundary rule. Phase composition and
 context assembly live in `_orchestrate` so the Typer command stays a thin shell.
@@ -17,16 +17,16 @@ from typing import Any, cast
 import typer
 from rich import print as rprint
 
-from esam3._registry import lookup
-from esam3.cli._logging import configure_logging
-from esam3.config.loader import load_config
-from esam3.config.schema import TrainConfig
-from esam3.data.base import Dataset
-from esam3.eval.runner import run_eval
-from esam3.models.sam3 import load_sam31
-from esam3.runs.bundle import BundleContext, write_bundle
-from esam3.train.checkpoint import load_adapter, save_merged
-from esam3.train.runner import run_training
+from custom_sam_peft._registry import lookup
+from custom_sam_peft.cli._logging import configure_logging
+from custom_sam_peft.config.loader import load_config
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.data.base import Dataset
+from custom_sam_peft.eval.runner import run_eval
+from custom_sam_peft.models.sam3 import load_sam31
+from custom_sam_peft.runs.bundle import BundleContext, write_bundle
+from custom_sam_peft.train.checkpoint import load_adapter, save_merged
+from custom_sam_peft.train.runner import run_training
 
 _LOG = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def _orchestrate(cfg: TrainConfig, resume: Path | None) -> int:
         config_path=run_dir / "config.yaml",
         start_ts=start_ts,
         end_ts=end_ts,
-        preset_label=os.environ.get("ESAM3_PRESET_LABEL"),
+        preset_label=os.environ.get("CUSTOM_SAM_PEFT_PRESET_LABEL"),
         per_example_iou=per_example_iou,
         merged_dir=merged_dir,
         merged_export_error=merged_export_error,

@@ -21,9 +21,9 @@ from sam3.model.data_misc import FindStage
 from sam3.model.geometry_encoders import Prompt
 from torch import Tensor, nn
 
-from esam3.config.schema import ModelConfig
-from esam3.data.base import BoxPrompts, Prompts, TextPrompts
-from esam3.utils.huggingface import download_model
+from custom_sam_peft.config.schema import ModelConfig
+from custom_sam_peft.data.base import BoxPrompts, Prompts, TextPrompts
+from custom_sam_peft.utils.huggingface import download_model
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ class Sam3Wrapper(nn.Module):
 def _resolve_checkpoint_path(cfg: ModelConfig) -> Path:
     """Return the local checkpoint path, auto-downloading from the Hub on miss.
 
-    - ``local_dir=None`` raises ``FileNotFoundError`` with an `esam3 init` hint.
+    - ``local_dir=None`` raises ``FileNotFoundError`` with an `custom_sam_peft init` hint.
     - File present: return it (no Hub contact).
     - File missing: ``download_model(cfg.name, local_dir, revision=cfg.revision)``,
       then re-check. If the file is STILL missing post-download (e.g. the user
@@ -177,7 +177,7 @@ def _resolve_checkpoint_path(cfg: ModelConfig) -> Path:
     if cfg.local_dir is None:
         raise FileNotFoundError(
             f"ModelConfig.local_dir is None. Set it to a directory for "
-            f"{cfg.checkpoint_file}, or run `esam3 init` to scaffold one."
+            f"{cfg.checkpoint_file}, or run `custom_sam_peft init` to scaffold one."
         )
     local_dir = Path(cfg.local_dir)
     path = local_dir / cfg.checkpoint_file
@@ -314,7 +314,7 @@ def _patch_pos_enc_dtype(model: nn.Module) -> None:
     for submodule in model.modules():
         if not isinstance(submodule, PositionEmbeddingSine):
             continue
-        if getattr(submodule, "_esam3_pos_enc_dtype_patched", False):
+        if getattr(submodule, "_custom_sam_peft_pos_enc_dtype_patched", False):
             continue
         original = submodule._encode_xy
 
@@ -323,7 +323,7 @@ def _patch_pos_enc_dtype(model: nn.Module) -> None:
             return pos_x.to(dtype=x.dtype), pos_y.to(dtype=x.dtype)
 
         submodule._encode_xy = MethodType(_encode_xy_dtype_aware, submodule)
-        submodule._esam3_pos_enc_dtype_patched = True  # idempotency marker
+        submodule._custom_sam_peft_pos_enc_dtype_patched = True  # idempotency marker
         patched_count += 1
 
     logger.info(
@@ -364,7 +364,7 @@ def _patch_roi_align_dtype() -> None:
     """
     import torchvision.ops as tvo  # type: ignore[import-untyped]
 
-    if getattr(tvo, "_esam3_roi_align_dtype_patched", False):
+    if getattr(tvo, "_custom_sam_peft_roi_align_dtype_patched", False):
         return
     _original = tvo.roi_align
 
@@ -378,7 +378,7 @@ def _patch_roi_align_dtype() -> None:
         return _original(input, boxes, *args, **kwargs)
 
     tvo.roi_align = _roi_align_dtype_aware
-    tvo._esam3_roi_align_dtype_patched = True
+    tvo._custom_sam_peft_roi_align_dtype_patched = True
     logger.info(
         "Patched torchvision.ops.roi_align for dtype awareness (boxes cast to input dtype)."
     )
@@ -422,7 +422,7 @@ def _patch_encode_prompt_dtype(model: nn.Module) -> None:
 
     if not hasattr(model, "_encode_prompt"):
         return
-    if getattr(model, "_esam3_encode_prompt_dtype_patched", False):
+    if getattr(model, "_custom_sam_peft_encode_prompt_dtype_patched", False):
         return
     original = model._encode_prompt
     target_dtype = next(model.parameters()).dtype
@@ -434,7 +434,7 @@ def _patch_encode_prompt_dtype(model: nn.Module) -> None:
         return prompt, prompt_mask, backbone_out
 
     model._encode_prompt = MethodType(_encode_prompt_dtype_aware, model)  # type: ignore[assignment]
-    model._esam3_encode_prompt_dtype_patched = True  # type: ignore[assignment]
+    model._custom_sam_peft_encode_prompt_dtype_patched = True  # type: ignore[assignment]
     logger.info(
         "Patched SAM3Image._encode_prompt for dtype awareness (prompt cast to %s).",
         target_dtype,
@@ -514,10 +514,10 @@ def _patch_module_input_dtype(model: nn.Module) -> None:
     for submodule in model.modules():
         if not isinstance(submodule, _DTYPE_SENSITIVE_MODULE_TYPES):
             continue
-        if getattr(submodule, "_esam3_module_input_dtype_patched", False):
+        if getattr(submodule, "_custom_sam_peft_module_input_dtype_patched", False):
             continue
         submodule.register_forward_pre_hook(_input_dtype_hook)
-        submodule._esam3_module_input_dtype_patched = True  # type: ignore[assignment]
+        submodule._custom_sam_peft_module_input_dtype_patched = True  # type: ignore[assignment]
         patched_count += 1
 
     logger.info(

@@ -22,14 +22,14 @@ from typing import Any, cast
 import numpy as np
 import torch
 
-from esam3.config.schema import TrainConfig
-from esam3.models.sam3 import Sam3Wrapper
-from esam3.peft_adapters.lora import load_lora, merge_lora, save_lora
-from esam3.peft_adapters.qlora import load_qlora, save_qlora
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.models.sam3 import Sam3Wrapper
+from custom_sam_peft.peft_adapters.lora import load_lora, merge_lora, save_lora
+from custom_sam_peft.peft_adapters.qlora import load_qlora, save_qlora
 
 _LOG = logging.getLogger(__name__)
 _TRAINING_STATE_FILENAME = "training_state.pt"
-_QLORA_META_FILENAME = "esam3_qlora.json"
+_QLORA_META_FILENAME = "custom_sam_peft_qlora.json"
 _FORMAT_VERSION = 1
 
 
@@ -72,7 +72,7 @@ def save_adapter(wrapper: Sam3Wrapper, path: Path) -> None:
 
 
 def load_adapter(wrapper: Sam3Wrapper, path: Path) -> Sam3Wrapper:
-    """LoRA vs QLoRA dispatch by esam3_qlora.json presence at `path`."""
+    """LoRA vs QLoRA dispatch by custom_sam_peft_qlora.json presence at `path`."""
     if (path / _QLORA_META_FILENAME).exists():
         return load_qlora(wrapper, path)
     return load_lora(wrapper, path)

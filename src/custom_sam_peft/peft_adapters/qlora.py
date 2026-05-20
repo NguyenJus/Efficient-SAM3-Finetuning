@@ -12,7 +12,7 @@ Isolation contract: this module imports from lora.py (for _resolve_targets +
 SCOPE_TARGETS) but lora.py never imports from qlora.py. lora.py never imports
 bitsandbytes.
 
-esam3_qlora.json format (v1):
+custom_sam_peft_qlora.json format (v1):
   {"format_version": 1, "quant_type": "nf4", "compute_dtype": "bfloat16"}
 Bump format_version whenever fields change shape.
 """
@@ -27,15 +27,15 @@ from typing import Any, cast
 import torch
 from torch import nn
 
-from esam3._registry import register
-from esam3.config.schema import Dtype, PEFTConfig, QLoRAConfig
-from esam3.models.sam3 import Sam3Wrapper
-from esam3.peft_adapters.lora import _resolve_targets
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import Dtype, PEFTConfig, QLoRAConfig
+from custom_sam_peft.models.sam3 import Sam3Wrapper
+from custom_sam_peft.peft_adapters.lora import _resolve_targets
 
 logger = logging.getLogger(__name__)
 
 
-_QLORA_META_FILE = "esam3_qlora.json"
+_QLORA_META_FILE = "custom_sam_peft_qlora.json"
 _QLORA_META_VERSION = 1
 
 
@@ -224,7 +224,7 @@ def _infer_compute_dtype_from_wrapper(wrapper: Sam3Wrapper) -> str:
 
 
 def save_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> None:
-    """Write LoRA adapter weights + esam3_qlora.json (quant metadata) to `dirpath`."""
+    """Write LoRA adapter weights + custom_sam_peft_qlora.json (quant metadata) to `dirpath`."""
     if wrapper.peft_model is None:
         raise RuntimeError("save_qlora: wrapper has no PeftModel; call apply_qlora first")
     out = Path(dirpath)

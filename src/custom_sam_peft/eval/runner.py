@@ -1,6 +1,6 @@
 """End-to-end eval pipeline.
 
-The CLI (`esam3 eval`) is a thin wrapper over `run_eval`. `esam3 run`
+The CLI (`custom_sam_peft eval`) is a thin wrapper over `run_eval`. `custom_sam_peft run`
 calls it with `val_dataset` / `model` / `return_per_example_iou=True` so
 it can re-use a single dataset+wrapper across the eval and bundle phases.
 """
@@ -10,13 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal, cast, overload
 
-from esam3._registry import lookup
-from esam3.config.schema import TrainConfig
-from esam3.data.base import Dataset
-from esam3.eval.evaluator import Evaluator
-from esam3.eval.metrics import MetricsReport
-from esam3.models.sam3 import load_sam31
-from esam3.peft_adapters.lora import load_lora
+from custom_sam_peft._registry import lookup
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.data.base import Dataset
+from custom_sam_peft.eval.evaluator import Evaluator
+from custom_sam_peft.eval.metrics import MetricsReport
+from custom_sam_peft.models.sam3 import load_sam31
+from custom_sam_peft.peft_adapters.lora import load_lora
 
 
 @overload
@@ -60,7 +60,7 @@ def run_eval(
 ) -> MetricsReport | tuple[MetricsReport, list[float]]:
     """Load model + adapter, build dataset, run Evaluator.
 
-    Optional additive kwargs (used by `esam3 run`):
+    Optional additive kwargs (used by `custom_sam_peft run`):
       - ``val_dataset``: pre-built dataset; skips registry lookup + transform setup.
       - ``model``: pre-loaded + adapted wrapper; skips ``load_sam31`` + ``load_lora``.
       - ``return_per_example_iou``: when True, returns ``(MetricsReport, list[float])``.

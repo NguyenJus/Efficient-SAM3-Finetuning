@@ -17,9 +17,9 @@ import numpy as np
 from pycocotools import mask as coco_mask
 from pycocotools.coco import COCO
 
-from esam3._registry import register
-from esam3.config.schema import TextPromptConfig
-from esam3.data.base import Dataset, Example
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import TextPromptConfig
+from custom_sam_peft.data.base import Dataset, Example
 
 _LOG = logging.getLogger(__name__)
 
@@ -151,12 +151,12 @@ class COCODataset:
         self._ann_index = ann_index
         if dropped:
             _LOG.info(
-                "esam3.data.coco: dropped %d images (iscrowd-only) from %s",
+                "custom_sam_peft.data.coco: dropped %d images (iscrowd-only) from %s",
                 dropped,
                 annotations,
             )
         _LOG.info(
-            "esam3.data.coco: loaded %d images, %d dense classes from %s",
+            "custom_sam_peft.data.coco: loaded %d images, %d dense classes from %s",
             len(self._image_ids),
             len(self._class_names),
             annotations,
@@ -196,7 +196,7 @@ class COCODataset:
         out_masks: list[np.ndarray[Any, Any]] = list(out["masks"])
         out_classes: list[int] = [int(c) for c in out["class_labels"]]
 
-        from esam3.data.base import BoxPrompts, Instance, TextPrompts
+        from custom_sam_peft.data.base import BoxPrompts, Instance, TextPrompts
 
         instances: list[Instance] = []
         for box, mask_np, cls in zip(out_bboxes, out_masks, out_classes, strict=True):
@@ -221,7 +221,7 @@ class COCODataset:
             if len(prompts_list) > self._multiplex_cap:
                 if not self._warned_truncation:
                     _LOG.warning(
-                        "esam3.data.coco: image_id=%s requested %d text prompts; "
+                        "custom_sam_peft.data.coco: image_id=%s requested %d text prompts; "
                         "truncating to %d. Suppressing further warnings for this dataset.",
                         image_id,
                         len(prompts_list),
@@ -248,7 +248,7 @@ class COCODataset:
         if len(order) > self._multiplex_cap:
             if not self._warned_truncation:
                 _LOG.warning(
-                    "esam3.data.coco: image_id=%s requested %d box prompts; "
+                    "custom_sam_peft.data.coco: image_id=%s requested %d box prompts; "
                     "truncating to %d. Suppressing further warnings for this dataset.",
                     image_id,
                     len(order),
@@ -290,8 +290,8 @@ def build_coco(
     `val` sub-dict in `cfg["train"]` / `cfg["val"]`. Here `pipeline` selects the
     transform variant.
     """
-    from esam3.config.schema import AugmentationsConfig, NormalizeConfig, TextPromptConfig
-    from esam3.data.transforms import build_eval_transforms, build_train_transforms
+    from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig, TextPromptConfig
+    from custom_sam_peft.data.transforms import build_eval_transforms, build_train_transforms
 
     if pipeline not in ("train", "eval"):
         raise ValueError(f"pipeline must be 'train' or 'eval'; got {pipeline!r}")

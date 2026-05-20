@@ -6,12 +6,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from esam3._registry import lookup
-from esam3.config.schema import TrainConfig
-from esam3.data.base import Dataset
-from esam3.models.sam3 import load_sam31
-from esam3.tracking import build_tracker
-from esam3.train.trainer import RunResult, Trainer
+from custom_sam_peft._registry import lookup
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.data.base import Dataset
+from custom_sam_peft.models.sam3 import load_sam31
+from custom_sam_peft.tracking import build_tracker
+from custom_sam_peft.train.trainer import RunResult, Trainer
 
 
 def make_run_dir(cfg: TrainConfig) -> Path:

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from esam3._registry import lookup
-from esam3.config.schema import TrainConfig
-from esam3.tracking.base import Tracker
+from custom_sam_peft._registry import lookup
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.tracking.base import Tracker
 
 if TYPE_CHECKING:
     # Type-only import; avoids a runtime tracking → eval dependency so the
     # tracking subsystem remains independent of subsystems 1-6
     # (see architecture §11).
-    from esam3.eval.metrics import MetricsReport
+    from custom_sam_peft.eval.metrics import MetricsReport
 
 __all__ = ["Tracker", "build_tracker", "flatten_metrics_report"]
 
@@ -26,11 +26,11 @@ def build_tracker(cfg: TrainConfig) -> Tracker:
     """
     backend = cfg.tracking.backend  # Literal["tensorboard", "wandb", "none"]
     if backend == "tensorboard":
-        from esam3.tracking import tensorboard as _tb  # noqa: F401
+        from custom_sam_peft.tracking import tensorboard as _tb  # noqa: F401
     elif backend == "wandb":
-        from esam3.tracking import wandb as _wb  # noqa: F401
+        from custom_sam_peft.tracking import wandb as _wb  # noqa: F401
     elif backend == "none":
-        from esam3.tracking import noop as _noop  # noqa: F401
+        from custom_sam_peft.tracking import noop as _noop  # noqa: F401
     else:  # pragma: no cover — pydantic Literal rejects this at config-load
         raise ValueError(f"unknown tracking.backend: {backend!r}")
     factory = lookup("tracker", backend)

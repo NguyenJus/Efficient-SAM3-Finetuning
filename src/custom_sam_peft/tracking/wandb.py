@@ -13,9 +13,9 @@ from typing import Any, Literal
 
 import numpy as np
 
-from esam3._registry import register
-from esam3.config.schema import TrainConfig
-from esam3.tracking.base import _validate_image
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.tracking.base import _validate_image
 
 _WANDB_ID_FILENAME = "wandb_run_id.txt"
 

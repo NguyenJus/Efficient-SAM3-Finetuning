@@ -1,4 +1,4 @@
-"""`esam3 export` — export adapter or merged model."""
+"""`custom-sam-peft export` — export adapter or merged model."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
-from esam3.cli._logging import configure_logging
-from esam3.config.loader import load_config
-from esam3.models.sam3 import load_sam31
-from esam3.train.checkpoint import load_adapter, save_adapter, save_merged
+from custom_sam_peft.cli._logging import configure_logging
+from custom_sam_peft.config.loader import load_config
+from custom_sam_peft.models.sam3 import load_sam31
+from custom_sam_peft.train.checkpoint import load_adapter, save_adapter, save_merged
 
 
 def _discover_config(checkpoint: Path) -> Path:

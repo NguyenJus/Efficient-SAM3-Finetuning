@@ -1,4 +1,4 @@
-"""`esam3 init` — write a starter config from a packaged template.
+"""`custom-sam-peft init` — write a starter config from a packaged template.
 
 After writing the config, optionally download SAM 3.1 weights via the
 ``--download-weights`` flag, or prompt interactively when stdout is a TTY.
@@ -13,8 +13,8 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
-from esam3.config.loader import load_config
-from esam3.utils.huggingface import download_model
+from custom_sam_peft.config.loader import load_config
+from custom_sam_peft.utils.huggingface import download_model
 
 TEMPLATES: dict[str, str] = {
     "coco-text-lora": "coco_text_lora.yaml",
@@ -58,7 +58,7 @@ def init(
             f"refusing to overwrite existing {output}; pass --force",
             param_hint="--output",
         )
-    body = (files("esam3.cli.templates") / TEMPLATES[template]).read_text()
+    body = (files("custom_sam_peft.cli.templates") / TEMPLATES[template]).read_text()
     output.write_text(body)
     rprint(f"[green]wrote[/green] {output}")
 
@@ -83,7 +83,7 @@ def _maybe_download_weights(output: Path, *, download_weights: bool | None, yes:
     if download_weights is False:
         rprint(
             f"[dim]skipping weights download; weights will be fetched on first "
-            f"`esam3 train`. Re-run `esam3 init --download-weights` (or "
+            f"`custom-sam-peft train`. Re-run `custom-sam-peft init --download-weights` (or "
             f"`huggingface-cli download {cfg.model.name} --local-dir {local_dir}`) "
             f"to fetch them now.[/dim]"
         )
@@ -99,7 +99,7 @@ def _maybe_download_weights(output: Path, *, download_weights: bool | None, yes:
     else:
         rprint(
             "[dim]non-interactive shell and no --download-weights flag; "
-            "skipping. Weights will be fetched on first `esam3 train`; re-run "
+            "skipping. Weights will be fetched on first `custom-sam-peft train`; re-run "
             "with `--download-weights` to fetch them now.[/dim]"
         )
         return

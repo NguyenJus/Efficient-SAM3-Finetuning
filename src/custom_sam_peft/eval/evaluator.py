@@ -17,10 +17,10 @@ import pycocotools.mask as mask_utils
 import torch
 from pycocotools.coco import COCO
 
-from esam3.config.schema import EvalConfig
-from esam3.data.base import Dataset, Example, TextPrompts
-from esam3.eval.metrics import MetricsReport, compute_coco_map
-from esam3.eval.postprocess import queries_to_coco_results
+from custom_sam_peft.config.schema import EvalConfig
+from custom_sam_peft.data.base import Dataset, Example, TextPrompts
+from custom_sam_peft.eval.metrics import MetricsReport, compute_coco_map
+from custom_sam_peft.eval.postprocess import queries_to_coco_results
 
 _LOG = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class Evaluator:
         When ``return_per_example_iou=True``, also returns a list of per-example
         MEAN IoU values across ``cfg.iou_thresholds`` aligned with dataset indices.
         The default ``False`` preserves the previous return type for backward
-        compatibility (e.g. `esam3 eval` CLI, mid-training eval).
+        compatibility (e.g. `custom_sam_peft eval` CLI, mid-training eval).
         """
         # Reset predictions at the start so evaluate_and_save never writes
         # stale data from a prior call that may have failed mid-run.

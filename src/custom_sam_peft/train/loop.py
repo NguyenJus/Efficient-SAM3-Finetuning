@@ -21,11 +21,11 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from esam3.config.schema import BoxHintSchedule, TrainConfig
-from esam3.data.base import Instance, TextPrompts
-from esam3.models.losses import total_loss
-from esam3.models.sam3 import Sam3Wrapper
-from esam3.tracking.base import Tracker
+from custom_sam_peft.config.schema import BoxHintSchedule, TrainConfig
+from custom_sam_peft.data.base import Instance, TextPrompts
+from custom_sam_peft.models.losses import total_loss
+from custom_sam_peft.models.sam3 import Sam3Wrapper
+from custom_sam_peft.tracking.base import Tracker
 
 _LOG = logging.getLogger(__name__)
 

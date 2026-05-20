@@ -1,4 +1,4 @@
-"""`esam3 train` — thin CLI shell over esam3.train.runner.run_training."""
+"""`custom-sam-peft train` — thin CLI shell over custom_sam_peft.train.runner.run_training."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
-from esam3.cli._logging import configure_logging
-from esam3.config.loader import load_config
-from esam3.train.runner import run_training
+from custom_sam_peft.cli._logging import configure_logging
+from custom_sam_peft.config.loader import load_config
+from custom_sam_peft.train.runner import run_training
 
 
 def train(

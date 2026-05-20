@@ -12,9 +12,9 @@ from typing import Any, Literal
 
 import numpy as np
 
-from esam3._registry import register
-from esam3.config.schema import HFFieldMap, TextPromptConfig
-from esam3.data.base import Dataset, Example
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import HFFieldMap, TextPromptConfig
+from custom_sam_peft.data.base import Dataset, Example
 
 _LOG = logging.getLogger(__name__)
 
@@ -162,8 +162,8 @@ class HFDataset:
         import torch
         from PIL import Image as PILImage
 
-        from esam3.data.base import BoxPrompts, Instance, TextPrompts
-        from esam3.data.coco import _build_text_prompts
+        from custom_sam_peft.data.base import BoxPrompts, Instance, TextPrompts
+        from custom_sam_peft.data.coco import _build_text_prompts
 
         row = self._ds[i]
         img_obj = _resolve_field(row, self._field_map.image)
@@ -190,7 +190,7 @@ class HFDataset:
         if seg_resolved is None:
             if not self._warned_masks_from_boxes:
                 _LOG.warning(
-                    "esam3.data.hf: masks-from-boxes fallback used for dataset %r "
+                    "custom_sam_peft.data.hf: masks-from-boxes fallback used for dataset %r "
                     "(field_map.segmentation absent or None). Suppressing further warnings.",
                     self._name,
                 )
@@ -203,7 +203,7 @@ class HFDataset:
                     m[yi0:yi1, xi0:xi1] = 1
                 masks.append(m)
         else:
-            from esam3.data.coco import _decode_segmentation
+            from custom_sam_peft.data.coco import _decode_segmentation
 
             for ann in seg_resolved:
                 masks.append(_decode_segmentation({"segmentation": ann}, h, w).astype(np.uint8))
@@ -243,7 +243,7 @@ class HFDataset:
             if len(prompts_list) > self._multiplex_cap:
                 if not self._warned_truncation:
                     _LOG.warning(
-                        "esam3.data.hf: image_id=%s requested %d text prompts; "
+                        "custom_sam_peft.data.hf: image_id=%s requested %d text prompts; "
                         "truncating to %d. Suppressing further warnings.",
                         image_id,
                         len(prompts_list),
@@ -269,7 +269,7 @@ class HFDataset:
         if len(order) > self._multiplex_cap:
             if not self._warned_truncation:
                 _LOG.warning(
-                    "esam3.data.hf: image_id=%s requested %d box prompts; "
+                    "custom_sam_peft.data.hf: image_id=%s requested %d box prompts; "
                     "truncating to %d. Suppressing further warnings.",
                     image_id,
                     len(order),
@@ -304,8 +304,8 @@ def build_hf(
     pipeline: Literal["train", "eval"],
 ) -> Dataset:
     """Build an `HFDataset` from a validated DataConfig dict."""
-    from esam3.config.schema import AugmentationsConfig, NormalizeConfig
-    from esam3.data.transforms import build_eval_transforms, build_train_transforms
+    from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig
+    from custom_sam_peft.data.transforms import build_eval_transforms, build_train_transforms
 
     if pipeline not in ("train", "eval"):
         raise ValueError(f"pipeline must be 'train' or 'eval'; got {pipeline!r}")

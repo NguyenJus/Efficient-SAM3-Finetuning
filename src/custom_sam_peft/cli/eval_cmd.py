@@ -1,4 +1,4 @@
-"""`esam3 eval` — thin CLI shell over esam3.eval.runner.run_eval."""
+"""`custom-sam-peft eval` — thin CLI shell over custom_sam_peft.eval.runner.run_eval."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Literal, cast
 import typer
 from rich import print as rprint
 
-from esam3.cli._logging import configure_logging
-from esam3.config.loader import load_config
-from esam3.eval.runner import run_eval
+from custom_sam_peft.cli._logging import configure_logging
+from custom_sam_peft.config.loader import load_config
+from custom_sam_peft.eval.runner import run_eval
 
 
 def evaluate(

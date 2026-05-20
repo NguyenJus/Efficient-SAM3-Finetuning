@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from esam3.data.base import Example
+from custom_sam_peft.data.base import Example
 
 
 def collate_batch(examples: list[Example]) -> dict[str, Any]:

@@ -22,9 +22,9 @@ from typing import Any, cast
 from peft import LoraConfig, PeftModel, get_peft_model
 from torch import nn
 
-from esam3._registry import register
-from esam3.config.schema import PEFTConfig
-from esam3.models.sam3 import Sam3Wrapper
+from custom_sam_peft._registry import register
+from custom_sam_peft.config.schema import PEFTConfig
+from custom_sam_peft.models.sam3 import Sam3Wrapper
 
 logger = logging.getLogger(__name__)
 

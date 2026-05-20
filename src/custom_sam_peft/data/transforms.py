@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from esam3.config.schema import AugmentationsConfig, NormalizeConfig
+from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig
 
 if TYPE_CHECKING:
     import albumentations as A
