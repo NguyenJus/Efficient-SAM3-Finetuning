@@ -19,7 +19,7 @@
 #   scripts/public-flip-bootstrap.sh --help
 set -euo pipefail
 
-REPO="NguyenJus/Efficient-SAM3-Finetuning"
+REPO="NguyenJus/custom-sam-peft"
 DESCRIPTION="Parameter-efficient finetuning of SAM3.1 for instance segmentation on a single consumer GPU"
 TOPICS=(
   sam

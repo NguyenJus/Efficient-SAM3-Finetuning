@@ -1,6 +1,6 @@
 # Public-flip runbook
 
-Operator copy-paste path for flipping `Efficient-SAM3-Finetuning` from
+Operator copy-paste path for flipping `custom-sam-peft` from
 private to public on GitHub. Run **in order**; the bootstrap script is
 idempotent so a partial-run failure is safe to resume by re-running the
 failed step.
@@ -66,7 +66,7 @@ runbook.
 ## Step 4: Flip visibility to public
 
 ```bash
-gh repo edit NguyenJus/Efficient-SAM3-Finetuning \
+gh repo edit NguyenJus/custom-sam-peft \
   --visibility public --accept-visibility-change-consequences
 ```
 
@@ -79,7 +79,7 @@ private browser session (or logged out) loads the repo without a 404.
 lacking the `delete_repo` / `repo` scope needed for visibility changes —
 re-run `gh auth refresh -s repo,admin:org` and retry.
 
-**Rollback:** `gh repo edit NguyenJus/Efficient-SAM3-Finetuning
+**Rollback:** `gh repo edit NguyenJus/custom-sam-peft
 --visibility private --accept-visibility-change-consequences` flips back.
 
 ---
@@ -130,7 +130,7 @@ gh release create v0.5.0 \
   --title "v0.5.0 — public flip" \
   --notes-file <(cat <<'EOF'
 First public release. Snapshot of the v0 surface at flip time:
-- esam3 CLI: run, train, eval, export, init, doctor
+- custom-sam-peft CLI: run, train, eval, export, init, doctor
 - PEFT: LoRA, QLoRA
 - Tracking: TensorBoard, W&B, none
 - Data: COCO + HuggingFace datasets
