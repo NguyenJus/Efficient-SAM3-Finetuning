@@ -60,7 +60,7 @@ def _build_optimizer(
         except ImportError as e:
             raise ImportError(
                 "adamw8bit requires bitsandbytes. Install with: "
-                "pip install 'efficient-sam3-finetuning[qlora]'"
+                "pip install 'custom-sam-peft[qlora]'"
             ) from e
         bnb_any: Any = bnb
         return bnb_any.optim.AdamW8bit(params, lr=lr)  # type: ignore[no-any-return]

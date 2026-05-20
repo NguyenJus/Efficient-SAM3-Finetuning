@@ -29,7 +29,7 @@ class WandBTracker:
         except ImportError as e:
             raise ImportError(
                 "tracking.backend='wandb' requires the [wandb] extra. "
-                "Install with: pip install 'efficient-sam3-finetuning[wandb]'"
+                "Install with: pip install 'custom-sam-peft[wandb]'"
             ) from e
         self._cfg = cfg
         self._run: Any | None = None  # wandb.sdk.wandb_run.Run

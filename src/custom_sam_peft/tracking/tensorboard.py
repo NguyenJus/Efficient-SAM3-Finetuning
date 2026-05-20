@@ -33,7 +33,7 @@ class TensorBoardTracker:
         except ImportError as e:
             raise ImportError(
                 "tracking.backend='tensorboard' requires the [tensorboard] extra. "
-                "Install with: pip install 'efficient-sam3-finetuning[tensorboard]'"
+                "Install with: pip install 'custom-sam-peft[tensorboard]'"
             ) from e
         self._cfg = cfg
         self._writer: SummaryWriter | None = None

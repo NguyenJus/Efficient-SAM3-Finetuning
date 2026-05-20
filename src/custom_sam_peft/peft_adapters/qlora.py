@@ -45,8 +45,7 @@ def _import_bnb() -> Any:
         import bitsandbytes as bnb
     except ImportError as e:
         raise ImportError(
-            "QLoRA requires bitsandbytes. Install with: "
-            "pip install 'efficient-sam3-finetuning[qlora]'"
+            "QLoRA requires bitsandbytes. Install with: pip install 'custom-sam-peft[qlora]'"
         ) from e
     return bnb
 

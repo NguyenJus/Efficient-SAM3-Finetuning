@@ -119,8 +119,7 @@ def run(
     cfg = load_config(config)
     if cfg.data.prompt_mode == "bbox":
         raise typer.BadParameter(
-            "prompt_mode='bbox' is not supported for training in v0; "
-            "see docs/superpowers/specs/2026-05-15-esam3-architecture-design.md §1.",
+            "prompt_mode='bbox' is not supported for training in v0.",
             param_hint="--config",
         )
     _orchestrate(cfg, resume)
