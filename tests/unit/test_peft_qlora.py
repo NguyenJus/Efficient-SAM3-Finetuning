@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import torch
 from torch import nn
 
 from esam3._registry import lookup
@@ -332,3 +333,112 @@ def test_collect_linear_names_handles_nested_mha() -> None:
     names = _collect_linear_names(base)
     # Only the top-level standalone Linear should appear; nothing under `layers.*`.
     assert names == ["head"], f"expected only 'head'; got {names}"
+
+
+# ---------------------------------------------------------------------------
+# Second-pass MHA exclusion: sam3.model.model_misc.MultiheadAttention is a
+# DIFFERENT class from torch.nn.MultiheadAttention but has the same
+# anti-pattern (multi_head_attention_forward extracts out_proj.weight as a
+# raw tensor and passes it to F.linear). Both must be excluded.
+# ---------------------------------------------------------------------------
+
+
+def test_mha_exclusion_includes_sam3_custom_mha(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_mha_exclusion_types must include sam3's custom MultiheadAttention when sam3 is importable.
+
+    We patch sys.modules with a fake sam3.model.model_misc that exposes a
+    sentinel MultiheadAttention class, then re-execute the import path to
+    confirm the exclusion picks it up.
+    """
+    from esam3.peft_adapters.qlora import _mha_exclusion_types
+
+    # The real sam3 may or may not be installed in this test env. To assert
+    # the contract regardless, install a fake sam3.model.model_misc with a
+    # known sentinel class and confirm it ends up in the exclusion tuple.
+    fake_sam3 = types.ModuleType("sam3")
+    fake_sam3_model = types.ModuleType("sam3.model")
+    fake_sam3_model_misc = types.ModuleType("sam3.model.model_misc")
+
+    class _Sam3MHA_Sentinel(nn.Module):
+        pass
+
+    fake_sam3_model_misc.MultiheadAttention = _Sam3MHA_Sentinel
+    monkeypatch.setitem(sys.modules, "sam3", fake_sam3)
+    monkeypatch.setitem(sys.modules, "sam3.model", fake_sam3_model)
+    monkeypatch.setitem(sys.modules, "sam3.model.model_misc", fake_sam3_model_misc)
+
+    excluded = _mha_exclusion_types()
+    assert nn.MultiheadAttention in excluded, "torch MHA must always be excluded"
+    assert _Sam3MHA_Sentinel in excluded, (
+        f"sam3.model.model_misc.MultiheadAttention must be excluded; got {excluded}"
+    )
+
+
+def test_mha_exclusion_degrades_to_torch_only_without_sam3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_mha_exclusion_types still works when sam3.model.model_misc is missing."""
+    from esam3.peft_adapters.qlora import _mha_exclusion_types
+
+    # Force the import path to fail by setting a sentinel that raises.
+    monkeypatch.setitem(sys.modules, "sam3.model.model_misc", None)
+
+    excluded = _mha_exclusion_types()
+    assert excluded == (nn.MultiheadAttention,), (
+        f"without sam3, only torch MHA should be excluded; got {excluded}"
+    )
+
+
+def test_collect_linear_names_excludes_sam3_custom_mha_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_collect_linear_names must skip Linears under sam3's custom MultiheadAttention.
+
+    Pins the actual failure mode that broke the QLoRA release-tier test on
+    the manual GPU pass (issue #44): sam3's custom MultiheadAttention class
+    holds an out_proj nn.Linear and bypasses module dispatch the same way
+    torch's built-in MHA does.
+    """
+    from esam3.peft_adapters.qlora import _collect_linear_names
+
+    # Fake-install a sam3.model.model_misc module exposing a custom MHA class.
+    # We mirror the real shape: an nn.Module with an out_proj nn.Linear child
+    # (sam3's class also has in_proj_weight as a raw Parameter, but only
+    # out_proj is an nn.Linear that _collect_linear_names would sweep up).
+    fake_sam3 = types.ModuleType("sam3")
+    fake_sam3_model = types.ModuleType("sam3.model")
+    fake_sam3_model_misc = types.ModuleType("sam3.model.model_misc")
+
+    class _Sam3CustomMHA(nn.Module):
+        def __init__(self, embed_dim: int) -> None:
+            super().__init__()
+            self.in_proj_weight = nn.Parameter(torch.empty(3 * embed_dim, embed_dim))
+            self.out_proj = nn.Linear(embed_dim, embed_dim)
+
+    fake_sam3_model_misc.MultiheadAttention = _Sam3CustomMHA
+    monkeypatch.setitem(sys.modules, "sam3", fake_sam3)
+    monkeypatch.setitem(sys.modules, "sam3.model", fake_sam3_model)
+    monkeypatch.setitem(sys.modules, "sam3.model.model_misc", fake_sam3_model_misc)
+
+    class _DecoderLikeBlock(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cross_attend_prompt = _Sam3CustomMHA(embed_dim=8)  # sam3 custom MHA
+            self.self_attn = nn.MultiheadAttention(embed_dim=8, num_heads=2)  # torch MHA
+            self.fc1 = nn.Linear(8, 16)  # bare Linear — should be picked up
+            self.fc2 = nn.Linear(16, 8)  # bare Linear — should be picked up
+
+    base = _DecoderLikeBlock()
+    names = _collect_linear_names(base)
+
+    # Both MHA classes' out_proj must be skipped.
+    assert "cross_attend_prompt.out_proj" not in names, (
+        f"sam3 custom MHA's out_proj leaked into quantization set: {names}"
+    )
+    assert "self_attn.out_proj" not in names, (
+        f"torch MHA's out_proj leaked into quantization set: {names}"
+    )
+
+    # Bare Linears unaffected.
+    assert "fc1" in names
+    assert "fc2" in names

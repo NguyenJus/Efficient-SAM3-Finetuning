@@ -56,36 +56,71 @@ def _torch_dtype(name: Dtype) -> torch.dtype:
     return {"bfloat16": torch.bfloat16, "float16": torch.float16}[name]
 
 
+def _mha_exclusion_types() -> tuple[type[nn.Module], ...]:
+    """Module types whose internal ``nn.Linear`` children MUST be skipped during
+    4-bit quantization because their ``forward`` extracts ``out_proj.weight`` as
+    a raw tensor and calls ``F.linear`` on it directly, bypassing the
+    ``Linear4bit.__call__`` dispatch that bitsandbytes needs to dequantize.
+
+    Two known types ship with the project:
+      - ``torch.nn.MultiheadAttention`` (PyTorch built-in; sam3's decoder uses
+        it at ``sam3/model/decoder.py:54,59``).  Bypass site:
+        ``torch.nn.functional.multi_head_attention_forward`` line 6637.
+      - ``sam3.model.model_misc.MultiheadAttention`` (sam3 custom; instantiated
+        at ``sam3/model_builder.py:226`` as ``cross_attend_prompt`` and threaded
+        into the decoder via ``cross_attention`` factory).  Bypass site:
+        ``sam3.model.model_misc.multi_head_attention_forward`` line 432.
+
+    sam3's custom class is imported lazily (try/except) so CPU unit tests can
+    run without sam3 installed.  In a production load (where sam3 is always
+    importable), both types are unconditionally in the exclusion set.
+
+    Audit notes for future maintainers (re-evaluate every sam3 version bump):
+      - ``sam3.sam.transformer.Attention`` is safe — its ``forward`` calls
+        ``self.out_proj(out)`` via module dispatch (no bypass).
+      - ``sam3.model.vitdet.Attention`` is safe — uses ``self.qkv(x)`` /
+        ``self.proj(x)`` via module dispatch.
+      - ``out_proj.weight`` references in ``video_tracking_multiplex.py`` and
+        ``sam3_tracker_base.py`` are ``.shape[0]`` lookups, not forward
+        dispatch.
+    """
+    types: tuple[type[nn.Module], ...] = (nn.MultiheadAttention,)
+    try:
+        from sam3.model.model_misc import MultiheadAttention as _Sam3CustomMHA
+
+        types = (*types, _Sam3CustomMHA)
+    except ImportError:
+        # sam3 not importable (CPU unit-test environments may omit it); the
+        # torch built-in alone is still excluded.
+        pass
+    return types
+
+
 def _collect_linear_names(base: nn.Module) -> list[str]:
-    """Every ``nn.Linear`` in ``base``, excluding children of ``nn.MultiheadAttention``.
+    """Every ``nn.Linear`` in ``base``, excluding children of MHA-style modules.
 
-    The exclusion is mandatory.  ``torch.nn.MultiheadAttention.forward``
-    delegates to ``torch.nn.functional.multi_head_attention_forward``, which
-    pulls ``mha.out_proj.weight`` (and the packed ``in_proj_weight``) as raw
-    tensors and calls ``F.linear`` directly on them — bypassing the
-    ``Linear4bit.__call__`` dispatch that bitsandbytes uses to dequantize.
-    If ``out_proj`` is replaced by ``bnb.nn.Linear4bit``, the first forward
-    raises ``RuntimeError: self and mat2 must have the same dtype, but got
-    Float and Byte`` (the "Byte" is bnb's uint8-packed 4-bit storage).
+    The exclusion is mandatory.  Both ``torch.nn.MultiheadAttention`` and
+    ``sam3.model.model_misc.MultiheadAttention`` implement their ``forward``
+    by extracting ``out_proj.weight`` as a raw tensor and passing it to
+    ``F.linear`` directly — bypassing ``Linear4bit.__call__`` and so bypassing
+    bitsandbytes' dequant kernel.  Quantizing those children causes the first
+    forward to raise ``RuntimeError: self and mat2 must have the same dtype,
+    but got Float and Byte`` (the "Byte" is bnb's uint8-packed 4-bit storage).
 
-    sam3's decoder uses native ``nn.MultiheadAttention`` at
-    ``sam3/model/decoder.py:54,59``, so this gotcha fires on every QLoRA
-    fine-tune of the decoder.  ``transformers.utils.bitsandbytes`` solves the
-    analogous problem by excluding specific modules (e.g. ``lm_head``); ours
-    is the symmetric exclusion for native MHA.
+    See ``_mha_exclusion_types`` for the full audit and the analogous fix in
+    ``transformers.utils.bitsandbytes`` (``lm_head`` exclusion).
 
     Trade-off this introduces: out_proj remains ``nn.Linear`` (fp32/bf16) in
     QLoRA mode, so ``_resolve_targets(..., linear_types=(Linear4bit,))`` no
     longer matches it and LoRA is NOT injected on out_proj under QLoRA.
     In LoRA mode (no quantization) out_proj is still a plain ``nn.Linear``
-    and LoRA targets it normally.  The asymmetry is the right one: native
-    MHA's in_proj path also stays unquantized (``in_proj_weight`` is a raw
+    and LoRA targets it normally.  The asymmetry is the right one: MHA's
+    in_proj path also stays unquantized (``in_proj_weight`` is a raw
     ``Parameter``, not a ``Linear`` submodule), so the bulk of decoder
     finetuning lives at FFN Linears outside MHA and is unaffected.
     """
-    mha_prefixes = {
-        name for name, mod in base.named_modules() if isinstance(mod, nn.MultiheadAttention)
-    }
+    mha_types = _mha_exclusion_types()
+    mha_prefixes = {name for name, mod in base.named_modules() if isinstance(mod, mha_types)}
 
     def _under_mha(linear_name: str) -> bool:
         return any(linear_name == p or linear_name.startswith(p + ".") for p in mha_prefixes)
