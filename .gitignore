@@ -47,3 +47,6 @@ CLAUDE.md
 
 # Local git worktrees
 .worktrees/
+
+# Downloaded CI tooling (downloaded at lint time, not committed)
+actionlint
