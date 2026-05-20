@@ -242,8 +242,8 @@ set_secret_scanning() {
     return
   fi
   gh api "repos/$REPO" -X PATCH \
-    -F security_and_analysis[secret_scanning][status]=enabled \
-    -F security_and_analysis[secret_scanning_push_protection][status]=enabled \
+    -F 'security_and_analysis[secret_scanning][status]=enabled' \
+    -F 'security_and_analysis[secret_scanning_push_protection][status]=enabled' \
     >/dev/null
   step_status applied "enabled secret scanning + push protection"
 }
