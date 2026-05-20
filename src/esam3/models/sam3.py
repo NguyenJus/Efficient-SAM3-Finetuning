@@ -491,6 +491,93 @@ def _patch_encode_prompt_dtype(model: nn.Module) -> None:
     )
 
 
+def _patch_text_pool_dtype() -> None:
+    """Replace sam3's text-pooling helpers to honor prompt dtype instead of fp32.
+
+    Two sites in sam3 build a validity mask via ``(~prompt_mask).float()`` and
+    then do ``prompt * is_valid``, which promotes a bf16 ``prompt`` to fp32:
+
+      - ``sam3.model.encoder.pool_text_feat`` (module-level function at
+        ``encoder.py:583-595``).  Called from the encoder's text-pooling path.
+      - ``sam3.model.model_misc.DotProductScoring.mean_pool_text`` (method on
+        the class at ``model_misc.py:734-741``).  Called from
+        ``DotProductScoring.forward`` before
+        ``self.prompt_proj(pooled_prompt)``.
+
+    Under QLoRA the pooled-prompt then flows into a ``Linear4bit`` whose
+    compute_dtype is bf16, and the following ``torch.matmul`` at
+    ``model_misc.py:761`` crashes with
+    ``RuntimeError: expected scalar type BFloat16 but found Float``
+    against the bf16 ``proj_hs``.  Under plain LoRA, the bf16 model handles
+    fp32 input less violently but the result is still a silent precision
+    cliff.
+
+    Replace both with versions that cast ``is_valid`` to ``prompt.dtype``
+    instead of fp32.  The computation is otherwise byte-identical (mean
+    pool over valid tokens).  Module-level / class-level rebind (not
+    per-instance) so the fix applies to every ``Sam3Image`` built in the
+    process.  Idempotent via sentinels.
+
+    Notes:
+    - This is one of a small family of "hardcoded fp32 producer inside
+      sam3's forward" patches; see also ``_patch_encode_prompt_dtype``,
+      ``_patch_pos_enc_dtype``, ``_patch_roi_align_dtype``.  Each handles
+      a specific site that an outer ``torch.autocast`` would otherwise
+      paper over (autocast is off-limits in this codebase per PR #13;
+      ``decoder.py::forward_ffn`` has an internal
+      ``with torch.amp.autocast(enabled=False)`` region).
+    - sam3 imports are lazy/try-except so CPU unit tests can exercise the
+      patch behavior without the full sam3 install.
+    - Re-evaluate every sam3 version bump.  Long-term fix is upstream:
+      ``(~prompt_mask).to(dtype=prompt.dtype)`` instead of ``.float()``.
+    """
+    # encoder.pool_text_feat (module-level function)
+    try:
+        import sam3.model.encoder as _encoder_mod
+
+        if not getattr(_encoder_mod, "_esam3_pool_text_feat_dtype_patched", False):
+
+            def _pool_text_feat_dtype_aware(prompt, prompt_mask, pool_with_mask):  # type: ignore[no-untyped-def]
+                if not pool_with_mask:
+                    return prompt.mean(dim=0)
+                if prompt_mask.dim() != 2:
+                    raise ValueError(
+                        f"pool_text_feat: prompt_mask.dim() must be 2; got {prompt_mask.dim()}"
+                    )
+                is_valid = (~prompt_mask).to(dtype=prompt.dtype).permute(1, 0)[..., None]
+                num_valid = torch.clamp(torch.sum(is_valid, dim=0), min=1.0)
+                pooled_text = (prompt * is_valid).sum(dim=0) / num_valid
+                return pooled_text
+
+            _encoder_mod.pool_text_feat = _pool_text_feat_dtype_aware
+            _encoder_mod._esam3_pool_text_feat_dtype_patched = True  # type: ignore[attr-defined]
+            logger.info("Patched sam3.model.encoder.pool_text_feat for dtype-aware text pooling.")
+    except ImportError:
+        pass
+
+    # DotProductScoring.mean_pool_text (method on a class)
+    try:
+        import sam3.model.model_misc as _mm_mod
+
+        DotProductScoring = _mm_mod.DotProductScoring
+        if not getattr(DotProductScoring, "_esam3_mean_pool_text_dtype_patched", False):
+
+            def _mean_pool_text_dtype_aware(self, prompt, prompt_mask):  # type: ignore[no-untyped-def]
+                is_valid = (~prompt_mask).to(dtype=prompt.dtype).permute(1, 0)[..., None]
+                num_valid = torch.clamp(torch.sum(is_valid, dim=0), min=1.0)
+                pooled_prompt = (prompt * is_valid).sum(dim=0) / num_valid
+                return pooled_prompt
+
+            DotProductScoring.mean_pool_text = _mean_pool_text_dtype_aware
+            DotProductScoring._esam3_mean_pool_text_dtype_patched = True  # type: ignore[attr-defined]
+            logger.info(
+                "Patched sam3.model.model_misc.DotProductScoring.mean_pool_text "
+                "for dtype-aware text pooling."
+            )
+    except ImportError:
+        pass
+
+
 def _patch_addmm_act_grad_safe() -> None:
     """Make sam3's ``addmm_act`` fused kernel grad-aware so LoRA training works.
 
@@ -881,6 +968,14 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     # torch.cat type-promotes the concatenated prompt to fp32 even when
     # txt_feats/geo_feats are bf16. See _patch_encode_prompt_dtype.
     _patch_encode_prompt_dtype(raw_model)
+
+    # Replace sam3's text-pooling helpers (encoder.pool_text_feat and
+    # DotProductScoring.mean_pool_text) so their internal (~mask).float()
+    # promotion is replaced by (~mask).to(prompt.dtype). Otherwise bf16
+    # prompts get promoted to fp32 mid-forward and crash downstream
+    # Linear4bit / matmul ops with "expected BFloat16 but found Float".
+    # See _patch_text_pool_dtype for full rationale.
+    _patch_text_pool_dtype()
 
     # Make sam3's inference-only addmm_act fused kernel grad-aware so the
     # ViT-Det backbone supports LoRA fine-tuning. Without this, every
