@@ -661,12 +661,99 @@ def _patch_forward_grounding_skip_matching_on_none_target(model: nn.Module) -> N
     )
 
 
+def _patch_mha_input_dtype(model: nn.Module) -> None:
+    """Cast ``query``/``key``/``value`` of every MHA module to the MHA's weight dtype.
+
+    ``_patch_module_input_dtype`` only hooks ``nn.Linear`` / ``nn.LayerNorm`` /
+    ``nn.Conv*`` and only casts the first positional arg.  It deliberately
+    skips ``nn.MultiheadAttention`` because MHA takes three tensor inputs
+    (query, key, value) with a shared dtype expectation that the simple
+    args[0]-only hook can't honor.  But that leaves MHA modules completely
+    unprotected against upstream dtype leaks: any fp32 tensor reaching the
+    MHA's ``F.linear(input, in_proj_weight, ...)`` path (inside torch's
+    ``_in_projection_packed`` or sam3's ``multi_head_attention_forward``)
+    collides with the bf16 weight and raises
+    ``RuntimeError: mat1 and mat2 must have the same dtype, but got Float
+    and BFloat16``.
+
+    Surfaced in the QLoRA release-tier test after the prior dtype-routing
+    fixes: with the model fully bf16 (our skip of
+    ``prepare_model_for_kbit_training``) and the weight side clean, an
+    upstream fp32 promotion (likely a positional-embedding cast or a
+    transient mixed-precision op in the decoder pipeline) ended up feeding
+    MHA with fp32 query/key while value/weight were bf16.
+
+    This hook is the symmetric backstop: cast every floating-point
+    query/key/value input to the MHA's first-parameter dtype (which is the
+    compute_dtype the MHA was set up for).  Both positional and keyword
+    forms are handled.  Other args (masks, scalars, ``need_weights``, etc.)
+    pass through untouched.
+
+    Applies to both ``torch.nn.MultiheadAttention`` and
+    ``sam3.model.model_misc.MultiheadAttention`` (the same custom class
+    already enumerated in ``esam3.peft_adapters.qlora._mha_exclusion_types``).
+    sam3's custom MHA is imported lazily so the patch degrades gracefully
+    when sam3 is unavailable (CPU unit tests).
+
+    Notes:
+    - Per-instance ``register_forward_pre_hook`` (with ``with_kwargs=True``);
+      idempotency sentinel ``_esam3_mha_input_dtype_patched``.
+    - Hook fires before sam3's ``with torch.amp.autocast(enabled=False)``
+      regions (which live INSIDE the MHA call), so we don't collide with
+      the constraint that drives every other ``_patch_*_dtype`` helper.
+    - Re-evaluate every sam3 version bump; track long-term fix in upstream
+      sam3 (or wait for MHA to natively support mixed-dtype inputs).
+    """
+    mha_types: tuple[type[nn.Module], ...] = (nn.MultiheadAttention,)
+    try:
+        from sam3.model.model_misc import MultiheadAttention as _Sam3CustomMHA
+
+        mha_types = (*mha_types, _Sam3CustomMHA)
+    except ImportError:
+        pass
+
+    def _mha_input_dtype_hook(module, args, kwargs):  # type: ignore[no-untyped-def]
+        try:
+            target_dtype = next(module.parameters()).dtype
+        except StopIteration:
+            return None
+        # Positional: args[0..2] are query/key/value in both torch and sam3 MHA.
+        new_args = list(args)
+        for i in range(min(3, len(new_args))):
+            t = new_args[i]
+            if isinstance(t, torch.Tensor) and t.is_floating_point() and t.dtype != target_dtype:
+                new_args[i] = t.to(dtype=target_dtype)
+        # Keyword: same three names. Other kwargs (masks, scalars) untouched.
+        new_kwargs = dict(kwargs)
+        for name in ("query", "key", "value"):
+            t = new_kwargs.get(name)
+            if isinstance(t, torch.Tensor) and t.is_floating_point() and t.dtype != target_dtype:
+                new_kwargs[name] = t.to(dtype=target_dtype)
+        return tuple(new_args), new_kwargs
+
+    patched_count = 0
+    for submodule in model.modules():
+        if not isinstance(submodule, mha_types):
+            continue
+        if getattr(submodule, "_esam3_mha_input_dtype_patched", False):
+            continue
+        submodule.register_forward_pre_hook(_mha_input_dtype_hook, with_kwargs=True)
+        submodule._esam3_mha_input_dtype_patched = True  # type: ignore[assignment]
+        patched_count += 1
+
+    logger.info(
+        "Patched %d MultiheadAttention modules with query/key/value input-dtype hook.",
+        patched_count,
+    )
+
+
 # Modules that own a `weight` parameter and require their floating-point
 # input to match that weight's dtype. We hook the forward pre-call on each
 # instance to cast input[0] in-flight. Embedding is intentionally excluded
-# (integer input). Attention-style fused modules (e.g. nn.MultiheadAttention)
-# are excluded because they take multiple tensor inputs with non-uniform
-# dtype expectations; sam3's attention is built from raw Linears anyway.
+# (integer input). Attention-style fused modules (nn.MultiheadAttention and
+# sam3.model.model_misc.MultiheadAttention) are handled separately by
+# _patch_mha_input_dtype, which casts query/key/value (three positional
+# tensors) rather than just args[0].
 _DTYPE_SENSITIVE_MODULE_TYPES: tuple[type[nn.Module], ...] = (
     nn.Linear,
     nn.LayerNorm,
@@ -815,6 +902,14 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     # future cascading fp32 producer site we haven't patched directly.
     # See _patch_module_input_dtype for full rationale.
     _patch_module_input_dtype(raw_model)
+
+    # MHA-specific backstop: same idea as _patch_module_input_dtype but for
+    # nn.MultiheadAttention and sam3.model.model_misc.MultiheadAttention,
+    # which take three tensor inputs (query/key/value) and so are excluded
+    # from the generic hook. Without this, any upstream fp32 promotion
+    # reaches MHA's internal F.linear and crashes against the bf16 weight.
+    # See _patch_mha_input_dtype for full rationale.
+    _patch_mha_input_dtype(raw_model)
 
     adapter = _Sam3ImageAdapter(raw_model, image_size=1008)
     return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
