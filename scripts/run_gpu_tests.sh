@@ -10,6 +10,19 @@
 #   inspection — cheap structural/forward tests in tests/integration/ (9 tests)
 #   release    — expensive training-smoke tests in tests/gpu/ (2 tests)
 #   all        — both tiers; this is the default (11 tests)
+#
+# Stateful test-skipping convention (--deselect):
+#   When iterating on GPU tests, Claude (or any operator) appends
+#   `--deselect <nodeid>` flags to the pytest invocation below as
+#   individual tests are confirmed passing on real GPU hardware. This lets
+#   the GPU runner skip already-green tests on subsequent runs without
+#   editing the test files.
+#
+#   The mandatory FINAL ALL-GREEN PASS strips every `--deselect` flag and
+#   re-runs the full suite to prove it is green end-to-end on a real GPU.
+#   No PR may merge with `--deselect` flags left in this script; the CI job
+#   `gpu-deselect-check` in `.github/workflows/ci.yml` greps for them and
+#   fails the PR if any remain.
 set -euo pipefail
 TIER="${1:-all}"
 
