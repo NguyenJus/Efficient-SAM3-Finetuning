@@ -159,3 +159,75 @@ def test_evaluate_default_unchanged_returns_report_only(stub_model, tiny_text_da
     out = Evaluator(cfg).evaluate(stub_model, tiny_text_dataset)
     assert not isinstance(out, tuple)
     assert isinstance(out, MetricsReport)
+
+
+# ---------------------------------------------------------------------------
+# Device-placement contract: Evaluator must move dataset images to the model's
+# device before forward. Regression for the manual GPU pass on issue #44:
+# tests/gpu/test_real_train_overfits crashed with
+# `Input type (CPUBFloat16Type) and weight type (CUDABFloat16Type) should be
+# the same` because Evaluator passed CPU dataset tensors straight to a CUDA
+# model. The stub here pins its parameter on a non-CPU sentinel device
+# ("meta") so the test fails if `.to(device)` is dropped.
+# ---------------------------------------------------------------------------
+
+
+class _DeviceRecordingStub(torch.nn.Module):
+    """Records image.device per forward; param lives on a sentinel device."""
+
+    def __init__(self, param_device: str = "meta") -> None:
+        super().__init__()
+        self.dummy = torch.nn.Parameter(torch.zeros(1, device=param_device))
+        self.received_image_devices: list[torch.device] = []
+
+    def forward(
+        self, image: torch.Tensor, prompts: Any, box_hints: Any = None
+    ) -> dict[str, torch.Tensor]:
+        del prompts, box_hints
+        self.received_image_devices.append(image.device)
+        b = image.shape[0]
+        # Outputs are CPU and independent of the meta param so downstream
+        # postprocess.queries_to_coco_results works without GPU.
+        return {
+            "pred_logits": torch.zeros(b, 4, 1),
+            "pred_boxes": torch.zeros(b, 4, 4),
+            "pred_masks": torch.zeros(b, 4, 16, 16),
+            "presence_logit_dec": torch.zeros(b, 1),
+        }
+
+
+def test_evaluate_moves_image_to_model_device(tiny_text_dataset) -> None:
+    """Evaluator must call `.to(device)` on dataset images before forward."""
+    stub = _DeviceRecordingStub(param_device="meta")
+    cfg = EvalConfig(mode="lite", lite_max_images=2, iou_thresholds=[0.5])
+    Evaluator(cfg).evaluate(stub, tiny_text_dataset)
+    assert stub.received_image_devices, "model.forward was never called"
+    assert all(d.type == "meta" for d in stub.received_image_devices), (
+        f"expected every forward to receive a meta-device image; got "
+        f"{[str(d) for d in stub.received_image_devices]}"
+    )
+
+
+def test_evaluate_falls_back_to_cpu_for_parameterless_model(tiny_text_dataset) -> None:
+    """A model with no parameters defaults to CPU device (no StopIteration)."""
+
+    class _Parameterless(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seen: list[torch.device] = []
+
+        def forward(self, image: torch.Tensor, prompts: Any, box_hints: Any = None):
+            del prompts, box_hints
+            self.seen.append(image.device)
+            b = image.shape[0]
+            return {
+                "pred_logits": torch.zeros(b, 4, 1),
+                "pred_boxes": torch.zeros(b, 4, 4),
+                "pred_masks": torch.zeros(b, 4, 16, 16),
+                "presence_logit_dec": torch.zeros(b, 1),
+            }
+
+    stub = _Parameterless()
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5])
+    Evaluator(cfg).evaluate(stub, tiny_text_dataset)
+    assert stub.seen and all(d.type == "cpu" for d in stub.seen)
