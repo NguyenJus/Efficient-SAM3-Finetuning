@@ -110,6 +110,12 @@ def test_qlora_smoke_fast(
             f"data.val.images={tiny_coco_dir / 'images'}",
             f"run.output_dir={tmp_path}",
             "train.epochs=2",
+            # gpu_smoke_qlora.yaml ships log_every=10; with only ~3 training
+            # steps in the fast smoke, the modulo never hits a boundary and
+            # tracker.scalars stays empty. Force log_every=1 so we get a
+            # scalar per step and the finite-value assertion has something
+            # to assert on.
+            "train.log_every=1",
         ],
     )
     tracker = _RecordingTracker()
