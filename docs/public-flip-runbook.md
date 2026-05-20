@@ -113,12 +113,11 @@ the PR's "Merged" event on the github.com UI).
 <!-- retro-tag-block-start -->
 
 ```bash
-# PLACEHOLDER — will be replaced by Task 11 with resolved SHAs.
-git tag -a v0.1.0 <sha> -m "v0.1.0: <milestone>"
-git tag -a v0.2.0 <sha> -m "v0.2.0: <milestone>"
-git tag -a v0.3.0 <sha> -m "v0.3.0: <milestone>"
-git tag -a v0.4.0 <sha> -m "v0.4.0: <milestone>"
-git tag -a v0.5.0 <merge-sha> -m "v0.5.0: public-flip"
+git tag -a v0.1.0 5071c00 -m "v0.1.0: training loop — Trainer + checkpoint + box-hint curriculum (#14)"
+git tag -a v0.2.0 cf81dd7 -m "v0.2.0: eval subsystem — Evaluator + postprocess + CLI wiring (#17)"
+git tag -a v0.3.0 25dcc9a -m "v0.3.0: LoRA + QLoRA support (#4, #7)"
+git tag -a v0.4.0 494bbf5 -m "v0.4.0: W&B tracking (#18) + CI hardening (#32)"
+git tag -a v0.5.0 <merge-sha> -m "v0.5.0: public-flip — community standards + CodeQL + runbook"
 git push --tags
 ```
 
