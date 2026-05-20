@@ -62,8 +62,8 @@ jobs:
 
       - name: gitleaks (PR — full)
         if: github.event_name == 'pull_request'
-        run: ./gitleaks detect --no-banner --redact --verbose
+        run: ./gitleaks detect --no-banner --redact --verbose --config .config/gitleaks.toml
 
       - name: gitleaks (push — range)
         if: github.event_name != 'pull_request'
-        run: ./gitleaks detect --no-banner --redact --verbose --log-opts "${{ github.event.before }}..${{ github.sha }}"
+        run: ./gitleaks detect --no-banner --redact --verbose --config .config/gitleaks.toml --log-opts "${{ github.event.before }}..${{ github.sha }}"
