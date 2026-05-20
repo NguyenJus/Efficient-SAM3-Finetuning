@@ -1,6 +1,6 @@
 # Contributing
 
-`Efficient-SAM3-Finetuning` is a solo research project. The maintainer is
+`custom-sam-peft` is a solo research project. The maintainer is
 **not currently accepting external pull requests**, but forks and
 dev-clones are welcome under Apache-2.0 — fork it, modify it, ship it.
 

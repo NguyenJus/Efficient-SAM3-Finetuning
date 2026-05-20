@@ -47,6 +47,6 @@ applied to historical milestones. They were applied in a single
 ## Changelog
 
 There is no `CHANGELOG.md` in v0. The
-[GitHub Releases page](https://github.com/NguyenJus/Efficient-SAM3-Finetuning/releases)
+[GitHub Releases page](https://github.com/NguyenJus/custom-sam-peft/releases)
 is the canonical changelog surface. A `CHANGELOG.md` may be introduced
 at or after v1.0 if it becomes useful.

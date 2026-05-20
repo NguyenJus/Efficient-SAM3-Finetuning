@@ -1,12 +1,12 @@
-# esam3 Architecture
+# custom_sam_peft Architecture
 
-This is the one-page reference for how `esam3` is wired together. The
+This is the one-page reference for how `custom_sam_peft` is wired together. The
 full design rationale lives in `docs/superpowers/specs/`.
 
 ## Module map
 
 ```text
-src/esam3/
+src/custom_sam_peft/
   _registry.py         plugin registry: register(kind, name) + lookup
   config/
     schema.py          pydantic v2 — defaults + validation contract
@@ -63,10 +63,10 @@ my.yaml ─► config.loader.load() ─► TrainConfig
 These are the only interfaces a forking developer should expect to remain
 stable across patch releases. Everything else is internal.
 
-- `esam3.data.base.Dataset` — `__len__`, `__getitem__(i) -> Example`, `class_names`.
-- `esam3.tracking.base.Tracker` — `log_scalars`, `log_images`, `close`.
-- `esam3.train.trainer.Trainer.fit() -> RunResult`.
-- `esam3.eval.evaluator.Evaluator.evaluate(model, dataset) -> MetricsReport`.
+- `custom_sam_peft.data.base.Dataset` — `__len__`, `__getitem__(i) -> Example`, `class_names`.
+- `custom_sam_peft.tracking.base.Tracker` — `log_scalars`, `log_images`, `close`.
+- `custom_sam_peft.train.trainer.Trainer.fit() -> RunResult`.
+- `custom_sam_peft.eval.evaluator.Evaluator.evaluate(model, dataset) -> MetricsReport`.
 
 ## Determinism and reproducibility
 
@@ -81,8 +81,8 @@ The registry pattern is used for three kinds: `dataset`, `peft`, `tracker`.
 A new implementation is one file plus a decorator:
 
 ```python
-# src/esam3/data/my_format.py
-from esam3._registry import register
+# src/custom_sam_peft/data/my_format.py
+from custom_sam_peft._registry import register
 
 @register("dataset", "my_format")
 def build_my_format(cfg: dict) -> Dataset:
