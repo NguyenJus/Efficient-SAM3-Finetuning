@@ -442,3 +442,76 @@ def test_collect_linear_names_excludes_sam3_custom_mha_children(
     # Bare Linears unaffected.
     assert "fc1" in names
     assert "fc2" in names
+
+
+# ---------------------------------------------------------------------------
+# Regression: apply_qlora / load_qlora must NOT call peft's
+# prepare_model_for_kbit_training. That helper upcasts every non-Params4bit
+# bf16/fp16 parameter to fp32 (peft/utils/other.py:181-186), under the
+# assumption that outer torch.autocast will be on at training time to handle
+# dtype routing. This codebase deliberately avoids outer autocast (see
+# src/esam3/models/sam3.py::_patch_pos_enc_dtype docstring; sam3 has its own
+# `with torch.amp.autocast(enabled=False)` regions in decoder.forward_ffn
+# that re-trigger bf16/fp32 collisions whenever an outer scope is active).
+# Without outer autocast the fp32 upcast is fatal at every raw-Parameter
+# forward site that bypasses module dispatch — most notably MHA's in_proj /
+# out_proj F.linear calls and LayerScale's gamma multiply. We freeze base
+# params explicitly instead.
+# ---------------------------------------------------------------------------
+
+
+def test_qlora_does_not_call_prepare_model_for_kbit_training() -> None:
+    """Source-level regression: apply_qlora and load_qlora must not import
+    or call peft.prepare_model_for_kbit_training. The kbit fp32 upcast is
+    incompatible with sam3's no-outer-autocast contract.
+    """
+    import ast
+
+    import esam3.peft_adapters.qlora as qlora_module
+
+    src = Path(qlora_module.__file__).read_text()
+
+    # Direct substring check (fast, catches the obvious regression).
+    assert "prepare_model_for_kbit_training" not in src or (
+        # If the string appears, it must only be in a docstring / comment
+        # explaining why we don't call it. Confirm via AST.
+        all(
+            not (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "peft"
+                and any(a.name == "prepare_model_for_kbit_training" for a in node.names)
+            )
+            for node in ast.walk(ast.parse(src))
+        )
+        and all(
+            not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "prepare_model_for_kbit_training"
+            )
+            for node in ast.walk(ast.parse(src))
+        )
+    ), (
+        "qlora.py must not import or call prepare_model_for_kbit_training. "
+        "Its fp32 upcast collides with sam3's no-outer-autocast constraint."
+    )
+
+
+def test_qlora_freezes_base_params_explicitly() -> None:
+    """Source-level regression: apply_qlora and load_qlora each contain an
+    explicit ``for ... param.requires_grad = False`` loop. This replaces the
+    freeze step that prepare_model_for_kbit_training would have done, so a
+    future refactor doesn't silently drop the freeze (which would let the
+    base 4-bit weights accumulate non-grad noise via LoRA's backward path).
+    """
+    import esam3.peft_adapters.qlora as qlora_module
+
+    src = Path(qlora_module.__file__).read_text()
+
+    # Both functions need their own freeze loop (apply_qlora + load_qlora).
+    # We count occurrences of the requires_grad=False assignment.
+    assert src.count("param.requires_grad = False") >= 2, (
+        "Expected at least two explicit `param.requires_grad = False` "
+        "loops in qlora.py (one in apply_qlora, one in load_qlora). "
+        "These replace the freeze step from prepare_model_for_kbit_training."
+    )

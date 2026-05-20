@@ -172,7 +172,7 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
 
     bnb = _import_bnb()
 
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from peft import LoraConfig, get_peft_model
 
     base = cast(nn.Module, wrapper.model.model)
 
@@ -193,10 +193,57 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
         task_type=None,
     )
 
-    base = prepare_model_for_kbit_training(  # type: ignore[no-untyped-call]
-        base,
-        use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
-    )
+    # Freeze every base parameter explicitly.  We do NOT call peft's
+    # ``prepare_model_for_kbit_training`` here: that helper upcasts every
+    # non-``Params4bit`` bf16/fp16 parameter to fp32 (peft/utils/other.py
+    # lines 181-186) under the assumption that outer ``torch.autocast``
+    # will be on at training time to handle dtype routing back to
+    # compute_dtype.  This codebase deliberately avoids outer autocast
+    # because sam3 has internal ``with torch.amp.autocast(enabled=False)``
+    # regions (notably ``sam3/model/decoder.py::forward_ffn``) that
+    # re-trigger bf16/fp32 collisions whenever an outer scope is active —
+    # see ``src/esam3/models/sam3.py::_patch_pos_enc_dtype`` for the
+    # canonical record of that constraint (PR #13).
+    #
+    # Without outer autocast the upcast is fatal at every raw-Parameter
+    # forward site that bypasses module dispatch.  Confirmed callsites
+    # against the QLoRA path:
+    #   - ``torch.nn.MultiheadAttention`` and
+    #     ``sam3.model.model_misc.MultiheadAttention`` each call
+    #     ``F.linear(act, in_proj_weight, ...)`` and
+    #     ``F.linear(act, out_proj.weight, ...)`` directly.  bf16
+    #     activation x fp32 weight raises
+    #     ``RuntimeError: mat1 and mat2 must have the same dtype, but
+    #     got BFloat16 and Float``.
+    #   - ``sam3.model.model_misc.LayerScale.forward`` does
+    #     ``x * self.gamma``; promotes bf16 activation to fp32, which
+    #     then collides with the next ``Linear4bit`` (expects compute
+    #     dtype input).  Same pattern in ``sam3/model/memory.py:141``.
+    #
+    # The audit is not exhaustive across every sam3 release, so we take
+    # the systemic fix (skip the upcast entirely) instead of patching
+    # each site.  The trade-off this introduces:
+    #   - ``nn.LayerNorm`` weights stay in compute_dtype (bf16) rather
+    #     than fp32.  The kbit-training recipe in the QLoRA paper
+    #     recommends fp32 LayerNorms for gradient stability on long
+    #     training runs.  Our smoke tier is a 50-step overfit (loss
+    #     converges in tens of steps); stability is fine.  Long
+    #     production runs on borderline-stable configurations may want
+    #     to opt-in to fp32 norms via a future ``cfg.qlora.upcast_norms``
+    #     knob (out of scope for issue #44; track as follow-up).
+    #
+    # ``prepare_model_for_kbit_training`` also does base-param freezing
+    # and (conditionally) gradient-checkpointing setup.  Freezing is
+    # already handled by ``peft.get_peft_model`` below (the LoraConfig
+    # path freezes base params and marks the new lora_A/B adapters
+    # trainable).  We do the explicit loop here too as belt-and-suspenders
+    # so the contract is visible at the call site rather than implicit in
+    # peft.  Gradient checkpointing was being passed as ``False`` anyway
+    # (sam3's top-level model has no ``set_grad_checkpointing``), so
+    # nothing is lost on that axis.
+    for param in base.parameters():
+        param.requires_grad = False
+
     # peft 0.19's LoRA dispatcher (peft.tuners.lora.model:226) gates on
     # `model.is_loaded_in_4bit` to route to bnb.Linear4bit wrappers whose
     # merge() already handles dequant→add→repack correctly.  apply_qlora
@@ -328,17 +375,19 @@ def load_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
         compute_dtype=meta["compute_dtype"],
     )
 
-    from peft import PeftModel, prepare_model_for_kbit_training
+    from peft import PeftModel
 
     base = cast(nn.Module, wrapper.model.model)
     quant_names = _collect_linear_names(base)
     if not quant_names:
         raise ValueError("load_qlora: no nn.Linear modules found in base; cannot quantize")
     _replace_with_bnb_linear4bit(base, quant_names, qcfg)
-    base = prepare_model_for_kbit_training(  # type: ignore[no-untyped-call]
-        base,
-        use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
-    )
+    # See apply_qlora: we deliberately skip ``prepare_model_for_kbit_training``
+    # to avoid the fp32 upcast that collides with bf16 activations at sam3's
+    # raw-Parameter forward sites (MHA in_proj / out_proj, LayerScale gamma,
+    # etc.).  Freeze base params explicitly to mirror what the helper did for us.
+    for param in base.parameters():
+        param.requires_grad = False
     # Mirror the flag set in apply_qlora so peft's LoRA dispatcher routes to
     # bnb.Linear4bit wrappers on the restored model.  Without this, load_qlora
     # would succeed but a subsequent merge_lora call would hit the same
