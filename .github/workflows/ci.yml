@@ -35,7 +35,7 @@ jobs:
         run: uv run ruff format --check
 
       - name: Type check
-        run: uv run mypy src/esam3
+        run: uv run mypy src/custom_sam_peft
 
       - name: Test
         run: uv run pytest

@@ -4,17 +4,17 @@ import pytest
 import torch
 import torchvision.ops
 
-from esam3.models.sam3 import _patch_roi_align_dtype
+from custom_sam_peft.models.sam3 import _patch_roi_align_dtype
 
 
 @pytest.fixture(autouse=True)
 def _restore_roi_align():
     """Restore torchvision.ops.roi_align and the sentinel after each test."""
     original_fn = torchvision.ops.roi_align
-    original_sentinel = getattr(torchvision.ops, "_esam3_roi_align_dtype_patched", False)
+    original_sentinel = getattr(torchvision.ops, "_custom_sam_peft_roi_align_dtype_patched", False)
     yield
     torchvision.ops.roi_align = original_fn
-    torchvision.ops._esam3_roi_align_dtype_patched = original_sentinel
+    torchvision.ops._custom_sam_peft_roi_align_dtype_patched = original_sentinel
 
 
 def test_list_rois_dtype_mismatch_real_kernel() -> None:

@@ -3,7 +3,7 @@
 [← back to README](README.md)
 
 This file covers the developer-facing surface of
-`Efficient-SAM3-Finetuning`: dev loop, GPU test automation, and repo
+`custom-sam-peft`: dev loop, GPU test automation, and repo
 layout. End-user documentation lives in [`README.md`](README.md).
 
 ## Development
@@ -11,7 +11,7 @@ layout. End-user documentation lives in [`README.md`](README.md).
 ```bash
 uv run ruff check
 uv run ruff format --check
-uv run mypy src/esam3
+uv run mypy src/custom_sam_peft
 uv run pytest
 ```
 
