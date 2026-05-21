@@ -71,6 +71,7 @@ def _restore_patch():
 
         _vd.addmm_act = original_fn
     except ImportError:
+        # sam3.model.vitdet not importable (CPU-only unit env); nothing to restore.
         pass
 
 
@@ -139,20 +140,15 @@ def test_apply_activation_unsupported_raises() -> None:
 
 
 def test_grad_enabled_branch_fires(monkeypatch) -> None:
-    """Scenario 1: grad enabled → grad-enabled branch (linear + activation)."""
+    """Scenario 1: grad enabled → grad-enabled branch (linear + activation).
+
+    The wrapper closes over _orig at patch time, so we cannot spy on _orig
+    directly. Instead we verify behavior: a grad_fn must propagate through
+    the call (proving an autograd-tracked nn.Linear forward ran, not the
+    no-grad sam3 fused kernel).
+    """
     _install_fake_bnb(monkeypatch)
     _patch_addmm_act_grad_safe()
-
-    orig_called: list[bool] = []
-
-    def _fake_orig(activation, linear, mat1):  # type: ignore[no-untyped-def]
-        orig_called.append(True)
-        raise AssertionError("_orig must NOT be called when grad is enabled")
-
-    monkeypatch.setattr(_pf, "addmm_act", _pf.addmm_act)  # no-op rebind; sentinel stays
-    # Patch _orig inside the closure by replacing _pf's pre-patch reference.
-    # Since the wrapper closed over _orig at patch time, we instead call the
-    # wrapper directly and verify that an nn.Linear forward is executed (not _orig).
 
     linear = nn.Linear(4, 8, bias=True)
     mat1 = torch.randn(2, 4, requires_grad=True)
@@ -162,10 +158,7 @@ def test_grad_enabled_branch_fires(monkeypatch) -> None:
         out = _pf.addmm_act(nn.ReLU, linear, mat1)
 
     assert out.shape == (2, 8)
-    # Output must have a grad_fn (grad flowed through linear).
     assert out.requires_grad
-    # _orig was never called — the grad-enabled branch did its own forward.
-    assert not orig_called
 
 
 def test_no_grad_regular_linear_delegates_to_orig(monkeypatch) -> None:

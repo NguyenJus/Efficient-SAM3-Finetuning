@@ -503,7 +503,7 @@ def _patch_roi_align_dtype() -> None:
     # Also patch the submodule-local symbol so torchvision.ops.RoIAlign.forward
     # (which looks up `roi_align` in its own module namespace) routes through
     # the wrapper too.
-    tvo_ra_mod.roi_align = _roi_align_dtype_aware
+    tvo_ra_mod.roi_align = _roi_align_dtype_aware  # type: ignore[attr-defined]
     tvo._custom_sam_peft_roi_align_dtype_patched = True
     logger.info(
         "Patched torchvision.ops.roi_align (functional + RoIAlign class) "
@@ -627,9 +627,10 @@ def _patch_text_pool_dtype() -> None:
                 return pooled_text
 
             _encoder_mod.pool_text_feat = _pool_text_feat_dtype_aware
-            _encoder_mod._custom_sam_peft_pool_text_feat_dtype_patched = True  # type: ignore[attr-defined]
+            _encoder_mod._custom_sam_peft_pool_text_feat_dtype_patched = True
             logger.info("Patched sam3.model.encoder.pool_text_feat for dtype-aware text pooling.")
     except ImportError:
+        # sam3.model.encoder not importable (CPU-only unit env); skip the patch.
         pass
 
     # DotProductScoring.mean_pool_text (method on a class)
@@ -646,12 +647,13 @@ def _patch_text_pool_dtype() -> None:
                 return pooled_prompt
 
             DotProductScoring.mean_pool_text = _mean_pool_text_dtype_aware
-            DotProductScoring._custom_sam_peft_mean_pool_text_dtype_patched = True  # type: ignore[attr-defined]
+            DotProductScoring._custom_sam_peft_mean_pool_text_dtype_patched = True
             logger.info(
                 "Patched sam3.model.model_misc.DotProductScoring.mean_pool_text "
                 "for dtype-aware text pooling."
             )
     except ImportError:
+        # sam3.model.model_misc not importable (CPU-only unit env); skip the patch.
         pass
 
 
@@ -663,10 +665,10 @@ def _is_linear4bit(module: nn.Module) -> bool:
     """
     try:
         import bitsandbytes as bnb
-
-        return isinstance(module, bnb.nn.Linear4bit)
     except ImportError:
         return False
+    Linear4bit = getattr(bnb.nn, "Linear4bit", None)
+    return Linear4bit is not None and isinstance(module, Linear4bit)
 
 
 def _apply_activation(activation: Any, x: torch.Tensor) -> torch.Tensor:
@@ -781,7 +783,7 @@ def _patch_addmm_act_grad_safe() -> None:
 
     _pf.addmm_act = _addmm_act_grad_safe
     _vd.addmm_act = _addmm_act_grad_safe
-    _pf._custom_sam_peft_addmm_act_grad_safe_patched = True  # type: ignore[attr-defined]
+    _pf._custom_sam_peft_addmm_act_grad_safe_patched = True
     logger.info(
         "Patched sam3.perflib.fused.addmm_act (and vitdet binding) for "
         "grad-aware forward; LoRA backbone fine-tuning now works on this "
@@ -863,7 +865,7 @@ def _patch_forward_grounding_skip_matching_on_none_target(model: nn.Module) -> N
 
     def _compute_matching_none_safe(self, out, targets, _orig=orig_compute_matching):  # type: ignore[no-untyped-def]
         if targets is None:
-            return
+            return None
         return _orig(out, targets)
 
     model.back_convert = MethodType(_back_convert_none_safe, model)  # type: ignore[assignment]
@@ -925,6 +927,7 @@ def _patch_mha_input_dtype(model: nn.Module) -> None:
 
         mha_types = (*mha_types, _Sam3CustomMHA)
     except ImportError:
+        # sam3 not importable (CPU-only unit env); torch built-in MHA alone covers the path.
         pass
 
     def _mha_input_dtype_hook(module, args, kwargs):  # type: ignore[no-untyped-def]

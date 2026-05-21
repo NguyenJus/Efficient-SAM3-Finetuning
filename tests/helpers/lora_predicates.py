@@ -32,6 +32,7 @@ def _mha_exclusion_types() -> tuple[type[nn.Module], ...]:
 
         types = (*types, _Sam3CustomMHA)
     except ImportError:
+        # sam3 not importable (CPU-only unit env); torch built-in MHA alone covers the path.
         pass
     return types
 

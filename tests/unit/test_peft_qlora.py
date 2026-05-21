@@ -467,9 +467,9 @@ def test_qlora_does_not_call_prepare_model_for_kbit_training() -> None:
     """
     import ast
 
-    import custom_sam_peft.peft_adapters.qlora as qlora_module
+    from custom_sam_peft.peft_adapters.qlora import __file__ as qlora_path
 
-    src = Path(qlora_module.__file__).read_text()
+    src = Path(qlora_path).read_text()
 
     # Direct substring check (fast, catches the obvious regression).
     assert "prepare_model_for_kbit_training" not in src or (
@@ -504,9 +504,9 @@ def test_qlora_freezes_base_params_explicitly() -> None:
     future refactor doesn't silently drop the freeze (which would let the
     base 4-bit weights accumulate non-grad noise via LoRA's backward path).
     """
-    import custom_sam_peft.peft_adapters.qlora as qlora_module
+    from custom_sam_peft.peft_adapters.qlora import __file__ as qlora_path
 
-    src = Path(qlora_module.__file__).read_text()
+    src = Path(qlora_path).read_text()
 
     # Both functions need their own freeze loop (apply_qlora + load_qlora).
     # We count occurrences of the requires_grad=False assignment.

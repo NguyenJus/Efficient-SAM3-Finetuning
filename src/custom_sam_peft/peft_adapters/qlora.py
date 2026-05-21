@@ -250,8 +250,8 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
     # get_peft_model so peft dispatches to the bnb path, not the generic
     # Linear path whose merge() blindly does `weight.data += delta` on
     # packed 4-bit storage (shape mismatch → RuntimeError).
-    base.is_loaded_in_4bit = True
-    peft_base = get_peft_model(base, lora_cfg)
+    base.is_loaded_in_4bit = True  # type: ignore[assignment]
+    peft_base = get_peft_model(base, lora_cfg)  # type: ignore[arg-type]
 
     from peft import PeftModel as _PeftModel
 
@@ -391,7 +391,7 @@ def load_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
     # bnb.Linear4bit wrappers on the restored model.  Without this, load_qlora
     # would succeed but a subsequent merge_lora call would hit the same
     # packed-weight shape mismatch as described in apply_qlora above.
-    base.is_loaded_in_4bit = True
+    base.is_loaded_in_4bit = True  # type: ignore[assignment]
     peft_base = PeftModel.from_pretrained(base, str(src))
     wrapper.model.model = peft_base
     wrapper.peft_model = peft_base
