@@ -253,3 +253,59 @@ def test_fit_calls_start_run_once_before_first_log(tmp_path: Path) -> None:
     assert isinstance(args.args[1], dict)
     # resume_from must be passed through (None for fresh runs)
     assert args.kwargs.get("resume_from", args.args[2] if len(args.args) > 2 else "MISSING") is None
+
+
+# ---------------------------------------------------------------------------
+# Device-placement contract for Trainer._log_image_panel: dataset images must
+# reach the model on the model's device. Parallel to the Evaluator regression
+# pinned in tests/unit/test_evaluator.py::test_evaluate_moves_image_to_model_device.
+# ---------------------------------------------------------------------------
+
+
+class _PanelDeviceRecordingStub(torch.nn.Module):
+    """Records image.device per forward; param lives on a sentinel device."""
+
+    def __init__(self, param_device: str = "meta") -> None:
+        super().__init__()
+        self.dummy = torch.nn.Parameter(torch.zeros(1, device=param_device))
+        self.received_image_devices: list[torch.device] = []
+
+    def forward(self, image: torch.Tensor, prompts: object, box_hints: object = None) -> dict:
+        del prompts, box_hints
+        self.received_image_devices.append(image.device)
+        b = image.shape[0]
+        return {
+            "pred_logits": torch.zeros(b, 4, 1),
+            "pred_boxes": torch.zeros(b, 4, 4),
+            "pred_masks": torch.zeros(b, 4, 16, 16),
+            "presence_logit_dec": torch.zeros(b, 1),
+        }
+
+
+def test_log_image_panel_moves_image_to_model_device() -> None:
+    """Trainer._log_image_panel must move dataset images onto the model's device."""
+    stub = _PanelDeviceRecordingStub(param_device="meta")
+    fake_self = MagicMock()
+    fake_self.model = stub
+    fake_self.tracker = NoopTracker()
+
+    example = Example(
+        image=torch.zeros(3, 16, 16),
+        image_id="img-0",
+        prompts=TextPrompts(classes=["cat"]),
+        instances=[
+            Instance(
+                mask=torch.zeros(16, 16, dtype=torch.bool),
+                class_id=0,
+                box=torch.tensor([0.0, 0.0, 1.0, 1.0]),
+            )
+        ],
+    )
+
+    Trainer._log_image_panel(fake_self, [example], ["cat"], global_step=0)
+
+    assert stub.received_image_devices, "model.forward was never called"
+    assert all(d.type == "meta" for d in stub.received_image_devices), (
+        f"expected every forward to receive a meta-device image; got "
+        f"{[str(d) for d in stub.received_image_devices]}"
+    )

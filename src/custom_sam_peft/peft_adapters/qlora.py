@@ -55,9 +55,76 @@ def _torch_dtype(name: Dtype) -> torch.dtype:
     return {"bfloat16": torch.bfloat16, "float16": torch.float16}[name]
 
 
+def _mha_exclusion_types() -> tuple[type[nn.Module], ...]:
+    """Module types whose internal ``nn.Linear`` children MUST be skipped during
+    4-bit quantization because their ``forward`` extracts ``out_proj.weight`` as
+    a raw tensor and calls ``F.linear`` on it directly, bypassing the
+    ``Linear4bit.__call__`` dispatch that bitsandbytes needs to dequantize.
+
+    Two known types ship with the project:
+      - ``torch.nn.MultiheadAttention`` (PyTorch built-in; sam3's decoder uses
+        it at ``sam3/model/decoder.py:54,59``).  Bypass site:
+        ``torch.nn.functional.multi_head_attention_forward`` line 6637.
+      - ``sam3.model.model_misc.MultiheadAttention`` (sam3 custom; instantiated
+        at ``sam3/model_builder.py:226`` as ``cross_attend_prompt`` and threaded
+        into the decoder via ``cross_attention`` factory).  Bypass site:
+        ``sam3.model.model_misc.multi_head_attention_forward`` line 432.
+
+    sam3's custom class is imported lazily (try/except) so CPU unit tests can
+    run without sam3 installed.  In a production load (where sam3 is always
+    importable), both types are unconditionally in the exclusion set.
+
+    Audit notes for future maintainers (re-evaluate every sam3 version bump):
+      - ``sam3.sam.transformer.Attention`` is safe — its ``forward`` calls
+        ``self.out_proj(out)`` via module dispatch (no bypass).
+      - ``sam3.model.vitdet.Attention`` is safe — uses ``self.qkv(x)`` /
+        ``self.proj(x)`` via module dispatch.
+      - ``out_proj.weight`` references in ``video_tracking_multiplex.py`` and
+        ``sam3_tracker_base.py`` are ``.shape[0]`` lookups, not forward
+        dispatch.
+    """
+    types: tuple[type[nn.Module], ...] = (nn.MultiheadAttention,)
+    try:
+        from sam3.model.model_misc import MultiheadAttention as _Sam3CustomMHA
+
+        types = (*types, _Sam3CustomMHA)
+    except ImportError:
+        # sam3 not importable (CPU unit-test environments may omit it); the
+        # torch built-in alone is still excluded.
+        pass
+    return types
+
+
 def _collect_linear_names(base: nn.Module) -> list[str]:
-    """Return the fully-qualified names of every nn.Linear in `base`."""
-    return [n for n, m in base.named_modules() if isinstance(m, nn.Linear)]
+    """Every ``nn.Linear`` in ``base``, excluding children of MHA-style modules.
+
+    The exclusion is mandatory.  Both ``torch.nn.MultiheadAttention`` and
+    ``sam3.model.model_misc.MultiheadAttention`` implement their ``forward``
+    by extracting ``out_proj.weight`` as a raw tensor and passing it to
+    ``F.linear`` directly — bypassing ``Linear4bit.__call__`` and so bypassing
+    bitsandbytes' dequant kernel.  Quantizing those children causes the first
+    forward to raise ``RuntimeError: self and mat2 must have the same dtype,
+    but got Float and Byte`` (the "Byte" is bnb's uint8-packed 4-bit storage).
+
+    See ``_mha_exclusion_types`` for the full audit and the analogous fix in
+    ``transformers.utils.bitsandbytes`` (``lm_head`` exclusion).
+
+    Trade-off this introduces: out_proj remains ``nn.Linear`` (fp32/bf16) in
+    QLoRA mode, so ``_resolve_targets(..., linear_types=(Linear4bit,))`` no
+    longer matches it and LoRA is NOT injected on out_proj under QLoRA.
+    In LoRA mode (no quantization) out_proj is still a plain ``nn.Linear``
+    and LoRA targets it normally.  The asymmetry is the right one: MHA's
+    in_proj path also stays unquantized (``in_proj_weight`` is a raw
+    ``Parameter``, not a ``Linear`` submodule), so the bulk of decoder
+    finetuning lives at FFN Linears outside MHA and is unaffected.
+    """
+    mha_types = _mha_exclusion_types()
+    mha_prefixes = {name for name, mod in base.named_modules() if isinstance(mod, mha_types)}
+
+    def _under_mha(linear_name: str) -> bool:
+        return any(linear_name == p or linear_name.startswith(p + ".") for p in mha_prefixes)
+
+    return [n for n, m in base.named_modules() if isinstance(m, nn.Linear) and not _under_mha(n)]
 
 
 def _resolve_parent(base: nn.Module, dotted_name: str) -> tuple[nn.Module, str]:
@@ -104,7 +171,7 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
 
     bnb = _import_bnb()
 
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from peft import LoraConfig, get_peft_model
 
     base = cast(nn.Module, wrapper.model.model)
 
@@ -125,10 +192,57 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
         task_type=None,
     )
 
-    base = prepare_model_for_kbit_training(  # type: ignore[no-untyped-call]
-        base,
-        use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
-    )
+    # Freeze every base parameter explicitly.  We do NOT call peft's
+    # ``prepare_model_for_kbit_training`` here: that helper upcasts every
+    # non-``Params4bit`` bf16/fp16 parameter to fp32 (peft/utils/other.py
+    # lines 181-186) under the assumption that outer ``torch.autocast``
+    # will be on at training time to handle dtype routing back to
+    # compute_dtype.  This codebase deliberately avoids outer autocast
+    # because sam3 has internal ``with torch.amp.autocast(enabled=False)``
+    # regions (notably ``sam3/model/decoder.py::forward_ffn``) that
+    # re-trigger bf16/fp32 collisions whenever an outer scope is active —
+    # see ``src/custom_sam_peft/models/sam3.py::_patch_pos_enc_dtype`` for the
+    # canonical record of that constraint (PR #13).
+    #
+    # Without outer autocast the upcast is fatal at every raw-Parameter
+    # forward site that bypasses module dispatch.  Confirmed callsites
+    # against the QLoRA path:
+    #   - ``torch.nn.MultiheadAttention`` and
+    #     ``sam3.model.model_misc.MultiheadAttention`` each call
+    #     ``F.linear(act, in_proj_weight, ...)`` and
+    #     ``F.linear(act, out_proj.weight, ...)`` directly.  bf16
+    #     activation x fp32 weight raises
+    #     ``RuntimeError: mat1 and mat2 must have the same dtype, but
+    #     got BFloat16 and Float``.
+    #   - ``sam3.model.model_misc.LayerScale.forward`` does
+    #     ``x * self.gamma``; promotes bf16 activation to fp32, which
+    #     then collides with the next ``Linear4bit`` (expects compute
+    #     dtype input).  Same pattern in ``sam3/model/memory.py:141``.
+    #
+    # The audit is not exhaustive across every sam3 release, so we take
+    # the systemic fix (skip the upcast entirely) instead of patching
+    # each site.  The trade-off this introduces:
+    #   - ``nn.LayerNorm`` weights stay in compute_dtype (bf16) rather
+    #     than fp32.  The kbit-training recipe in the QLoRA paper
+    #     recommends fp32 LayerNorms for gradient stability on long
+    #     training runs.  Our smoke tier is a 50-step overfit (loss
+    #     converges in tens of steps); stability is fine.  Long
+    #     production runs on borderline-stable configurations may want
+    #     to opt-in to fp32 norms via a future ``cfg.qlora.upcast_norms``
+    #     knob (out of scope for issue #44; track as follow-up).
+    #
+    # ``prepare_model_for_kbit_training`` also does base-param freezing
+    # and (conditionally) gradient-checkpointing setup.  Freezing is
+    # already handled by ``peft.get_peft_model`` below (the LoraConfig
+    # path freezes base params and marks the new lora_A/B adapters
+    # trainable).  We do the explicit loop here too as belt-and-suspenders
+    # so the contract is visible at the call site rather than implicit in
+    # peft.  Gradient checkpointing was being passed as ``False`` anyway
+    # (sam3's top-level model has no ``set_grad_checkpointing``), so
+    # nothing is lost on that axis.
+    for param in base.parameters():
+        param.requires_grad = False
+
     # peft 0.19's LoRA dispatcher (peft.tuners.lora.model:226) gates on
     # `model.is_loaded_in_4bit` to route to bnb.Linear4bit wrappers whose
     # merge() already handles dequant→add→repack correctly.  apply_qlora
@@ -136,8 +250,8 @@ def apply_qlora(wrapper: Sam3Wrapper, cfg: PEFTConfig) -> Sam3Wrapper:
     # get_peft_model so peft dispatches to the bnb path, not the generic
     # Linear path whose merge() blindly does `weight.data += delta` on
     # packed 4-bit storage (shape mismatch → RuntimeError).
-    base.is_loaded_in_4bit = True
-    peft_base = get_peft_model(base, lora_cfg)
+    base.is_loaded_in_4bit = True  # type: ignore[assignment]
+    peft_base = get_peft_model(base, lora_cfg)  # type: ignore[arg-type]
 
     from peft import PeftModel as _PeftModel
 
@@ -260,22 +374,24 @@ def load_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
         compute_dtype=meta["compute_dtype"],
     )
 
-    from peft import PeftModel, prepare_model_for_kbit_training
+    from peft import PeftModel
 
     base = cast(nn.Module, wrapper.model.model)
     quant_names = _collect_linear_names(base)
     if not quant_names:
         raise ValueError("load_qlora: no nn.Linear modules found in base; cannot quantize")
     _replace_with_bnb_linear4bit(base, quant_names, qcfg)
-    base = prepare_model_for_kbit_training(  # type: ignore[no-untyped-call]
-        base,
-        use_gradient_checkpointing=getattr(base, "is_gradient_checkpointing", False),
-    )
+    # See apply_qlora: we deliberately skip ``prepare_model_for_kbit_training``
+    # to avoid the fp32 upcast that collides with bf16 activations at sam3's
+    # raw-Parameter forward sites (MHA in_proj / out_proj, LayerScale gamma,
+    # etc.).  Freeze base params explicitly to mirror what the helper did for us.
+    for param in base.parameters():
+        param.requires_grad = False
     # Mirror the flag set in apply_qlora so peft's LoRA dispatcher routes to
     # bnb.Linear4bit wrappers on the restored model.  Without this, load_qlora
     # would succeed but a subsequent merge_lora call would hit the same
     # packed-weight shape mismatch as described in apply_qlora above.
-    base.is_loaded_in_4bit = True
+    base.is_loaded_in_4bit = True  # type: ignore[assignment]
     peft_base = PeftModel.from_pretrained(base, str(src))
     wrapper.model.model = peft_base
     wrapper.peft_model = peft_base

@@ -96,8 +96,19 @@ def test_save_qlora_writes_adapter_and_metadata(tmp_path: Path) -> None:
 def test_save_load_qlora_roundtrip(tmp_path: Path) -> None:
     w1 = load_sam31(ModelConfig())
     apply_qlora(w1, PEFTConfig(method="qlora"))
-    sd1 = {n: p.detach().clone() for n, p in w1.model.model.named_parameters() if "lora_" in n}
+    sd1 = {
+        n: p.detach().cpu().clone() for n, p in w1.model.model.named_parameters() if "lora_" in n
+    }
     save_qlora(w1, tmp_path)
+
+    # Free w1 before constructing w2 — Colab host RAM (~12 GB) cannot hold
+    # two sam31 instances simultaneously, and this test was SIGKILLed (exit
+    # 137) before the fix.
+    import gc
+
+    del w1
+    gc.collect()
+    torch.cuda.empty_cache()
 
     w2 = load_sam31(ModelConfig())
     load_qlora(w2, tmp_path)
@@ -105,7 +116,7 @@ def test_save_load_qlora_roundtrip(tmp_path: Path) -> None:
 
     assert set(sd1) == set(sd2), f"LoRA param names differ: {set(sd1) ^ set(sd2)}"
     for name, t1 in sd1.items():
-        assert torch.allclose(t1, sd2[name], atol=0.0), f"mismatch on {name}"
+        assert torch.allclose(t1.to(sd2[name].device), sd2[name], atol=0.0), f"mismatch on {name}"
 
 
 @pytest.mark.skipif(not _bnb_available(), reason="bitsandbytes not installed")
