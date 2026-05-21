@@ -263,6 +263,16 @@ class Trainer:
             return
         self.model.eval()
         try:
+            # Resolve the model's device once and move dataset images onto it
+            # before each forward. See parallel rationale in
+            # custom_sam_peft/eval/evaluator.py: dataset tensors are CPU; a CUDA model
+            # otherwise crashes on the first Conv2d with a device-mismatch
+            # RuntimeError. Falls back to CPU for parameterless / non-nn.Module
+            # test stubs.
+            try:
+                device = next(self.model.parameters()).device
+            except (StopIteration, AttributeError):
+                device = torch.device("cpu")
             with torch.no_grad():
                 panels: list[np.ndarray[Any, Any]] = []
                 for ex in val_examples:
@@ -274,7 +284,7 @@ class Trainer:
                         (image - image.min()) / max(image.max() - image.min(), 1e-9) * 255
                     ).astype(np.uint8)
                     out = self.model(
-                        ex.image.unsqueeze(0),
+                        ex.image.unsqueeze(0).to(device),
                         [ex.prompts.__class__(classes=[c])],
                         box_hints=None,
                     )

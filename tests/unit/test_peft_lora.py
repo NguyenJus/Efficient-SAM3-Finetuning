@@ -344,7 +344,8 @@ def test_scope_targets_match_real_sam3_module_naming() -> None:
                     sub = nn.Module()
                     sub.out_proj = nn.Linear(8, 8)  # type: ignore[assignment]
                     setattr(layer, kind, sub)
-                layer.linear1 = nn.Linear(8, 16)  # type: ignore[assignment]  # FFN negative control
+                layer.linear1 = nn.Linear(8, 16)  # type: ignore[assignment]  # decoder FFN
+                layer.linear2 = nn.Linear(16, 8)  # type: ignore[assignment]  # decoder FFN
                 decoder_layers.append(layer)
             self.transformer.decoder.layers = nn.ModuleList(decoder_layers)  # type: ignore[assignment]
 
@@ -365,10 +366,80 @@ def test_scope_targets_match_real_sam3_module_naming() -> None:
     assert "transformer.decoder.layers.1.self_attn.out_proj" in vision_decoder
     # vision scope subset is included.
     assert set(vision).issubset(set(vision_decoder))
-    # FFN linears in the decoder are intentionally NOT adapted.
-    assert all("linear1" not in n for n in vision_decoder)
+    # Decoder FFN linears ARE now adapted (sam3.model.decoder.TransformerDecoderLayer:64,67).
+    assert "transformer.decoder.layers.0.linear1" in vision_decoder
+    assert "transformer.decoder.layers.0.linear2" in vision_decoder
+    assert "transformer.decoder.layers.1.linear1" in vision_decoder
+    assert "transformer.decoder.layers.1.linear2" in vision_decoder
     # Vision-trunk MLP is intentionally NOT adapted under vision_decoder.
     assert all(".mlp." not in n for n in vision_decoder)
 
     # SCOPE_TARGETS still exposes only the three documented scopes.
     assert set(SCOPE_TARGETS) == {"vision", "vision_decoder", "all"}
+
+
+def test_vision_decoder_scope_matches_decoder_ffn_linears() -> None:
+    """Focused test: linear[12] pattern matches both LoRA and QLoRA paths.
+
+    Under LoRA, decoder FFN modules are nn.Linear (default linear_types).
+    Under QLoRA, they become Linear4bit — simulated here with a stand-in type
+    by calling _resolve_targets with linear_types=(nn.Linear,) directly, since
+    the regex is type-agnostic and type filtering is orthogonal.
+    """
+    from custom_sam_peft.peft_adapters.lora import _resolve_targets
+
+    class FakeDecoderLayer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.self_attn = nn.MultiheadAttention(64, 4)
+            self.linear1 = nn.Linear(64, 256)
+            self.linear2 = nn.Linear(256, 64)
+
+    class FakeRoot(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.transformer = nn.Module()
+            self.transformer.decoder = nn.Module()  # type: ignore[assignment]
+            self.transformer.decoder.layers = nn.ModuleList(  # type: ignore[assignment]
+                [FakeDecoderLayer()]
+            )
+
+    root = FakeRoot()
+    cfg = PEFTConfig(method="lora", scope="vision_decoder")
+
+    # Default path (LoRA): linear_types=(nn.Linear,) — linear1/linear2 are matched.
+    matched_lora = _resolve_targets(root, cfg, linear_types=(nn.Linear,))
+    assert "transformer.decoder.layers.0.linear1" in matched_lora, matched_lora
+    assert "transformer.decoder.layers.0.linear2" in matched_lora, matched_lora
+
+    # QLoRA simulation: use a custom type to mirror the Linear4bit scenario.
+    # linear1/linear2 are swapped to FakeLinear4bit; out_proj stays as nn.Linear
+    # (matching MHA-exclusion behavior in qlora.py).
+    class FakeLinear4bit(nn.Module):
+        """Stand-in for bnb.nn.Linear4bit; not an nn.Linear subclass."""
+
+        def __init__(self, in_f: int, out_f: int) -> None:
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(out_f, in_f))
+
+    class FakeDecoderLayerQuantized(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.self_attn = nn.MultiheadAttention(64, 4)
+            # FFN linears are quantized (Linear4bit); out_proj inside MHA stays Linear.
+            self.linear1 = FakeLinear4bit(64, 256)
+            self.linear2 = FakeLinear4bit(256, 64)
+
+    class FakeRootQuantized(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.transformer = nn.Module()
+            self.transformer.decoder = nn.Module()  # type: ignore[assignment]
+            self.transformer.decoder.layers = nn.ModuleList(  # type: ignore[assignment]
+                [FakeDecoderLayerQuantized()]
+            )
+
+    root_q = FakeRootQuantized()
+    matched_qlora = _resolve_targets(root_q, cfg, linear_types=(FakeLinear4bit,))
+    assert "transformer.decoder.layers.0.linear1" in matched_qlora, matched_qlora
+    assert "transformer.decoder.layers.0.linear2" in matched_qlora, matched_qlora

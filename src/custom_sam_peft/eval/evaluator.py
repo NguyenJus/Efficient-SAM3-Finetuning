@@ -152,6 +152,17 @@ class Evaluator:
         if hasattr(model, "eval"):
             model.eval()
 
+        # Resolve the model's device once and move dataset images onto it
+        # before each forward. The dataset yields CPU tensors; passing them
+        # straight to a CUDA-resident model raises
+        # `Input type (CPUBFloat16Type) and weight type (CUDABFloat16Type)
+        #  should be the same` inside the first Conv2d. Falls back to CPU
+        # for parameterless / non-nn.Module test stubs.
+        try:
+            device = next(model.parameters()).device
+        except (StopIteration, AttributeError):
+            device = torch.device("cpu")
+
         predictions: list[dict[str, object]] = []
         try:
             with torch.no_grad():
@@ -164,7 +175,7 @@ class Evaluator:
                     for cat_idx, class_name in enumerate(dataset.class_names):
                         cat_id = cat_idx + 1
                         outputs = model(
-                            ex.image.unsqueeze(0),
+                            ex.image.unsqueeze(0).to(device),
                             [TextPrompts(classes=[class_name])],
                             box_hints=None,
                         )

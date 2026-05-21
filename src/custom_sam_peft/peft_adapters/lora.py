@@ -38,12 +38,21 @@ SCOPE_TARGETS: dict[str, list[str]] = {
     "vision": [
         r"backbone\.vision_backbone\.trunk\.blocks\.\d+\.attn\.(qkv|proj)$",
     ],
-    # Vision trunk + transformer decoder attention output projections.
+    # Vision trunk + transformer decoder attention projections + decoder FFN linears.
     # MultiheadAttentionWrapper exposes only `out_proj` as nn.Linear; its
     # in_proj_weight/q,k,v_proj_weight are bare Parameters and not LoRA-targetable.
+    # NOTE: The out_proj pattern only takes effect under plain LoRA. Under QLoRA,
+    # _mha_exclusion_types in qlora.py keeps MHA children (including out_proj) as
+    # nn.Linear rather than quantizing them, so _resolve_targets(...,
+    # linear_types=(Linear4bit,)) returns zero out_proj matches.
+    # The linear[12] pattern matches in BOTH modes: TransformerDecoderLayer.linear1
+    # and .linear2 (sam3.model.decoder.TransformerDecoderLayer:64,67) are bare
+    # nn.Linear FFN modules outside any MHA, so they get quantized under QLoRA and
+    # remain as nn.Linear under LoRA — targetable in either case.
     "vision_decoder": [
         r"backbone\.vision_backbone\.trunk\.blocks\.\d+\.attn\.(qkv|proj)$",
         r"transformer\.decoder\.layers\.\d+\.(self_attn|cross_attn|ca_text)\.out_proj$",
+        r"transformer\.decoder\.layers\.\d+\.linear[12]$",
     ],
     # Every nn.Linear in the tree. Existing intentional over-match; narrowing
     # is deferred (see TODO history in PRs #4 / #7).
