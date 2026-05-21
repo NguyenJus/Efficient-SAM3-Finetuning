@@ -13,7 +13,11 @@ The filter detects exactly that pattern and suppresses the noise.
 
 from __future__ import annotations
 
-from esam3.models.sam3 import _KNOWN_MISSING_KEYS, _classify_missing_keys
+import ast
+
+import pytest
+
+from esam3.models.sam3 import _KNOWN_MISSING_KEYS, _SAM3_MISSING_KEYS_RE, _classify_missing_keys
 
 # ---------------------------------------------------------------------------
 # Happy-path: exactly the known set → "ok"
@@ -111,3 +115,89 @@ def test_classify_both_extra_missing_and_unexpected_is_fail() -> None:
         unexpected={"backbone.extra.weight"},
     )
     assert result == "fail"
+
+
+# ---------------------------------------------------------------------------
+# ast.literal_eval safety: hostile-input rejection
+# ---------------------------------------------------------------------------
+
+
+def test_literal_eval_rejects_hostile_call_expression() -> None:
+    """ast.literal_eval must reject a repr that contains a bare call expression.
+
+    The canonical attack surface: if the captured text were anything other than
+    a list-of-strings repr (e.g. due to a future sam3 format change that
+    includes a computed value or if the regex over-captures), eval() would
+    execute arbitrary code while ast.literal_eval would refuse.
+
+    We test the property directly: ast.literal_eval rejects any input that
+    contains a function call or other non-literal expression.  This confirms
+    that swapping eval() → ast.literal_eval is the correct mitigation.
+    """
+    # This is NOT a list repr — it is a raw call expression.  eval() would
+    # execute __import__ and run a shell command; ast.literal_eval must refuse.
+    hostile_expr = "__import__('os').system('echo pwned')"
+    with pytest.raises((ValueError, SyntaxError)):
+        ast.literal_eval(hostile_expr)
+
+
+def test_literal_eval_rejects_call_expression_in_key_name() -> None:
+    """ast.literal_eval must raise on any non-literal token inside the list.
+
+    Even when the attack is embedded among legitimate-looking keys the parser
+    must refuse to evaluate the expression.
+    """
+    # The element after the first key is a call expression, not a string.
+    hostile_repr = "['backbone.layer.weight', __import__('os').system('x')]"
+    with pytest.raises((ValueError, SyntaxError)):
+        ast.literal_eval(hostile_repr)
+
+
+# ---------------------------------------------------------------------------
+# Regex robustness: _SAM3_MISSING_KEYS_RE
+# ---------------------------------------------------------------------------
+
+
+def test_regex_matches_typical_sam3_output() -> None:
+    """Regex matches the exact format sam3's _load_checkpoint prints."""
+    text = (
+        "loaded /path/to/sam3.1_multiplex.pt and found missing and/or unexpected keys:\n"
+        "missing_keys=['backbone.vision_backbone.convs.3.conv_1x1.weight']\n"
+    )
+    m = _SAM3_MISSING_KEYS_RE.search(text)
+    assert m is not None
+    parsed = ast.literal_eval(m.group(1))
+    assert parsed == ["backbone.vision_backbone.convs.3.conv_1x1.weight"]
+
+
+def test_regex_does_not_consume_output_after_list() -> None:
+    """Group 1 must not include text that follows the closing ']' of the list.
+
+    With re.DOTALL and a greedy .+ group the old regex consumed everything to
+    the end of the string, so ast.literal_eval would receive trailing text and
+    raise.  The fixed regex uses a non-greedy \\[.*?\\] group so only the list
+    repr is captured.
+    """
+    text = (
+        "loaded /path/to/ckpt.pt and found missing and/or unexpected keys:\n"
+        "missing_keys=['backbone.layer.weight']\n"
+        "Some other sam3 progress output\n"
+    )
+    m = _SAM3_MISSING_KEYS_RE.search(text)
+    assert m is not None
+    # group(1) must be parseable — no trailing noise
+    parsed = ast.literal_eval(m.group(1))
+    assert parsed == ["backbone.layer.weight"]
+
+
+def test_regex_matches_multikey_list() -> None:
+    """Regex captures all four convs.3 keys as a list."""
+    keys = sorted(_KNOWN_MISSING_KEYS)
+    text = (
+        "loaded /path/to/ckpt.pt and found missing and/or unexpected keys:\n"
+        f"missing_keys={keys!r}\n"
+    )
+    m = _SAM3_MISSING_KEYS_RE.search(text)
+    assert m is not None
+    parsed = ast.literal_eval(m.group(1))
+    assert set(parsed) == _KNOWN_MISSING_KEYS

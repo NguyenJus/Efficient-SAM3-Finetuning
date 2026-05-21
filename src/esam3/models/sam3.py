@@ -7,10 +7,12 @@ the fixed class vocabulary externally.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import logging
 import re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -62,8 +64,12 @@ _KNOWN_MISSING_KEYS: frozenset[str] = frozenset(
 # Regex matching the print line that sam3's _load_checkpoint emits when
 # missing_keys is non-empty (model_builder.py:557-561):
 #   f"loaded {checkpoint_path} and found missing and/or unexpected keys:\n{missing_keys=}"
+# The group captures only the list repr (\[.*?\] with re.DOTALL to allow
+# multi-line list formatting) so that any output *after* the list is not
+# consumed by the match.  The leading .+ for the path is intentionally greedy
+# so it stays on the first line; re.DOTALL only affects the list group.
 _SAM3_MISSING_KEYS_RE = re.compile(
-    r"loaded .+ and found missing and/or unexpected keys:\nmissing_keys=(.+)$",
+    r"loaded .+ and found missing and/or unexpected keys:\nmissing_keys=(\[.*?\])",
     re.DOTALL,
 )
 
@@ -1025,8 +1031,6 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     # across the embedded newline so we search the full captured text at once.
     _stdout_text = _captured_stdout.getvalue()
     if _stdout_text:
-        import sys
-
         _remaining = _stdout_text
         while _remaining:
             _m = _SAM3_MISSING_KEYS_RE.search(_remaining)
@@ -1039,10 +1043,13 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
             if _before:
                 sys.stdout.write(_before)
             # Parse the missing_keys list from the repr.
+            # ast.literal_eval rejects anything that is not a Python literal,
+            # so a maliciously crafted checkpoint whose state_dict key names
+            # contain embedded code cannot cause arbitrary code execution here.
             _raw_repr = _m.group(1).strip()
             try:
-                _missing: set[str] = set(eval(_raw_repr))  # noqa: S307 — controlled: sam3-internal repr
-            except Exception:  # pragma: no cover — defensive; repr is always a list
+                _missing: set[str] = set(ast.literal_eval(_raw_repr))
+            except (ValueError, SyntaxError):  # pragma: no cover — defensive; repr is always a list
                 sys.stdout.write(_m.group(0))
                 _remaining = _remaining[_m.end() :]
                 continue
