@@ -655,6 +655,37 @@ def _patch_text_pool_dtype() -> None:
         pass
 
 
+def _is_linear4bit(module: nn.Module) -> bool:
+    """Return True when *module* is a bitsandbytes ``Linear4bit`` instance.
+
+    The bitsandbytes import is lazy so this helper stays usable on CPU test
+    environments where bitsandbytes is not installed.
+    """
+    try:
+        import bitsandbytes as bnb
+
+        return isinstance(module, bnb.nn.Linear4bit)
+    except ImportError:
+        return False
+
+
+def _apply_activation(activation: Any, x: torch.Tensor) -> torch.Tensor:
+    """Apply *activation* to *x*, matching sam3's supported activation set.
+
+    sam3's ``addmm_act`` (``sam3/perflib/fused.py``) supports exactly four
+    forms — ``torch.nn.functional.relu``, ``torch.nn.ReLU``,
+    ``torch.nn.functional.gelu``, ``torch.nn.GELU``.  We mirror that set;
+    anything else raises ``ValueError`` loudly (same contract as upstream).
+    """
+    import torch.nn.functional as F
+
+    if activation in (nn.ReLU, F.relu):
+        return F.relu(x)
+    if activation in (nn.GELU, F.gelu):
+        return F.gelu(x)
+    raise ValueError(f"_addmm_act_grad_safe: unsupported activation {activation!r}")
+
+
 def _patch_addmm_act_grad_safe() -> None:
     """Make sam3's ``addmm_act`` fused kernel grad-aware so LoRA training works.
 
@@ -690,7 +721,16 @@ def _patch_addmm_act_grad_safe() -> None:
         plain, grad-tracking ``linear`` + activation.  Negligible perf
         cost on T4 since cuBLAS already fuses addmm internally.
       - grad-disabled (inference) : delegate to sam3's original fused
-        kernel for full perf parity.
+        kernel for full perf parity.  However, if *linear* is a
+        bitsandbytes ``Linear4bit``, ``linear.weight`` is a ``Params4bit``
+        (uint8-packed storage, shape ≈ ``(out*in/2, 1)``); the fused
+        kernel's ``addmm_act_op`` cannot consume that shape and raises
+        ``RuntimeError: mat1 and mat2 shapes cannot be multiplied``.
+        Detect this case and route through ``Linear4bit.__call__`` (full
+        bnb dequant) + explicit activation instead.  Third instance of
+        the sam3-bypasses-bnb-dispatch family in this branch; same
+        pattern as the MHA-exclusion in ``qlora.py`` and the cdist
+        upcast in ``matching.py``.
 
     The patch must update BOTH ``sam3.perflib.fused.addmm_act`` (the
     definition) AND ``sam3.model.vitdet.addmm_act`` (vitdet does
@@ -720,6 +760,17 @@ def _patch_addmm_act_grad_safe() -> None:
 
     def _addmm_act_grad_safe(activation, linear, mat1):  # type: ignore[no-untyped-def]
         if not torch.is_grad_enabled():
+            # sam3's perflib addmm_act extracts linear.weight as a raw tensor
+            # and calls the fused addmm_act_op kernel on it.  For bitsandbytes
+            # Linear4bit, .weight is a Params4bit (uint8-packed 4-bit storage,
+            # not shaped as (out, in)) and the fused kernel cannot consume it.
+            # Route 4-bit linears through Linear4bit.__call__ (which dispatches
+            # through bnb's dequant) and apply the activation explicitly.  Same
+            # pattern as the MHA-exclusion in qlora.py and the cdist upcast in
+            # matching.py — sam3 has several code paths that bypass bnb dispatch.
+            if _is_linear4bit(linear):
+                out = linear(mat1)
+                return _apply_activation(activation, out)
             return _orig(activation, linear, mat1)
         x = linear(mat1)
         if activation in (nn.ReLU, F.relu):
