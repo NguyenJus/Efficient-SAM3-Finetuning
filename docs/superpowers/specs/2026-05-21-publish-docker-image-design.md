@@ -343,11 +343,10 @@ After adding the group, the plan-writer runs `uv lock` to refresh `uv.lock` for 
 | `custom-sam-peft --help` exits 0 inside container | CI smoke test | tag push, before publish |
 | `custom-sam-peft doctor --json` exits 0 inside container | CI smoke test | tag push, before publish |
 | `actionlint` / `yamllint` / `markdownlint` pass on new files | CI (`lint-hygiene`, existing) | every PR |
-| Image pulls and trains end-to-end on a real GPU (Colab T4) | Manual dry-run | once per tagged release (interim; retires when CI GPU testing lands) |
 | GHCR package visibility set to public | Manual one-time | after first publish |
 | `org.opencontainers.image.source` label auto-linked package to repo | Manual one-time | after first publish |
 
-The CI smoke test runs `--help` and `doctor --json` without `--gpus` (GitHub-hosted runners have no GPU). This verifies that the CLI is importable and the package graph resolves correctly inside the image. GPU correctness is covered by the manual T4 dry-run per release.
+The CI smoke test runs `--help` and `doctor --json` without `--gpus` (GitHub-hosted runners have no GPU). This verifies that the CLI is importable and the package graph resolves correctly inside the image. There is no manual GPU verification of the image; CI smoke is the only pre-publish bar. GPU correctness is covered by the venv tests in `ci.yml` and by the forthcoming CI GPU testing in a separate track.
 
 ---
 
@@ -387,7 +386,6 @@ This spec ships no new Python source; all testing is at the CI / manual level.
 | CLI smoke inside container | `docker run … --help` + `doctor --json` | Both must exit 0 before publish |
 | Workflow YAML correctness | `actionlint` in `lint-hygiene` | Catches action version problems, missing permissions |
 | Markdown quality | `markdownlint` in `lint-hygiene` | `cloud/docker/README.md` + `README.md` patches |
-| GPU end-to-end | Manual Colab T4 dry-run | One per tagged release; image pull → `docker run` → train |
 
 There are no new Python modules, so no unit tests are added. The 80% coverage gate in `pyproject.toml` is unaffected.
 
@@ -401,5 +399,5 @@ There are no new Python modules, so no unit tests are added. The 80% coverage ga
 | *(future)* | Multi-arch (`arm64`) image | All NVIDIA GPU pods are `amd64`; no consumer need yet. |
 | *(future)* | SBOM / provenance attestation (`attest-build-provenance`) | No consumer asking. One additional workflow step when needed. |
 | *(future)* | Renovate/Dependabot config for base image tag bumps | Base image pin (`pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`) is driven by torch compatibility; automated bumps could introduce silent regressions. Manual update policy for now. |
-| *(future)* | Automated GPU CI for the published image | Tracked under the existing GPU CI testing work; retires the manual Colab dry-run when it lands. |
+| *(future)* | Automated GPU CI for the published image | Tracked under the existing GPU CI testing work; extends GPU correctness coverage to the published image. |
 | *(future)* | Switching `notebooks/custom_sam_peft_train.ipynb` to pull from the image | Colab cannot pull custom Docker images; the notebook `pip install git+…` path stays. A separate "image-native notebook" for GPU pods is a future deliverable if a real demand emerges. |
