@@ -7,9 +7,12 @@ the fixed class vocabulary externally.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from peft import PeftModel
@@ -26,6 +29,74 @@ from esam3.data.base import BoxPrompts, Prompts, TextPrompts
 from esam3.utils.huggingface import download_model
 
 logger = logging.getLogger(__name__)
+
+# Keys absent from the released sam3.1_multiplex.pt checkpoint that are
+# harmless to ignore.  The released checkpoint was built from a 3-scale
+# (scale_factors=[4.0, 2.0, 1.0]) tri-backbone neck, so convs[3] (the
+# scale=0.5 FPN head) was never trained and is absent.  Our
+# build_sam3_image_model path instantiates a 4-scale neck
+# (scale_factors=[4.0, 2.0, 1.0, 0.5]), so PyTorch reports convs[3]'s
+# four parameters as missing when we load_state_dict.  They are safe to
+# ignore because:
+#   • SAM3VLBackbone is built with scalp=1 (model_builder.py:122), which
+#     causes vl_combiner.py:91-95 to do sam3_features[:-1], dropping the
+#     output of convs[3] entirely before it reaches the transformer.
+#   • Sam3Image uses num_feature_levels=1 and reads backbone_fpn[-1],
+#     which after the scalp=1 trim is convs[2]'s output — never convs[3].
+#   • convs[3]'s randomly-initialised weights never receive gradients and
+#     never influence any output or loss.
+#
+# Cross-references to re-check on every sam3 version bump:
+#   • sam3/.../necks.py:36-95  — Sam3DualViTDetNeck.convs construction
+#   • sam3/.../model_builder.py:122  — scalp=1 in _create_vl_backbone
+#   • sam3/.../vl_combiner.py:91-95  — the sam3_features[:-1] trim
+_KNOWN_MISSING_KEYS: frozenset[str] = frozenset(
+    {
+        "backbone.vision_backbone.convs.3.conv_1x1.weight",
+        "backbone.vision_backbone.convs.3.conv_1x1.bias",
+        "backbone.vision_backbone.convs.3.conv_3x3.weight",
+        "backbone.vision_backbone.convs.3.conv_3x3.bias",
+    }
+)
+
+# Regex matching the print line that sam3's _load_checkpoint emits when
+# missing_keys is non-empty (model_builder.py:557-561):
+#   f"loaded {checkpoint_path} and found missing and/or unexpected keys:\n{missing_keys=}"
+_SAM3_MISSING_KEYS_RE = re.compile(
+    r"loaded .+ and found missing and/or unexpected keys:\nmissing_keys=(.+)$",
+    re.DOTALL,
+)
+
+
+def _classify_missing_keys(
+    missing: set[str],
+    unexpected: set[str],
+) -> Literal["ok", "fail"]:
+    """Classify a (missing_keys, unexpected_keys) pair from load_state_dict.
+
+    Returns ``"ok"`` when:
+      - ``unexpected`` is empty, AND
+      - ``missing`` is a subset of ``_KNOWN_MISSING_KEYS`` (i.e. the released
+        checkpoint may have shipped some of those keys in a newer release, so a
+        smaller-than-known missing set is still safe).
+
+    Returns ``"fail"`` in all other cases.  A ``"fail"`` result means the
+    caller should raise ``RuntimeError`` with the diff so no checkpoint
+    regression slips through silently.
+
+    Note on "subset vs equals": if a future sam3 release starts shipping
+    convs[3] weights, the missing set shrinks (possibly to empty).  That is
+    strictly safer — the released checkpoint now fully initialises the neck —
+    so we accept it.  What we never accept is keys outside the known set going
+    missing (could mean a renamed or restructurally different checkpoint) or
+    any unexpected key appearing (could mean a model-architecture forward
+    incompatibility).
+    """
+    if unexpected:
+        return "fail"
+    if not missing.issubset(_KNOWN_MISSING_KEYS):
+        return "fail"
+    return "ok"
 
 
 def _build_geometric_prompt(
@@ -930,15 +1001,70 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     ckpt_path = _resolve_checkpoint_path(cfg)
     device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    raw_model = sam3.build_sam3_image_model(
-        device=device,
-        eval_mode=False,  # training mode — gradients flow.
-        checkpoint_path=str(ckpt_path),
-        load_from_HF=False,
-        enable_segmentation=True,
-        enable_inst_interactivity=False,
-        compile=False,
-    )
+    # sam3's _load_checkpoint (model_builder.py:539-561) calls print() to
+    # stdout when load_state_dict reports missing keys.  We capture stdout
+    # during the build call so we can inspect the message and either suppress
+    # the known-harmless convs.3 noise or raise loudly on anything unexpected.
+    _captured_stdout = io.StringIO()
+    with contextlib.redirect_stdout(_captured_stdout):
+        raw_model = sam3.build_sam3_image_model(
+            device=device,
+            eval_mode=False,  # training mode — gradients flow.
+            checkpoint_path=str(ckpt_path),
+            load_from_HF=False,
+            enable_segmentation=True,
+            enable_inst_interactivity=False,
+            compile=False,
+        )
+
+    # Process any captured output from sam3's checkpoint loader.
+    # sam3's _load_checkpoint (model_builder.py:557-561) calls:
+    #   print(f"loaded {checkpoint_path} and found "
+    #         f"missing and/or unexpected keys:\n{missing_keys=}")
+    # That produces a two-line block; _SAM3_MISSING_KEYS_RE (re.DOTALL) matches
+    # across the embedded newline so we search the full captured text at once.
+    _stdout_text = _captured_stdout.getvalue()
+    if _stdout_text:
+        import sys
+
+        _remaining = _stdout_text
+        while _remaining:
+            _m = _SAM3_MISSING_KEYS_RE.search(_remaining)
+            if _m is None:
+                # No (further) missing-keys block — pass the rest through.
+                sys.stdout.write(_remaining)
+                break
+            # Pass through any text that precedes the match unchanged.
+            _before = _remaining[: _m.start()]
+            if _before:
+                sys.stdout.write(_before)
+            # Parse the missing_keys list from the repr.
+            _raw_repr = _m.group(1).strip()
+            try:
+                _missing: set[str] = set(eval(_raw_repr))  # noqa: S307 — controlled: sam3-internal repr
+            except Exception:  # pragma: no cover — defensive; repr is always a list
+                sys.stdout.write(_m.group(0))
+                _remaining = _remaining[_m.end() :]
+                continue
+            _verdict = _classify_missing_keys(_missing, unexpected=set())
+            if _verdict == "ok":
+                logger.debug(
+                    "Suppressed known-harmless missing-keys noise from sam3 checkpoint "
+                    "loader (convs.3 weights absent from released 3-scale checkpoint; "
+                    "scalp=1 in vl_combiner drops convs[3] output — no impact on "
+                    "training or inference).  Missing: %s",
+                    sorted(_missing),
+                )
+            else:
+                raise RuntimeError(
+                    f"sam3 checkpoint load_state_dict reported unexpected deviation.\n"
+                    f"  missing keys  : {sorted(_missing)}\n"
+                    f"  keys outside known-harmless set: "
+                    f"{sorted(_missing - _KNOWN_MISSING_KEYS)}\n"
+                    f"Re-check sam3 version and update _KNOWN_MISSING_KEYS in "
+                    f"src/esam3/models/sam3.py if intentional."
+                )
+            _remaining = _remaining[_m.end() :]
 
     if cfg.gradient_checkpointing:
         if hasattr(raw_model, "set_grad_checkpointing"):
