@@ -1,8 +1,11 @@
-# custom-sam-peft starter config — text-prompt QLoRA finetune on COCO-format data.
-# Edit the paths in the `data:` section, then run:
-#   custom-sam-peft train --config config.yaml
+# Demonstrates auto-split: data.train carved deterministically into train+val.
+# val_split.seed: null → inherit run.seed (42 here).
+# The resolved split is recorded once in <run_dir>/val_source.json and is
+# authoritative on resume.
+# See: docs/superpowers/specs/2026-05-22-data-no-val-auto-split-design.md §4-§5.
+
 run:
-  name: my-run
+  name: coco-text-auto-split
   output_dir: ./runs
   seed: 42
 
@@ -10,26 +13,18 @@ model:
   name: facebook/sam3.1
   local_dir: models/sam3.1
   checkpoint_file: sam3.1_multiplex.pt
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   dtype: bfloat16
 
 data:
   format: coco
   train:
-    annotations: data/train.json
-    images: data/train/
-  val:
-    annotations: data/val.json
-    images: data/val/
-  # Alternatives — uncomment ONE to swap modes:
-  #
-  # No-val mode (remove the `val:` block entirely):
-  # (just delete the val block above)
-  #
-  # Auto-split mode (carve data.train into train+val):
-  # val_split:
-  #   fraction: 0.1
-  #   seed: null   # null → inherit run.seed at resolve time
+    annotations: data/coco/instances_train2017.json
+    images: data/coco/train2017
+  # No `val:` block; instead, auto-split data.train.
+  val_split:
+    fraction: 0.1
+    # seed: null → inherit run.seed at resolve time
   prompt_mode: text
   image_size: 1008
   augmentations:
@@ -43,13 +38,10 @@ data:
     std: [0.5, 0.5, 0.5]
 
 peft:
-  method: qlora
+  method: lora
   r: 16
   alpha: 32
   dropout: 0.05
-  qlora:
-    quant_type: nf4
-    compute_dtype: bfloat16
 
 train:
   epochs: 10
