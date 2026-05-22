@@ -104,7 +104,8 @@ Phase 0 (pre-flight)
 6. **`T20` ordering.** Add `# noqa: T201` to `doctor_cmd.py` (Phase 1) *before* adding `"T20"` to `pyproject.toml` (also Phase 1, same commit). The noqa comment must be present when the rule activates or ruff will fail.
 7. **Tests are CPU-only.** No `@pytest.mark.gpu` markers needed for any of the 10 tests.
 8. **`PLAIN` mode is not a no-op.** `ProgressMode.PLAIN` uses `_PlainHandle`, which emits one `progress:` log line per `log_every` window via stdlib `logging`. Only `ProgressMode.OFF` suppresses all progress output.
-8. **Current version is `0.8.0`.** Next semver for this MINOR feature addition (new CLI flag + new module) would be `v0.9.0` under pre-1.0 conventions. The orchestrator confirms this at PR-open time per CLAUDE.md.
+9. **Current version is `0.8.0`.** Next semver for this MINOR feature addition (new CLI flag + new module) would be `v0.9.0` under pre-1.0 conventions. The orchestrator confirms this at PR-open time per CLAUDE.md.
+10. **Spec and plan are already committed.** The brainstormer session committed `docs/superpowers/specs/2026-05-22-cli-progress-bars-design.md` and `docs/superpowers/plans/2026-05-22-cli-progress-bars.md` in commit `18229d8` and pushed the branch. Phase 0 step P0-4 is therefore a no-op idempotency check — `git status` should show those paths as already tracked/committed; if they appear untracked or modified, the orchestrator is in the wrong worktree.
 
 ---
 
@@ -138,15 +139,15 @@ uv run ruff check src --select T201 2>/dev/null || echo "T201 not in select yet 
 
 Expected: either "T201 not in select yet — OK" (rule not activated) or zero lint errors. This establishes the baseline so Phase 1's `# noqa: T201` addition is the only exception we need to track.
 
-- [ ] **Step P0-4: Stage the spec and plan**
+- [ ] **Step P0-4: Confirm spec and plan are committed** (idempotency check — already done in commit `18229d8`)
 
 ```bash
-git -C /home/justin/projects/custom-sam-peft/.worktrees/feat-cli-progress-bars add \
-  docs/superpowers/specs/2026-05-22-cli-progress-bars-design.md \
-  docs/superpowers/plans/2026-05-22-cli-progress-bars.md
 git -C /home/justin/projects/custom-sam-peft/.worktrees/feat-cli-progress-bars \
-  commit -m "docs: add cli-progress-bars spec + plan (#76)"
+  log --oneline -1 -- docs/superpowers/specs/2026-05-22-cli-progress-bars-design.md \
+                      docs/superpowers/plans/2026-05-22-cli-progress-bars.md
 ```
+
+Expected: one line showing commit `18229d8 docs(superpowers): spec + plan for #76 CLI progress bars` (or a later amend / merge commit). If the output is empty, the spec and plan have not been committed — halt and surface the discrepancy. Do not attempt to re-commit; the brainstormer session has already done so. Any orchestrator-side fixes to the plan (see assumption 10) should be committed as a separate `docs(superpowers): clarify ...` commit.
 
 ---
 
