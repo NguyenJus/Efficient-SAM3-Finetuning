@@ -9,11 +9,9 @@ Spec: docs/superpowers/specs/2026-05-22-algo-vram-preset-design.md §4.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
-import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,25 +28,12 @@ from custom_sam_peft.presets import (
     WORKSPACE_BYTES,
     _CUDA_HINT,
     _adapter_bytes,
+    _current_sam3_checkpoint_sha as _sam3_checkpoint_sha,
     _model_bytes,
     _optimizer_bytes,
 )
 
 _LOG = logging.getLogger(__name__)
-
-
-def _sam3_checkpoint_sha() -> str:
-    cfg = ModelConfig()
-    if cfg.local_dir is None:
-        return ""
-    ckpt = Path(cfg.local_dir) / cfg.checkpoint_file
-    if not ckpt.is_file():
-        return ""
-    h = hashlib.sha256()
-    with ckpt.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _cache_is_fresh(path: Path, image_size: int, gpu_name: str) -> bool:
@@ -95,13 +80,9 @@ def _run_probe(image_size: int) -> int:
 
     device = next(wrapper.parameters()).device
     images = torch.zeros(1, 3, image_size, image_size, dtype=torch.bfloat16, device=device)
-    # One prompt + one fake target — reuse data structures used elsewhere.
-    from custom_sam_peft.data.base import Instance, TextPrompts
+    from custom_sam_peft.data.base import TextPrompts
 
     prompts = [TextPrompts(classes=["thing"])]
-    fake_mask = torch.zeros(image_size, image_size, dtype=torch.bool, device=device)
-    fake_box = torch.tensor([0.0, 0.0, 1.0, 1.0], device=device)
-    targets = [[Instance(class_id=0, mask=fake_mask, box=fake_box)]]
 
     torch.cuda.reset_peak_memory_stats()
     out = wrapper(images, prompts, box_hints=None)
@@ -139,14 +120,13 @@ def calibrate(
     except FileNotFoundError as exc:
         typer.echo(f"ERROR: SAM 3.1 checkpoint not found: {exc}", err=True)
         raise typer.Exit(code=3) from exc
+    except torch.cuda.OutOfMemoryError as exc:
+        typer.echo(
+            "ERROR: calibration probe OOMed at minimum config — GPU too small",
+            err=True,
+        )
+        raise typer.Exit(code=5) from exc
     except (RuntimeError, ValueError) as exc:
-        # LoRA stub attach failures land here.
-        if "OutOfMemory" in repr(exc) or "out of memory" in str(exc).lower():
-            typer.echo(
-                "ERROR: calibration probe OOMed at minimum config — GPU too small",
-                err=True,
-            )
-            raise typer.Exit(code=5) from exc
         typer.echo(f"ERROR: LoRA stub attach failed: {exc}", err=True)
         raise typer.Exit(code=4) from exc
 
