@@ -41,6 +41,21 @@ class HuggingFaceAuthInfo:
 
 
 @dataclass(frozen=True)
+class DataReport:
+    """Validation source plan for the given config (no dataset materialization).
+
+    Populated only when `run_doctor(config_path=...)` is called.
+
+    Spec: docs/superpowers/specs/2026-05-22-data-no-val-auto-split-design.md §7.7.
+    """
+
+    val_mode: Literal["explicit", "auto_split", "none"]
+    val_path: str | None
+    val_split_fraction: float | None
+    val_split_seed: int | None
+
+
+@dataclass(frozen=True)
 class DoctorReport:
     python_version: str
     platform: str
@@ -53,6 +68,7 @@ class DoctorReport:
     sam3_weights: WeightsInfo
     hf_auth: HuggingFaceAuthInfo
     issues: list[str] = field(default_factory=list)
+    data: DataReport | None = None
 
 
 _OPTIONAL = ("bitsandbytes", "wandb", "tensorboard")
@@ -115,7 +131,11 @@ def _default_weights_path() -> Path:
     return Path(m.local_dir or "") / m.checkpoint_file
 
 
-def run_doctor(*, weights_path: Path | None = None) -> DoctorReport:
+def run_doctor(
+    *,
+    weights_path: Path | None = None,
+    config_path: Path | None = None,
+) -> DoctorReport:
     """Cheap-to-run environment audit."""
     import torch
 
@@ -147,6 +167,38 @@ def run_doctor(*, weights_path: Path | None = None) -> DoctorReport:
             "will not download (set HF_TOKEN or run `huggingface-cli login`)"
         )
 
+    data: DataReport | None = None
+    if config_path is not None:
+        from custom_sam_peft.config.loader import load_config
+
+        cfg = load_config(config_path)
+        if cfg.data.val_split is not None:
+            seed = (
+                cfg.data.val_split.seed
+                if cfg.data.val_split.seed is not None
+                else cfg.run.seed
+            )
+            data = DataReport(
+                val_mode="auto_split",
+                val_path=None,
+                val_split_fraction=cfg.data.val_split.fraction,
+                val_split_seed=seed,
+            )
+        elif cfg.data.val is not None:
+            data = DataReport(
+                val_mode="explicit",
+                val_path=cfg.data.val.annotations,
+                val_split_fraction=None,
+                val_split_seed=None,
+            )
+        else:
+            data = DataReport(
+                val_mode="none",
+                val_path=None,
+                val_split_fraction=None,
+                val_split_seed=None,
+            )
+
     return DoctorReport(
         python_version=sys.version.split()[0],
         platform=platform.platform(),
@@ -159,4 +211,5 @@ def run_doctor(*, weights_path: Path | None = None) -> DoctorReport:
         sam3_weights=weights,
         hf_auth=hf_auth,
         issues=issues,
+        data=data,
     )

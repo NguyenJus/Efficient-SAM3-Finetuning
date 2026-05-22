@@ -70,15 +70,28 @@ def _render_table(report: DoctorReport) -> None:
             issues.add_row("•", msg)
         console.print(issues)
 
+    if report.data is not None:
+        d = Table(title="Data", show_header=False, box=None)
+        d.add_row("val mode", report.data.val_mode)
+        if report.data.val_path is not None:
+            d.add_row("val path", report.data.val_path)
+        if report.data.val_split_fraction is not None:
+            d.add_row("val_split.fraction", f"{report.data.val_split_fraction:.3f}")
+            d.add_row("val_split.seed", str(report.data.val_split_seed))
+        console.print(d)
+
 
 def doctor(
     weights_path: Path | None = typer.Option(
         None, "--weights-path", help="Override SAM 3.1 weights file path."
     ),
+    config_path: Path | None = typer.Option(
+        None, "--config", help="Optional config YAML; enables the Data table."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
 ) -> None:
     """Report environment + dependency status."""
-    report = run_doctor(weights_path=weights_path)
+    report = run_doctor(weights_path=weights_path, config_path=config_path)
     if json_output:
         print(json.dumps(dataclasses.asdict(report), default=str, indent=2))
     else:
