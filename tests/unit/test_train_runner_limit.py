@@ -170,12 +170,15 @@ def test_subset_json_written_when_at_least_one_limit_set(tmp_path: Path) -> None
             return lambda wrapper, _peft_cfg: wrapper
         return lambda *a, **kw: _make_stub_inner(10)
 
-    with patch("custom_sam_peft.train.runner.lookup", side_effect=fake_lookup), \
-         patch("custom_sam_peft.train.runner.load_sam31", return_value=MagicMock()), \
-         patch("custom_sam_peft.train.runner.build_tracker",
-               return_value=MagicMock(close=MagicMock(), start_run=MagicMock())), \
-         patch("custom_sam_peft.train.runner.Trainer.fit",
-               return_value=MagicMock()):
+    with (
+        patch("custom_sam_peft.train.runner.lookup", side_effect=fake_lookup),
+        patch("custom_sam_peft.train.runner.load_sam31", return_value=MagicMock()),
+        patch(
+            "custom_sam_peft.train.runner.build_tracker",
+            return_value=MagicMock(close=MagicMock(), start_run=MagicMock()),
+        ),
+        patch("custom_sam_peft.train.runner.Trainer.fit", return_value=MagicMock()),
+    ):
         run_training(cfg)
 
     # Find the run_dir that was created
@@ -199,12 +202,15 @@ def test_subset_json_not_written_when_both_limits_none(tmp_path: Path) -> None:
             return lambda wrapper, _peft_cfg: wrapper
         return lambda *a, **kw: _make_stub_inner(10)
 
-    with patch("custom_sam_peft.train.runner.lookup", side_effect=fake_lookup), \
-         patch("custom_sam_peft.train.runner.load_sam31", return_value=MagicMock()), \
-         patch("custom_sam_peft.train.runner.build_tracker",
-               return_value=MagicMock(close=MagicMock(), start_run=MagicMock())), \
-         patch("custom_sam_peft.train.runner.Trainer.fit",
-               return_value=MagicMock()):
+    with (
+        patch("custom_sam_peft.train.runner.lookup", side_effect=fake_lookup),
+        patch("custom_sam_peft.train.runner.load_sam31", return_value=MagicMock()),
+        patch(
+            "custom_sam_peft.train.runner.build_tracker",
+            return_value=MagicMock(close=MagicMock(), start_run=MagicMock()),
+        ),
+        patch("custom_sam_peft.train.runner.Trainer.fit", return_value=MagicMock()),
+    ):
         run_training(cfg)
 
     run_dirs = list(tmp_path.iterdir())

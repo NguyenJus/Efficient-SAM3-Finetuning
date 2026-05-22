@@ -57,10 +57,14 @@ def test_int_limit_via_build_dataset(tiny_coco_dir: Path) -> None:
     cfg.data.format = "coco"
     cfg.data.model_dump.return_value = {
         "format": "coco",
-        "train": {"annotations": str(tiny_coco_dir / "annotations.json"),
-                  "images": str(tiny_coco_dir / "images")},
-        "val": {"annotations": str(tiny_coco_dir / "annotations.json"),
-                "images": str(tiny_coco_dir / "images")},
+        "train": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
+        "val": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
         "prompt_mode": "bbox",
         "image_size": 32,
         "augmentations": {"hflip": False, "color_jitter": 0.0},
@@ -90,10 +94,14 @@ def test_fraction_limit_rounds_correctly(tiny_coco_dir: Path) -> None:
     cfg.data.format = "coco"
     cfg.data.model_dump.return_value = {
         "format": "coco",
-        "train": {"annotations": str(tiny_coco_dir / "annotations.json"),
-                  "images": str(tiny_coco_dir / "images")},
-        "val": {"annotations": str(tiny_coco_dir / "annotations.json"),
-                "images": str(tiny_coco_dir / "images")},
+        "train": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
+        "val": {
+            "annotations": str(tiny_coco_dir / "annotations.json"),
+            "images": str(tiny_coco_dir / "images"),
+        },
         "prompt_mode": "bbox",
         "image_size": 32,
         "augmentations": {"hflip": False, "color_jitter": 0.0},

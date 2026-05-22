@@ -104,9 +104,7 @@ def test_image_class_labels_not_accessed_for_random_strategy() -> None:
     # image_class_labels should NOT be accessed; track via spec
     accessed = []
 
-    type(inner).image_class_labels = property(
-        lambda self: accessed.append(True) or [frozenset()]
-    )
+    type(inner).image_class_labels = property(lambda self: accessed.append(True) or [frozenset()])
 
     cfg = MagicMock()
     cfg.data.format = "hf"

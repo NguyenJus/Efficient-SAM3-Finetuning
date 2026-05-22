@@ -184,9 +184,9 @@ def test_subset_dataset_len() -> None:
 def test_subset_dataset_getitem_delegates() -> None:
     inner = _StubDataset(10)
     ds = SubsetDataset(inner, [2, 5, 7])  # type: ignore[arg-type]
-    assert ds[0] == 20   # inner[2]
-    assert ds[1] == 50   # inner[5]
-    assert ds[2] == 70   # inner[7]
+    assert ds[0] == 20  # inner[2]
+    assert ds[1] == 50  # inner[5]
+    assert ds[2] == 70  # inner[7]
 
 
 def test_subset_dataset_class_names_delegates() -> None:
