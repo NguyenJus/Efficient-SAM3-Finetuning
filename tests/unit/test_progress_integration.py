@@ -55,9 +55,7 @@ def test_fake_trainer_smoke() -> None:
 
             handle.update_postfix(loss=0.5 - epoch * 0.1, it_s=2.3)
 
-    assert isinstance(_pmod.progress, _pmod._NoOpHandle), (
-        "expected _NoOpHandle after session exits"
-    )
+    assert isinstance(_pmod.progress, _pmod._NoOpHandle), "expected _NoOpHandle after session exits"
     assert outer_advances == total_epochs, f"expected {total_epochs} outer advances"
     assert inner_advances == total_epochs * batches_per_epoch, (
         f"expected {total_epochs * batches_per_epoch} inner advances"

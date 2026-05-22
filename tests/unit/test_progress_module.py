@@ -202,9 +202,7 @@ def test_plain_line_snapshot(caplog: pytest.LogCaptureFixture) -> None:
     assert len(matching) == 1, f"expected exactly one progress line, got {len(matching)}"
     msg = matching[0].getMessage()
 
-    expected_prefix = (
-        "progress: train epoch=3/10 step=10300/45300 loss=0.812 it/s=2.3 eta=0:42:"
-    )
+    expected_prefix = "progress: train epoch=3/10 step=10300/45300 loss=0.812 it/s=2.3 eta=0:42:"
     assert msg.startswith(expected_prefix), (
         f"plain format snapshot mismatch:\n"
         f"  got:      {msg!r}\n"

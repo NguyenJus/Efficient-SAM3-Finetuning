@@ -251,7 +251,7 @@ def _silence_third_party_progress() -> None:
     os.environ.setdefault("TRANSFORMERS_VERBOSITY", "warning")
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     try:
-        import datasets as _ds  # type: ignore[import-untyped]
+        import datasets as _ds
 
         _ds.disable_progress_bar()
     except ImportError:
@@ -282,9 +282,7 @@ def progress_session(
     global _SESSION_ACTIVE, progress
 
     if _SESSION_ACTIVE:
-        raise RuntimeError(
-            "nested session: a progress_session is already active in this process"
-        )
+        raise RuntimeError("nested session: a progress_session is already active in this process")
     _SESSION_ACTIVE = True
     _silence_third_party_progress()
 
