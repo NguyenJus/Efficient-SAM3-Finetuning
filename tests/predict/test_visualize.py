@@ -17,6 +17,7 @@ from custom_sam_peft.predict.visualize import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_rle_entry(
     image_id: int = 1,
     category_id: int = 1,
