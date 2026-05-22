@@ -21,8 +21,8 @@ data:
   prompt_mode: text
   image_size: 1008
   augmentations:
-    hflip: true
-    color_jitter: 0.0
+    preset: natural
+    intensity: medium
 
 peft:
   method: lora
