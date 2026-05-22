@@ -10,7 +10,6 @@ Spec: docs/superpowers/specs/2026-05-22-algo-vram-preset-design.md §4.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import tempfile
 from datetime import UTC, datetime
@@ -34,8 +33,6 @@ from custom_sam_peft.presets import (
 from custom_sam_peft.presets import (
     _current_sam3_checkpoint_sha as _sam3_checkpoint_sha,
 )
-
-_LOG = logging.getLogger(__name__)
 
 
 def _cache_is_fresh(path: Path, image_size: int, gpu_name: str) -> bool:
