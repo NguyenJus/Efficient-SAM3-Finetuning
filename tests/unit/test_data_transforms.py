@@ -21,7 +21,7 @@ from custom_sam_peft.data.transforms import build_eval_transforms, resolve_norma
 # works correctly. The _LazyModule caches attribute resolutions on first access; without
 # this warm-up, patch's getattr call both triggers the lazy load AND caches the result in
 # a way that makes subsequent patches unreliable across tests.
-_transformers.AutoImageProcessor  # noqa: B018
+_ = _transformers.AutoImageProcessor
 
 
 @contextmanager
