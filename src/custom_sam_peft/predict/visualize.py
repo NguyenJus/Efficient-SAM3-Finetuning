@@ -23,22 +23,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PALETTE: tuple[tuple[int, int, int], ...] = (
-    (230, 25, 75),    # red
-    (60, 180, 75),    # green
-    (255, 225, 25),   # yellow
-    (0, 130, 200),    # blue
-    (245, 130, 48),   # orange
-    (145, 30, 180),   # purple
-    (70, 240, 240),   # cyan
-    (240, 50, 230),   # magenta
-    (210, 245, 60),   # lime
+    (230, 25, 75),  # red
+    (60, 180, 75),  # green
+    (255, 225, 25),  # yellow
+    (0, 130, 200),  # blue
+    (245, 130, 48),  # orange
+    (145, 30, 180),  # purple
+    (70, 240, 240),  # cyan
+    (240, 50, 230),  # magenta
+    (210, 245, 60),  # lime
     (250, 190, 212),  # pink
-    (0, 128, 128),    # teal
+    (0, 128, 128),  # teal
     (220, 190, 255),  # lavender
-    (170, 110, 40),   # brown
+    (170, 110, 40),  # brown
     (255, 250, 200),  # beige
-    (128, 0, 0),      # maroon
-    (0, 60, 100),     # navy
+    (128, 0, 0),  # maroon
+    (0, 60, 100),  # navy
 )
 
 
@@ -60,27 +60,6 @@ def color_for_class(class_name: str) -> tuple[int, int, int]:
         16,
     )
     return PALETTE[digest % len(PALETTE)]
-
-
-def _decode_rle_to_uint8(
-    rle: dict[str, object],
-) -> np.ndarray[tuple[int, int], np.dtype[np.uint8]]:
-    """Decode a COCO RLE dict (with ASCII counts) to a 2-D uint8 mask.
-
-    The ``counts`` field may be either ``bytes`` (raw pycocotools) or
-    ``str`` (ASCII-decoded, as stored in predictions.json).  Both are
-    handled so this helper is usable from tests and from the runner.
-    """
-    import pycocotools.mask as mask_utils
-
-    rle_for_decode: dict[str, object] = dict(rle)
-    counts = rle_for_decode.get("counts")
-    if isinstance(counts, str):
-        rle_for_decode = {
-            "size": rle_for_decode["size"],
-            "counts": counts.encode("ascii"),
-        }
-    return mask_utils.decode(rle_for_decode).astype(np.uint8)  # type: ignore[no-any-return]
 
 
 def render_overlay(
@@ -111,9 +90,7 @@ def render_overlay(
         bbox: list[float] = list(cast("list[float]", entry["bbox"]))
 
         class_name = (
-            prompts[category_id - 1]
-            if 0 < category_id <= len(prompts)
-            else str(category_id)
+            prompts[category_id - 1] if 0 < category_id <= len(prompts) else str(category_id)
         )
         color = color_for_class(class_name)
 
@@ -123,21 +100,13 @@ def render_overlay(
         segmentation = entry.get("segmentation")
         if segmentation is not None:
             try:
-                # Lazy-import decode_rle_to_uint8 from writers when available;
-                # fall back to the local implementation otherwise.
-                try:
-                    from custom_sam_peft.predict.writers import (
-                        decode_rle_to_uint8,
-                    )
-                    mask_arr = decode_rle_to_uint8(segmentation)  # type: ignore[arg-type]
-                except ImportError:
-                    mask_arr = _decode_rle_to_uint8(segmentation)  # type: ignore[arg-type]
+                from custom_sam_peft.predict.writers import decode_rle_to_uint8
+
+                mask_arr = decode_rle_to_uint8(segmentation)  # type: ignore[arg-type]
 
                 h, w = mask_arr.shape
                 color_layer = Image.new("RGB", (w, h), color)
-                mask_pil = Image.fromarray(
-                    (mask_arr * 255).astype(np.uint8), mode="L"
-                )
+                mask_pil = Image.fromarray((mask_arr * 255).astype(np.uint8), mode="L")
                 blended = Image.blend(result, color_layer, alpha=0.4)
                 # Apply blend only inside the mask region.
                 result.paste(blended, mask=mask_pil)
