@@ -1,6 +1,6 @@
 [project]
 name = "custom-sam-peft"
-version = "0.8.1"
+version = "0.9.0"
 description = "Closed-vocab finetuning of SAM-family models with LoRA / QLoRA on a single consumer GPU"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -70,6 +70,9 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "src/custom_sam_peft/cli/*_cmd.py" = ["B008"]
+# Predict runner's dry-run preview writes plain-text stdout (grep-friendly,
+# bypasses Rich word-wrap on long paths); print() is the appropriate primitive.
+"src/custom_sam_peft/predict/runner.py" = ["T201"]
 "tests/unit/test_data_*.py" = ["E402"]
 "tests/**/*.py" = ["S101", "S105", "S311"]
 # Colab notebook: subprocess.run("git", ...) with partial path is intentional in a Colab
