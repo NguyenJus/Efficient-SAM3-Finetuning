@@ -80,9 +80,7 @@ def run_eval(
             f"got peft.method={cfg.peft.method!r}"
         )
     if split == "val" and cfg.data.val is None and cfg.data.val_split is None:
-        raise ValueError(
-            "--split val requires data.val or data.val_split in config; got neither."
-        )
+        raise ValueError("--split val requires data.val or data.val_split in config; got neither.")
     if split == "test" and cfg.data.test is None:
         raise ValueError("--split test requires data.test in config; got None for data.test")
 
@@ -92,7 +90,7 @@ def run_eval(
             cfg_dict["val"] = cfg_dict["test"]
         elif split == "val" and cfg.data.val_split is not None:
             vs = resolve_val_source(cfg, run_dir=None)
-            assert vs.val_ids is not None
+            assert vs.val_ids is not None  # noqa: S101 — auto_split mode invariant
             cfg_dict["_resolved_image_ids"] = {"eval": list(vs.val_ids)}
         builder = lookup("dataset", cfg.data.format)
         dataset = cast(Dataset, builder(cfg_dict, model_name=cfg.model.name, pipeline="eval"))

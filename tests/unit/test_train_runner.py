@@ -72,9 +72,7 @@ def test_run_training_dispatches_via_registry(
             seed_used=None,
         ),
     )
-    monkeypatch.setattr(
-        "custom_sam_peft.train.runner.save_val_source", lambda _vs, _run_dir: None
-    )
+    monkeypatch.setattr("custom_sam_peft.train.runner.save_val_source", lambda _vs, _run_dir: None)
     monkeypatch.setattr("custom_sam_peft.train.runner._log_val_source", lambda _vs: None)
 
     fake_result = MagicMock()
@@ -131,8 +129,13 @@ def test_run_training_writes_val_source_json_on_auto_split(
             method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
         ),
         train=TrainHyperparams(
-            epochs=1, batch_size=1, grad_accum_steps=1, save_every=2, log_every=1,
-            warmup_steps=0, num_workers=0,
+            epochs=1,
+            batch_size=1,
+            grad_accum_steps=1,
+            save_every=2,
+            log_every=1,
+            warmup_steps=0,
+            num_workers=0,
         ),
     )
 
@@ -140,8 +143,8 @@ def test_run_training_writes_val_source_json_on_auto_split(
         "custom_sam_peft.train.runner.load_sam31", lambda _m: make_stub_wrapper(dim=8, working=True)
     )
     from custom_sam_peft import train as _train_pkg  # noqa: F401
-    # peft_factory must accept (wrapper, cfg.peft) and apply lora; reuse real.
 
+    # peft_factory must accept (wrapper, cfg.peft) and apply lora; reuse real.
     from custom_sam_peft.train.runner import run_training
 
     result = run_training(cfg)
@@ -186,8 +189,13 @@ def test_run_training_resume_reuses_saved_val_source(
                 method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
             ),
             train=TrainHyperparams(
-                epochs=1, batch_size=1, grad_accum_steps=1, save_every=1, log_every=1,
-                warmup_steps=0, num_workers=0,
+                epochs=1,
+                batch_size=1,
+                grad_accum_steps=1,
+                save_every=1,
+                log_every=1,
+                warmup_steps=0,
+                num_workers=0,
             ),
         )
 
@@ -210,9 +218,7 @@ def test_run_training_resume_reuses_saved_val_source(
     def _splitter_must_not_run(*a: object, **kw: object) -> object:
         raise AssertionError("splitter must not be re-called on resume")
 
-    monkeypatch.setattr(
-        "custom_sam_peft.data.val_source.stratified_split", _splitter_must_not_run
-    )
+    monkeypatch.setattr("custom_sam_peft.data.val_source.stratified_split", _splitter_must_not_run)
     r2 = run_training(_cfg(), resume_from=ckpts[0])
     vs2 = load_val_source(r2.run_dir)
     assert vs2 is not None

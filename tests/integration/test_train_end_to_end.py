@@ -323,8 +323,13 @@ def test_e2e_auto_split_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> Non
             method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
         ),
         train=TrainHyperparams(
-            epochs=1, batch_size=1, grad_accum_steps=1, save_every=1, log_every=1,
-            warmup_steps=0, num_workers=0,
+            epochs=1,
+            batch_size=1,
+            grad_accum_steps=1,
+            save_every=1,
+            log_every=1,
+            warmup_steps=0,
+            num_workers=0,
         ),
     )
 
@@ -370,8 +375,13 @@ def test_e2e_no_val_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> None:
             method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
         ),
         train=TrainHyperparams(
-            epochs=1, batch_size=1, grad_accum_steps=1, save_every=1, log_every=1,
-            warmup_steps=0, num_workers=0,
+            epochs=1,
+            batch_size=1,
+            grad_accum_steps=1,
+            save_every=1,
+            log_every=1,
+            warmup_steps=0,
+            num_workers=0,
         ),
     )
 

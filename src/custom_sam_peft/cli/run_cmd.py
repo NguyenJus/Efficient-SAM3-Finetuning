@@ -34,14 +34,14 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 
-def _build_val_dataset(cfg: TrainConfig, vs: "ValSource") -> Dataset:
+def _build_val_dataset(cfg: TrainConfig, vs: ValSource) -> Dataset:
     """Build the val dataset using the same image ids the trainer used.
 
     Spec: docs/superpowers/specs/2026-05-22-data-no-val-auto-split-design.md §7.6.
     """
     data_cfg_dict = cfg.data.model_dump()
     if vs.mode == "auto_split":
-        assert vs.val_ids is not None
+        assert vs.val_ids is not None  # noqa: S101 — mode invariant for type narrowing
         data_cfg_dict["_resolved_image_ids"] = {"eval": list(vs.val_ids)}
     builder = lookup("dataset", cfg.data.format)
     return cast(Dataset, builder(data_cfg_dict, model_name=cfg.model.name, pipeline="eval"))
@@ -63,7 +63,8 @@ def _orchestrate(cfg: TrainConfig, resume: Path | None) -> int:
 
     # Decide val mode from the saved record — same source of truth the trainer used.
     vs = load_val_source(run_dir)
-    assert vs is not None, "runner must have saved val_source.json"
+    if vs is None:
+        raise RuntimeError(f"runner did not save val_source.json in {run_dir}")
 
     wrapper: Any = load_sam31(cfg.model)
     load_adapter(wrapper, adapter_path)
@@ -123,9 +124,7 @@ def _orchestrate(cfg: TrainConfig, resume: Path | None) -> int:
         raise typer.Exit(code=1) from exc
 
     mAP_str = (
-        f"{report.overall.get('mAP', float('nan')):.4f}"
-        if report is not None
-        else "n/a (no val)"
+        f"{report.overall.get('mAP', float('nan')):.4f}" if report is not None else "n/a (no val)"
     )
     rprint(
         f"[green]done[/green] run_dir={run_dir} adapter={adapter_path} "

@@ -173,11 +173,7 @@ def run_doctor(
 
         cfg = load_config(config_path)
         if cfg.data.val_split is not None:
-            seed = (
-                cfg.data.val_split.seed
-                if cfg.data.val_split.seed is not None
-                else cfg.run.seed
-            )
+            seed = cfg.data.val_split.seed if cfg.data.val_split.seed is not None else cfg.run.seed
             data = DataReport(
                 val_mode="auto_split",
                 val_path=None,

@@ -5,18 +5,14 @@ Spec: docs/superpowers/specs/2026-05-22-data-no-val-auto-split-design.md §5, §
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from custom_sam_peft.config.schema import (
     DataConfig,
     DataSplit,
-    HFDatasetConfig,
-    HFFieldMap,
     PEFTConfig,
     RunConfig,
     TrainConfig,
@@ -79,9 +75,7 @@ def test_resolve_mode_auto_split(tiny_coco_dir: Path) -> None:
     assert len(vs.train_ids) + len(vs.val_ids) == 2
 
 
-def test_resolve_mode_none_warns(
-    tiny_coco_dir: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_resolve_mode_none_warns(tiny_coco_dir: Path, caplog: pytest.LogCaptureFixture) -> None:
     cfg = _base_cfg(tiny_coco_dir, val=False, val_split=False)
     with caplog.at_level(logging.WARNING):
         vs = resolve_val_source(cfg, run_dir=None)
@@ -115,9 +109,7 @@ def test_log_val_source_warns_for_none(
     assert any("no-op" in r.message or "no validation" in r.message.lower() for r in caplog.records)
 
 
-def test_save_and_load_round_trip_auto_split(
-    tiny_coco_dir: Path, tmp_path: Path
-) -> None:
+def test_save_and_load_round_trip_auto_split(tiny_coco_dir: Path, tmp_path: Path) -> None:
     cfg = _base_cfg(tiny_coco_dir, val=False, val_split=True)
     vs = resolve_val_source(cfg, run_dir=None)
     save_val_source(vs, tmp_path)
@@ -160,9 +152,7 @@ def test_load_val_source_missing_file_returns_none(tmp_path: Path) -> None:
     assert load_val_source(tmp_path) is None
 
 
-def test_resume_preference_loads_saved_record(
-    tiny_coco_dir: Path, tmp_path: Path
-) -> None:
+def test_resume_preference_loads_saved_record(tiny_coco_dir: Path, tmp_path: Path) -> None:
     cfg = _base_cfg(tiny_coco_dir, val=False, val_split=True)
     vs_first = resolve_val_source(cfg, run_dir=None)
     save_val_source(vs_first, tmp_path)

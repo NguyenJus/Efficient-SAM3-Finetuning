@@ -54,7 +54,7 @@ def run_training(
 
     data_cfg_dict = cfg.data.model_dump()
     if vs.mode == "auto_split":
-        assert vs.train_ids is not None and vs.val_ids is not None
+        assert vs.train_ids is not None and vs.val_ids is not None  # noqa: S101
         data_cfg_dict["_resolved_image_ids"] = {
             "train": list(vs.train_ids),
             "eval": list(vs.val_ids),

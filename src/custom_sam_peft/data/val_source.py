@@ -54,11 +54,7 @@ def resolve_val_source(cfg: TrainConfig, *, run_dir: Path | None = None) -> ValS
             return saved
 
     if cfg.data.val_split is not None:
-        seed_used = (
-            cfg.data.val_split.seed
-            if cfg.data.val_split.seed is not None
-            else cfg.run.seed
-        )
+        seed_used = cfg.data.val_split.seed if cfg.data.val_split.seed is not None else cfg.run.seed
         items = _enumerate_items(cfg.data)
         result = stratified_split(items, cfg.data.val_split.fraction, seed_used)
         return ValSource(
@@ -154,9 +150,9 @@ def _log_val_source(vs: ValSource) -> None:
         _LOG.info("val source: explicit (cfg.data.val)")
         return
     if vs.mode == "auto_split":
-        assert vs.train_ids is not None and vs.val_ids is not None
-        assert vs.realized_fraction is not None and vs.fraction_requested is not None
-        assert vs.per_class_counts is not None
+        assert vs.train_ids is not None and vs.val_ids is not None  # noqa: S101
+        assert vs.realized_fraction is not None and vs.fraction_requested is not None  # noqa: S101
+        assert vs.per_class_counts is not None  # noqa: S101
         n_train, n_val = len(vs.train_ids), len(vs.val_ids)
         pct = 100.0 * vs.realized_fraction
         covered = sum(1 for (_t, v) in vs.per_class_counts.values() if v > 0)
@@ -181,9 +177,7 @@ def _log_val_source(vs: ValSource) -> None:
             abs(vs.realized_fraction - vs.fraction_requested) / vs.fraction_requested > 0.2
             or n_val < 8
         ):
-            _LOG.warning(
-                "auto-split: realized fraction deviates from requested or val is small"
-            )
+            _LOG.warning("auto-split: realized fraction deviates from requested or val is small")
         return
     # mode == "none"
     _LOG.warning(
@@ -232,10 +226,12 @@ def _enumerate_hf_items(data_cfg: DataConfig) -> list[SplittableItem]:
     image_id = str(row_index). class_ids is the frozenset of int category ids
     in the row's data.hf.field_map.category field.
     """
-    from custom_sam_peft.data.hf import _resolve_field, hf_load_dataset
+    from datasets import load_dataset
 
-    assert data_cfg.hf is not None
-    ds = hf_load_dataset(data_cfg.hf.name, split=data_cfg.hf.split_train)
+    from custom_sam_peft.data.hf import _resolve_field
+
+    assert data_cfg.hf is not None  # noqa: S101 — schema validator guarantees this
+    ds = load_dataset(data_cfg.hf.name, split=data_cfg.hf.split_train)
     items: list[SplittableItem] = []
     for i in range(len(ds)):
         row = ds[i]

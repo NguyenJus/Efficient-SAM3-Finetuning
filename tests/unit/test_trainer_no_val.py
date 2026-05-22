@@ -133,9 +133,7 @@ def test_fit_with_val_ds_none_does_not_invoke_evaluator(
     mock_evaluator.evaluate.assert_not_called()
 
 
-def test_fit_with_val_ds_none_does_not_log_image_panel(
-    tmp_path: Path, tiny_coco_dir: Path
-) -> None:
+def test_fit_with_val_ds_none_does_not_log_image_panel(tmp_path: Path, tiny_coco_dir: Path) -> None:
     """The image-panel writer never fires when val_ds is None."""
     cfg = _cfg(tmp_path, tiny_coco_dir)
     ds_train = _ds_train(tiny_coco_dir)

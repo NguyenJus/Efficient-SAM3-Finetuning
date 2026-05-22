@@ -200,9 +200,7 @@ class Trainer:
             worker_init_fn=_worker_init_fn(cfg.run.seed) if cfg.train.num_workers > 0 else None,
         )
         val_examples: list[Any] = (
-            []
-            if self.val_ds is None
-            else [self.val_ds[i] for i in range(min(4, len(self.val_ds)))]
+            [] if self.val_ds is None else [self.val_ds[i] for i in range(min(4, len(self.val_ds)))]
         )
 
         trainable = [p for p in self.model.parameters() if p.requires_grad]

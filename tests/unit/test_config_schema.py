@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from custom_sam_peft.config.schema import TrainConfig, ValSplitConfig
+from custom_sam_peft.config.schema import TrainConfig
 
 
 def _minimal_dict() -> dict[str, object]:

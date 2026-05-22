@@ -775,7 +775,7 @@ def test_cocodataset_image_ids_filters_to_subset(tiny_coco_dir: Path) -> None:
             transforms=_build_eval(),
             text_prompt=TextPromptConfig(),
         )
-    all_ids = list(full._image_ids)  # noqa: SLF001 — internal use, test only
+    all_ids = list(full._image_ids)
     assert len(all_ids) >= 2
     subset = all_ids[:1]
     with _patch_imagenet_ctx():
@@ -836,7 +836,7 @@ def test_cocodataset_image_ids_sorted_order_preserved(tiny_coco_dir: Path) -> No
             transforms=_build_eval(),
             text_prompt=TextPromptConfig(),
         )
-    ids_sorted_desc = sorted(full._image_ids, reverse=True)  # noqa: SLF001
+    ids_sorted_desc = sorted(full._image_ids, reverse=True)
     with _patch_imagenet_ctx():
         ds = COCODataset(
             annotations=str(tiny_coco_dir / "annotations.json"),
@@ -846,7 +846,7 @@ def test_cocodataset_image_ids_sorted_order_preserved(tiny_coco_dir: Path) -> No
             text_prompt=TextPromptConfig(),
             image_ids=ids_sorted_desc,
         )
-    assert ds._image_ids == sorted(ds._image_ids)  # noqa: SLF001
+    assert ds._image_ids == sorted(ds._image_ids)
 
 
 def test_image_level_leak_invariant_on_tiny_coco(tiny_coco_dir: Path) -> None:

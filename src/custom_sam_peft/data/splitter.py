@@ -74,7 +74,7 @@ def stratified_split(
     remaining = {"train": t_total, "val": v_total}
 
     # 3. Initial ordering: rarest-class items first, RNG tiebreak.
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 — not cryptographic; seeded stratification
 
     def _min_class_count(it: SplittableItem) -> float:
         if not it.class_ids:
@@ -127,7 +127,7 @@ def stratified_split(
     per_class_counts: dict[int, tuple[int, int]] = {}
     train_set = set(train_ids)
     val_set = set(val_ids)
-    for c, total in class_totals.items():
+    for c, _total in class_totals.items():
         t_count = sum(1 for it in items_sorted if c in it.class_ids and it.image_id in train_set)
         v_count = sum(1 for it in items_sorted if c in it.class_ids and it.image_id in val_set)
         per_class_counts[c] = (t_count, v_count)

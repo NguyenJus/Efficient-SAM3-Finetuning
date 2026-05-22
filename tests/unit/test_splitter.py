@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import random
 
-import pytest
-
 from custom_sam_peft.data.splitter import SplitResult, SplittableItem, stratified_split
 
 
@@ -64,8 +62,7 @@ def test_multiclass_coverage_rare_class_appears_in_both_sides() -> None:
     rare_train = bool(rare & train_set)
     rare_val = bool(rare & val_set)
     assert rare_train and rare_val, (
-        f"rare class 9 must land in both sides: "
-        f"train={rare & train_set}, val={rare & val_set}"
+        f"rare class 9 must land in both sides: train={rare & train_set}, val={rare & val_set}"
     )
 
 

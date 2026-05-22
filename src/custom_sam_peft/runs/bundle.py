@@ -341,6 +341,7 @@ def write_bundle(
     for stale in samples_dir.glob("*.png"):
         stale.unlink()
 
+    assert metrics_report is not None  # noqa: S101 — val_dataset present implies report present
     mAP = float(metrics_report.overall.get("mAP", float("nan")))
     n_val = len(val_dataset)
     indices = pick_samples(ctx.per_example_iou, mAP, n_val)
