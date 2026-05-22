@@ -159,13 +159,9 @@ class LimitConfig(_Strict):
                 raise ValueError(f"limit.{name} must not be a bool; got {v!r}")
             if isinstance(v, int):
                 if v < 1:
-                    raise ValueError(
-                        f"limit.{name} must be >= 1 when an int; got {v!r}"
-                    )
+                    raise ValueError(f"limit.{name} must be >= 1 when an int; got {v!r}")
             elif isinstance(v, float) and not (0.0 < v <= 1.0):
-                raise ValueError(
-                    f"limit.{name} must be in (0.0, 1.0] when a float; got {v!r}"
-                )
+                raise ValueError(f"limit.{name} must be in (0.0, 1.0] when a float; got {v!r}")
         return data
 
 

@@ -129,9 +129,7 @@ def _default_weights_path() -> Path:
     return Path(m.local_dir or "") / m.checkpoint_file
 
 
-def _build_dataset_for_doctor(
-    config_path: Path, issues: list[str]
-) -> DatasetResolution | None:
+def _build_dataset_for_doctor(config_path: Path, issues: list[str]) -> DatasetResolution | None:
     """Load config + build train/val datasets. Returns None and appends to issues on any error.
 
     Failure modes (all result in return None, exit code 0):
@@ -156,12 +154,8 @@ def _build_dataset_for_doctor(
         issues.append(f"couldn't build train/val dataset: {e}")
         return None
 
-    train_total = (
-        len(train_ds._inner) if isinstance(train_ds, SubsetDataset) else len(train_ds)
-    )
-    val_total = (
-        len(val_ds._inner) if isinstance(val_ds, SubsetDataset) else len(val_ds)
-    )
+    train_total = len(train_ds._inner) if isinstance(train_ds, SubsetDataset) else len(train_ds)
+    val_total = len(val_ds._inner) if isinstance(val_ds, SubsetDataset) else len(val_ds)
     lim = cfg.data.limit
     return DatasetResolution(
         format=cfg.data.format,

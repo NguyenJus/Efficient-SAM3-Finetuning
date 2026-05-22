@@ -59,8 +59,7 @@ def resolve_subset_indices(
     if strategy == "stratified":
         if image_class_labels is None:
             _LOG.warning(
-                "stratified subset requested but image_class_labels is None; "
-                "falling back to random"
+                "stratified subset requested but image_class_labels is None; falling back to random"
             )
             return _random_indices(n_total, cap, seed=seed)
         return _stratified_indices(n_total, cap, seed=seed, labels=image_class_labels)
