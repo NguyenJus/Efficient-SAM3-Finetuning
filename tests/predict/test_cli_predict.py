@@ -36,7 +36,9 @@ def _invoke(*extra: str) -> Any:
 
 
 def test_predict_help_exit_zero() -> None:
-    result = runner.invoke(app, ["predict", "--help"])
+    # COLUMNS=200 prevents Typer's rich console from word-wrapping flag names
+    # in CI's narrow virtual terminal (default ~80 cols).
+    result = runner.invoke(app, ["predict", "--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
     text = result.output
     # Every flag from spec §8 must appear in help text
@@ -137,7 +139,11 @@ def test_predict_argv_round_trip_to_options(tmp_path: Path) -> None:
 
 
 def test_score_threshold_out_of_range_rejected() -> None:
-    result = runner.invoke(app, ["predict", *_REQUIRED, "--score-threshold", "1.5"])
+    result = runner.invoke(
+        app,
+        ["predict", *_REQUIRED, "--score-threshold", "1.5"],
+        env={"COLUMNS": "200"},
+    )
     assert result.exit_code == 2
     assert "score-threshold" in result.output.lower()
 

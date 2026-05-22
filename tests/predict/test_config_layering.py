@@ -19,9 +19,7 @@ from custom_sam_peft.predict.runner import PredictOptions, _resolve_config, run_
 # Helpers
 # ---------------------------------------------------------------------------
 
-_FIXTURES = Path(__file__).parent / "fixtures"
-_LORA_DIR = _FIXTURES / "lora_adapter"
-_QLORA_DIR = _FIXTURES / "qlora_adapter"
+_LORA_DIR = Path(__file__).parent / "fixtures" / "lora_adapter"
 
 _BUILTIN_DEFAULT = "facebook/sam3.1"
 

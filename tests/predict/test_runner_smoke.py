@@ -70,8 +70,6 @@ class _StubSamModule(torch.nn.Module):
 # Helpers
 # ---------------------------------------------------------------------------
 
-_FIXTURES = Path(__file__).parent / "fixtures"
-
 
 def _make_image_dir(tmp_path: Path, n: int = 1) -> Path:
     img_dir = tmp_path / "images"
