@@ -2,19 +2,21 @@
 
 Public API:
   - resolve_normalization(model_name, fallback) -> (mean, std)
+  - resolve_normalization_with_path(model_name, fallback) -> (mean, std, path)
   - build_eval_transforms(image_size, *, model_name, normalize) -> A.Compose
   - build_train_transforms(aug_cfg, image_size, *, model_name, normalize) -> A.Compose
+  - StainJitter: HED-space stain jitter Albumentations transform
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Literal
+
+import albumentations as A
+import numpy as np
 
 from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig
-
-if TYPE_CHECKING:
-    import albumentations as A
 
 _LOG = logging.getLogger(__name__)
 
@@ -35,6 +37,27 @@ KNOWN_PROCESSOR_STATS: dict[str, tuple[list[float], list[float]]] = {
 # to catch a real change (e.g. [0.5, 0.5, 0.5] diverges by >=0.014 per channel).
 _STATS_DIVERGENCE_ATOL = 1e-3
 
+# ---------------------------------------------------------------------------
+# StainJitter — HED-space color deconvolution for H&E histopathology
+# (Ruifrok & Johnston 2001 / Tellez et al. 2018). Image-only Albumentations
+# transform; masks/bboxes/keypoints pass through unchanged.
+# ---------------------------------------------------------------------------
+
+# Ruifrok & Johnston 2001 HED basis vectors (rows = stains: H, E, DAB).
+_HED_FROM_RGB_MATRIX: np.ndarray = np.array(
+    [
+        [0.65, 0.70, 0.29],
+        [0.07, 0.99, 0.11],
+        [0.27, 0.57, 0.78],
+    ],
+    dtype=np.float32,
+)
+_HED_FROM_RGB_INV: np.ndarray = np.linalg.inv(_HED_FROM_RGB_MATRIX).astype(np.float32)
+
+# Magnitude → Albumentations parameter projection constants — spec §8.1.
+_GAUSS_NOISE_MAX_VAR: float = 0.05
+_GAUSS_BLUR_MAX_SIGMA: float = 3.0
+
 
 def _stats_diverge(
     loaded: tuple[list[float], list[float]],
@@ -54,23 +77,22 @@ def _stats_diverge(
     return False
 
 
-def resolve_normalization(
+NormalizationPath = Literal["processor", "table-fallback", "config-fallback"]
+
+
+def resolve_normalization_with_path(
     model_name: str, fallback: NormalizeConfig
-) -> tuple[list[float], list[float]]:
-    """Three-step resolution of (mean, std) for image normalization.
+) -> tuple[list[float], list[float], NormalizationPath]:
+    """Three-step resolution of (mean, std) plus the path that fired.
 
-    1. Try ``transformers.AutoImageProcessor.from_pretrained(model_name,
-       local_files_only=True)``. On success, read ``image_mean`` / ``image_std``.
-       Before returning, look up ``model_name`` in :data:`KNOWN_PROCESSOR_STATS`.
-       If the model is in the table and the loaded stats diverge beyond
-       ``_STATS_DIVERGENCE_ATOL``, emit a WARNING naming both vectors.
-       Otherwise emit INFO.
-    2. On ``(OSError, AttributeError, ValueError)``, look up ``model_name`` in
-       the table. If present, return the table values and emit WARNING.
-    3. Otherwise (processor unavailable AND no table entry), return the user's
-       ``fallback`` values and emit WARNING.
+    Path codes:
+      - "processor":       loaded from AutoImageProcessor
+      - "table-fallback":  processor unavailable, model in KNOWN_PROCESSOR_STATS
+      - "config-fallback": processor unavailable, no table entry, user fallback
 
-    Quality-regressing fallbacks must be loud; only path 1's happy path is INFO.
+    Logging is unchanged from the legacy ``resolve_normalization``: WARN on
+    fallback paths, WARN on table-vs-processor divergence, INFO on the happy
+    path.
     """
     import transformers
 
@@ -83,7 +105,6 @@ def resolve_normalization(
         mean = list(proc.image_mean)
         std = list(proc.image_std)
     except (OSError, AttributeError, ValueError):
-        # Path 2 / Path 3
         if table_entry is not None:
             table_mean, table_std = table_entry
             _LOG.warning(
@@ -93,7 +114,7 @@ def resolve_normalization(
                 table_mean,
                 table_std,
             )
-            return list(table_mean), list(table_std)
+            return list(table_mean), list(table_std), "table-fallback"
         _LOG.warning(
             "AutoImageProcessor unavailable for %r AND no known-good entry registered; "
             "using NormalizeConfig fallback (mean=%s, std=%s). Verify these are correct "
@@ -102,9 +123,8 @@ def resolve_normalization(
             fallback.mean,
             fallback.std,
         )
-        return list(fallback.mean), list(fallback.std)
+        return list(fallback.mean), list(fallback.std), "config-fallback"
 
-    # Path 1: processor loaded.
     if table_entry is not None and _stats_diverge((mean, std), table_entry):
         table_mean, table_std = table_entry
         _LOG.warning(
@@ -120,6 +140,18 @@ def resolve_normalization(
         )
     else:
         _LOG.info("Using image_mean/image_std from AutoImageProcessor for %r.", model_name)
+    return mean, std, "processor"
+
+
+def resolve_normalization(
+    model_name: str, fallback: NormalizeConfig
+) -> tuple[list[float], list[float]]:
+    """2-tuple wrapper kept for build_eval_transforms / build_train_transforms.
+
+    Equivalent to dropping the path code from
+    :func:`resolve_normalization_with_path`.
+    """
+    mean, std, _path = resolve_normalization_with_path(model_name, fallback)
     return mean, std
 
 
@@ -204,3 +236,46 @@ def build_train_transforms(
             min_area=0.0,
         ),
     )
+
+
+class StainJitter(A.ImageOnlyTransform):  # type: ignore[misc]
+    """HED-space stain jitter for H&E histopathology images.
+
+    Image-only — masks, bboxes, keypoints pass through unchanged. Implements
+    the Tellez et al. (2018) / Ruifrok & Johnston (2001) color deconvolution:
+    RGB → optical density → HED basis → per-channel affine perturbation →
+    back to RGB.
+
+    Identity at sigma=0 (the implementation short-circuits).
+
+    Note: This class directly subclasses ``albumentations.ImageOnlyTransform``
+    at module import time. The plan described a lazy ``__new__`` mixin pattern
+    to defer the Albumentations import, but that pattern raises
+    ``TypeError: __bases__ assignment: 'ImageOnlyTransform' deallocator differs
+    from 'object'`` under Albumentations 2.0.8 (CPython's restriction on
+    changing __bases__ for extension-type subclasses). Direct subclassing is
+    used instead, which also means ``import albumentations`` is triggered
+    whenever this module is imported.
+    """
+
+    def __init__(self, sigma: float = 0.0, p: float = 0.5) -> None:
+        super().__init__(p=p)
+        if sigma < 0:
+            raise ValueError(f"StainJitter sigma must be >= 0, got {sigma}")
+        self.sigma = float(sigma)
+
+    def apply(self, img: np.ndarray, **params: object) -> np.ndarray:
+        """Apply HED-space stain perturbation to img (uint8 RGB, HWC)."""
+        if self.sigma == 0.0:
+            return img
+        od = -np.log10((img.astype(np.float32) + 1.0) / 256.0)
+        hed = od @ _HED_FROM_RGB_INV
+        alpha = np.random.uniform(-self.sigma, self.sigma, size=3).astype(np.float32)
+        beta = np.random.uniform(-self.sigma, self.sigma, size=3).astype(np.float32)
+        hed = hed * (1.0 + alpha) + beta
+        od_back = hed @ _HED_FROM_RGB_MATRIX
+        out = 256.0 * np.power(10.0, -od_back) - 1.0
+        return np.clip(out, 0.0, 255.0).astype(np.uint8)
+
+    def get_transform_init_args_names(self) -> tuple[str, ...]:
+        return ("sigma",)
