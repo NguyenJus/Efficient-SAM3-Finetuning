@@ -12,7 +12,7 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 from rich import print as rprint
@@ -28,15 +28,28 @@ from custom_sam_peft.runs.bundle import BundleContext, write_bundle
 from custom_sam_peft.train.checkpoint import load_adapter, save_merged
 from custom_sam_peft.train.runner import run_training
 
+if TYPE_CHECKING:
+    from custom_sam_peft.data.val_source import ValSource
+
 _LOG = logging.getLogger(__name__)
 
 
-def _build_val_dataset(cfg: TrainConfig) -> Dataset:
+def _build_val_dataset(cfg: TrainConfig, vs: "ValSource") -> Dataset:
+    """Build the val dataset using the same image ids the trainer used.
+
+    Spec: docs/superpowers/specs/2026-05-22-data-no-val-auto-split-design.md §7.6.
+    """
+    data_cfg_dict = cfg.data.model_dump()
+    if vs.mode == "auto_split":
+        assert vs.val_ids is not None
+        data_cfg_dict["_resolved_image_ids"] = {"eval": list(vs.val_ids)}
     builder = lookup("dataset", cfg.data.format)
-    return cast(Dataset, builder(cfg.data.model_dump(), model_name=cfg.model.name, pipeline="eval"))
+    return cast(Dataset, builder(data_cfg_dict, model_name=cfg.model.name, pipeline="eval"))
 
 
 def _orchestrate(cfg: TrainConfig, resume: Path | None) -> int:
+    from custom_sam_peft.data.val_source import load_val_source
+
     start_ts = datetime.now(UTC)
 
     # Phase: train.
@@ -48,27 +61,35 @@ def _orchestrate(cfg: TrainConfig, resume: Path | None) -> int:
     run_dir = train_result.run_dir
     adapter_path = train_result.adapter_path
 
-    # Build val + load wrapper exactly once for the rest of the run.
-    val_dataset = _build_val_dataset(cfg)
+    # Decide val mode from the saved record — same source of truth the trainer used.
+    vs = load_val_source(run_dir)
+    assert vs is not None, "runner must have saved val_source.json"
+
     wrapper: Any = load_sam31(cfg.model)
     load_adapter(wrapper, adapter_path)
 
-    # Phase: eval.
-    try:
-        report, per_example_iou = cast(
-            tuple[Any, list[float]],
-            run_eval(
-                cfg,
-                checkpoint=adapter_path,
-                output_dir=run_dir,
-                val_dataset=val_dataset,
-                model=wrapper,
-                return_per_example_iou=True,
-            ),
-        )
-    except Exception as exc:
-        rprint(f"[red]eval failed[/red] run_dir={run_dir} — {exc}")
-        raise typer.Exit(code=1) from exc
+    val_dataset: Dataset | None = None
+    report: Any = None
+    per_example_iou: list[float] = []
+    if vs.mode != "none":
+        val_dataset = _build_val_dataset(cfg, vs)
+
+        # Phase: eval.
+        try:
+            report, per_example_iou = cast(
+                tuple[Any, list[float]],
+                run_eval(
+                    cfg,
+                    checkpoint=adapter_path,
+                    output_dir=run_dir,
+                    val_dataset=val_dataset,
+                    model=wrapper,
+                    return_per_example_iou=True,
+                ),
+            )
+        except Exception as exc:
+            rprint(f"[red]eval failed[/red] run_dir={run_dir} — {exc}")
+            raise typer.Exit(code=1) from exc
 
     end_ts = datetime.now(UTC)
 
@@ -101,10 +122,15 @@ def _orchestrate(cfg: TrainConfig, resume: Path | None) -> int:
         rprint(f"[red]bundle failed[/red] run_dir={run_dir} — {exc}")
         raise typer.Exit(code=1) from exc
 
+    mAP_str = (
+        f"{report.overall.get('mAP', float('nan')):.4f}"
+        if report is not None
+        else "n/a (no val)"
+    )
     rprint(
         f"[green]done[/green] run_dir={run_dir} adapter={adapter_path} "
         f"merged={(merged_dir or merged_export_error or 'skipped')} "
-        f"summary={run_dir / 'summary.md'} mAP={report.overall.get('mAP', float('nan')):.4f}"
+        f"summary={run_dir / 'summary.md'} mAP={mAP_str}"
     )
     return 0
 
