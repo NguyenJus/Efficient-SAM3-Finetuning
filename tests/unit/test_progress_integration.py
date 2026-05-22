@@ -11,10 +11,11 @@ import tempfile
 import textwrap
 from pathlib import Path
 
-import custom_sam_peft.cli._progress as _pmod
 from custom_sam_peft.cli._progress import (
     ProgressKind,
     ProgressMode,
+    _NoOpHandle,
+    _state,
     progress_session,
 )
 
@@ -41,8 +42,8 @@ def test_fake_trainer_smoke() -> None:
         total_batches_per_epoch=batches_per_epoch,
         mode=ProgressMode.ON,
     ):
-        handle = _pmod.progress
-        assert not isinstance(handle, _pmod._NoOpHandle), "expected live handle inside session"
+        handle = _state.handle
+        assert not isinstance(handle, _NoOpHandle), "expected live handle inside session"
 
         for epoch in range(total_epochs):
             handle.advance_outer()
@@ -55,7 +56,7 @@ def test_fake_trainer_smoke() -> None:
 
             handle.update_postfix(loss=0.5 - epoch * 0.1, it_s=2.3)
 
-    assert isinstance(_pmod.progress, _pmod._NoOpHandle), "expected _NoOpHandle after session exits"
+    assert isinstance(_state.handle, _NoOpHandle), "expected _NoOpHandle after session exits"
     assert outer_advances == total_epochs, f"expected {total_epochs} outer advances"
     assert inner_advances == total_epochs * batches_per_epoch, (
         f"expected {total_epochs * batches_per_epoch} inner advances"

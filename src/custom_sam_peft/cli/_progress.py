@@ -255,12 +255,57 @@ def _silence_third_party_progress() -> None:
 
         _ds.disable_progress_bar()
     except ImportError:
+        # ``datasets`` is an optional dependency; absence is a no-op for this helper.
         pass
 
 
-_SESSION_ACTIVE = False
+class _State:
+    """Module-level mutable state for the process-global progress singleton.
 
-progress: _NoOpHandle | _ProgressHandle | _PlainHandle = _NoOpHandle()
+    Holding state on an object (rather than module-level ``global`` rebinds)
+    means ``from _progress import progress as P`` callers see live updates —
+    the proxy below dereferences ``_state.handle`` on every call.
+    """
+
+    def __init__(self) -> None:
+        self.handle: _NoOpHandle | _ProgressHandle | _PlainHandle = _NoOpHandle()
+        self.session_active: bool = False
+
+
+_state = _State()
+
+
+class _ProgressProxy:
+    """Stable user-facing handle that forwards every call to ``_state.handle``.
+
+    Call sites import this once (``from ... import progress as P``); the
+    binding is stable, so swapping ``_state.handle`` inside
+    ``progress_session`` is visible to every caller without re-importing.
+    """
+
+    @property
+    def console(self) -> Console:
+        return _state.handle.console
+
+    def advance_outer(self, n: int = 1) -> None:
+        _state.handle.advance_outer(n)
+
+    def advance_inner(self, n: int = 1) -> None:
+        _state.handle.advance_inner(n)
+
+    def reset_inner(self, total: int | None = None) -> None:
+        _state.handle.reset_inner(total)
+
+    def update_postfix(self, **kwargs: Any) -> None:
+        _state.handle.update_postfix(**kwargs)
+
+    @contextmanager
+    def push_subtask(self, label: str, total: int) -> Generator[None, None, None]:
+        with _state.handle.push_subtask(label, total):
+            yield
+
+
+progress = _ProgressProxy()
 
 
 @contextmanager
@@ -279,11 +324,9 @@ def progress_session(
     Raises RuntimeError if called while a session is already active (nesting
     is not supported).
     """
-    global _SESSION_ACTIVE, progress
-
-    if _SESSION_ACTIVE:
+    if _state.session_active:
         raise RuntimeError("nested session: a progress_session is already active in this process")
-    _SESSION_ACTIVE = True
+    _state.session_active = True
     _silence_third_party_progress()
 
     root_logger = logging.getLogger()
@@ -355,12 +398,12 @@ def progress_session(
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
-    progress = handle
+    _state.handle = handle
     try:
         yield
     finally:
-        progress = _NoOpHandle()
-        _SESSION_ACTIVE = False
+        _state.handle = _NoOpHandle()
+        _state.session_active = False
         signal.signal(signal.SIGINT, prior_sigint)
         if rich_prog is not None:
             rich_prog.stop()

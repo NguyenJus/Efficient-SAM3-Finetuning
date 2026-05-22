@@ -21,6 +21,8 @@ from custom_sam_peft.cli._progress import (
     ProgressMode,
     _NoOpHandle,
     _silence_third_party_progress,
+    _state,
+    progress,
     progress_session,
 )
 
@@ -31,10 +33,10 @@ from custom_sam_peft.cli._progress import (
 
 def test_no_op_default() -> None:
     """Test B: P.* calls outside any session are no-ops -- no exception, no terminal writes."""
-    import custom_sam_peft.cli._progress as _pmod
-
-    P = _pmod.progress
-    assert isinstance(P, _NoOpHandle), "expected _NoOpHandle when no session is active"
+    P = progress
+    assert isinstance(_state.handle, _NoOpHandle), (
+        "expected _NoOpHandle underlying the proxy when no session is active"
+    )
 
     P.advance_outer()
     P.advance_inner()
@@ -137,9 +139,7 @@ def test_log_through_live(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_push_subtask_lifecycle() -> None:
     """Test E: push_subtask adds a task inside the block; the task is removed on exit."""
-    import custom_sam_peft.cli._progress as _pmod
-
-    P = _pmod.progress
+    P = progress
 
     # No session: push_subtask is a no-op -- just confirm no exception.
     with P.push_subtask("lite-eval", total=10):
@@ -152,12 +152,12 @@ def test_push_subtask_lifecycle() -> None:
         total_batches_per_epoch=3,
         mode=ProgressMode.ON,
     ):
-        live_handle = _pmod.progress
+        live_handle = _state.handle
         assert not isinstance(live_handle, _NoOpHandle), "expected _ProgressHandle inside session"
         task_count_before = len(
             [t for t in live_handle._progress.tasks if not t.finished]  # type: ignore[union-attr]
         )
-        with live_handle.push_subtask("lite-eval", total=10):
+        with P.push_subtask("lite-eval", total=10):
             task_count_during = len(live_handle._progress.tasks)  # type: ignore[union-attr]
             assert task_count_during > task_count_before, "subtask should be added during block"
         task_count_after = len(live_handle._progress.tasks)  # type: ignore[union-attr]
