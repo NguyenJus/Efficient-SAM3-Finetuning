@@ -6,6 +6,7 @@ import typer
 
 import custom_sam_peft._bootstrap  # noqa: F401  # populate plugin registry before subcommand imports
 from custom_sam_peft.cli import (
+    calibrate_cmd,
     doctor_cmd,
     eval_cmd,
     export_cmd,
@@ -28,6 +29,9 @@ app.command("predict", help="Run inference on images with optional adapter.")(pr
 app.command("export", help="Export adapter or merged model.")(export_cmd.export)
 app.command("init", help="Write a starter config.")(init_cmd.init)
 app.command("doctor", help="Report environment + dependency status.")(doctor_cmd.doctor)
+app.command("calibrate", help="Probe peak VRAM and cache for tighter preset packing.")(
+    calibrate_cmd.calibrate
+)
 app.command("run", help="Train + eval + (optional) export + bundle, in one shot.")(run_cmd.run)
 
 
