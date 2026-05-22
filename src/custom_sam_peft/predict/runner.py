@@ -15,6 +15,7 @@ Design notes (spec §2, §9):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import random
@@ -273,13 +274,6 @@ def run_predict(opts: PredictOptions) -> PredictReport:
     from custom_sam_peft.config.schema import ModelConfig
     from custom_sam_peft.models.sam3 import load_sam31
 
-    model_cfg = ModelConfig(
-        name=rcfg.model_name,
-        local_dir=None
-        if not (Path("models") / rcfg.model_name.split("/")[-1]).exists()
-        else str(Path("models") / rcfg.model_name.split("/")[-1]),
-    )
-    # Use a minimal ModelConfig — local_dir resolution will handle auto-download
     model_cfg = ModelConfig(name=rcfg.model_name)
 
     model: torch.nn.Module = load_sam31(model_cfg)
@@ -333,8 +327,6 @@ def run_predict(opts: PredictOptions) -> PredictReport:
             1, 3, rcfg.image_size, rcfg.image_size, device=rcfg.device, dtype=rcfg.dtype
         )
         _dummy_prompt = [TextPrompts(classes=["warmup"])]
-        import contextlib
-
         with contextlib.suppress(Exception):
             model(_warmup_input, _dummy_prompt, box_hints=None)
 
@@ -370,9 +362,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
         originals[image_id] = (orig_h, orig_w)
 
         # --- apply transforms ---
-        import numpy as _np
-
-        img_np = _np.array(pil_img)
+        img_np = np.array(pil_img)
         transformed = transforms(image=img_np, bboxes=[], class_labels=[])
         img_tensor: torch.Tensor = transformed["image"]  # (3, H, W)
         img_batch = img_tensor.unsqueeze(0).to(rcfg.device, dtype=rcfg.dtype)  # (1, 3, H, W)
