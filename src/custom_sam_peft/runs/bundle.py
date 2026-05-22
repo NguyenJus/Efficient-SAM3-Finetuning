@@ -267,9 +267,9 @@ def _preset_block(preset: PresetDecision) -> str:
     total_gib = (preset.budget_bytes + preset.headroom_bytes) / (1024**3)
     headroom_gib = preset.headroom_bytes / (1024**3)
     if preset.provenance == "calibrated":
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        date_str = preset.calibrated_at[:10] if preset.calibrated_at else "unknown"
         cache_name = Path(preset.cache_path).name if preset.cache_path else "(unknown)"
-        source_line = f"- Source: calibrated {today} (cache: {cache_name})"
+        source_line = f"- Source: calibrated {date_str} (cache: {cache_name})"
     else:
         source_line = "- Source: analytic estimate"
     return (

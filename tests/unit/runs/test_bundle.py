@@ -164,7 +164,7 @@ def _make_decision() -> PresetDecision:
         image_size=1008,
         gpu_name="NVIDIA A100-SXM4-40GB",
         provenance="calibrated",
-        cache_path=None,
+        cache_path="/tmp/.custom_sam_peft_calibration.json",  # noqa: S108
         calibrated_at="2026-05-18",
     )
 
@@ -308,6 +308,7 @@ def test_write_bundle_preset_block_structured(
     assert "- GPU:    NVIDIA A100-SXM4-40GB" in summary
     assert "38.4 / " in summary  # used/total GiB
     assert "calibrated" in summary.lower()
+    assert "2026-05-18" in summary
 
 
 def test_write_bundle_preset_block_analytic(
