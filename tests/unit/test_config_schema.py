@@ -311,3 +311,73 @@ def test_neither_val_nor_val_split_validates() -> None:
     cfg = TrainConfig.model_validate(d)
     assert cfg.data.val is None
     assert cfg.data.val_split is None
+
+
+# ---------------------------------------------------------------------------
+# spec/domain-aware-augmentation-presets (#75): preset/intensity/overrides
+# ---------------------------------------------------------------------------
+
+
+def test_augmentations_default_preset_and_intensity() -> None:
+    from custom_sam_peft.config.schema import AugmentationsConfig
+
+    cfg = AugmentationsConfig()
+    assert cfg.preset == "natural"
+    assert cfg.intensity == "medium"
+
+
+def test_augmentation_overrides_rejects_unknown_keys() -> None:
+    from pydantic import ValidationError
+
+    from custom_sam_peft.config.schema import AugmentationOverrides
+
+    with pytest.raises(ValidationError):
+        AugmentationOverrides.model_validate({"hfilp": True})  # typo
+
+
+def test_augmentations_preset_literal_validation() -> None:
+    from pydantic import ValidationError
+
+    from custom_sam_peft.config.schema import AugmentationsConfig
+
+    with pytest.raises(ValidationError):
+        AugmentationsConfig.model_validate({"preset": "mediacl"})  # typo
+
+
+def test_augmentations_intensity_literal_validation() -> None:
+    from pydantic import ValidationError
+
+    from custom_sam_peft.config.schema import AugmentationsConfig
+
+    with pytest.raises(ValidationError):
+        AugmentationsConfig.model_validate({"intensity": "medum"})  # typo
+
+
+def test_augmentations_overrides_default_factory_isolation() -> None:
+    """Two AugmentationsConfig() instances must not share a single overrides object."""
+    from custom_sam_peft.config.schema import AugmentationsConfig
+
+    a = AugmentationsConfig()
+    b = AugmentationsConfig()
+    assert a.overrides is not b.overrides
+
+
+def test_augmentations_overrides_all_none_by_default() -> None:
+    from custom_sam_peft.config.schema import AugmentationsConfig
+
+    dumped = AugmentationsConfig().overrides.model_dump()
+    assert all(v is None for v in dumped.values())
+    assert set(dumped.keys()) == {
+        "hflip", "vflip", "rotate90", "rotate_arbitrary",
+        "color_jitter", "stain_jitter", "blur", "gauss_noise",
+    }
+
+
+def test_augmentation_overrides_rejects_negative_floats() -> None:
+    """Field(ge=0.0) on float overrides catches negative sigma at load time."""
+    from pydantic import ValidationError
+
+    from custom_sam_peft.config.schema import AugmentationOverrides
+
+    with pytest.raises(ValidationError):
+        AugmentationOverrides.model_validate({"stain_jitter": -0.1})
