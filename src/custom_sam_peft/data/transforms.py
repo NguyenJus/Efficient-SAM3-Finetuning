@@ -197,7 +197,12 @@ def build_train_transforms(
     model_name: str,
     normalize: NormalizeConfig,
 ) -> A.Compose:
-    """Train pipeline: resize+pad geometry + optional hflip + color jitter + normalize."""
+    """Train pipeline: resolved presets → ordered Albumentations step list.
+
+    See spec §8 for the canonical step ordering. The Albumentations objects
+    appear in the compose iff the corresponding knob is enabled / > 0;
+    knob = 0/False omits the step entirely (not p=0).
+    """
     import albumentations as A
     import cv2
     from albumentations.pytorch import ToTensorV2
@@ -219,15 +224,47 @@ def build_train_transforms(
     ]
     if resolved.hflip:
         steps.append(A.HorizontalFlip(p=0.5))
-    steps.append(
-        A.ColorJitter(
-            brightness=resolved.color_jitter,
-            contrast=resolved.color_jitter,
-            saturation=resolved.color_jitter,
-            hue=resolved.color_jitter * 0.5,
-            p=0.5,
+    if resolved.vflip:
+        steps.append(A.VerticalFlip(p=0.5))
+    if resolved.rotate90:
+        steps.append(A.RandomRotate90(p=0.5))
+    if resolved.rotate_arbitrary > 0.0:
+        steps.append(
+            A.Affine(
+                rotate=(-resolved.rotate_arbitrary, resolved.rotate_arbitrary),
+                p=0.5,
+                fit_output=False,
+                fill=0,
+                fill_mask=0,
+            )
         )
-    )
+    if resolved.gauss_noise > 0.0:
+        # Albumentations 2.x renamed var_limit→std_range (std as fraction of max_pixel_value).
+        # Spec intent (scale noise magnitude by knob) is preserved; numeric range is equivalent
+        # since _GAUSS_NOISE_MAX_VAR=0.05 is small and std ≈ sqrt(var) at this scale.
+        steps.append(
+            A.GaussNoise(
+                std_range=(0.0, resolved.gauss_noise * _GAUSS_NOISE_MAX_VAR),
+                p=0.5,
+            )
+        )
+    if resolved.blur > 0.0:
+        steps.append(
+            A.GaussianBlur(
+                blur_limit=(3, 7),
+                sigma_limit=(0.0, resolved.blur * _GAUSS_BLUR_MAX_SIGMA),
+                p=0.5,
+            )
+        )
+    if resolved.color_jitter > 0.0:
+        v = resolved.color_jitter
+        steps.append(
+            A.ColorJitter(
+                brightness=v, contrast=v, saturation=v, hue=v * 0.5, p=0.5,
+            )
+        )
+    if resolved.stain_jitter > 0.0:
+        steps.append(StainJitter(sigma=resolved.stain_jitter, p=0.5))
     steps.append(A.Normalize(mean=mean, std=std, max_pixel_value=255.0))
     steps.append(ToTensorV2())
     return A.Compose(
