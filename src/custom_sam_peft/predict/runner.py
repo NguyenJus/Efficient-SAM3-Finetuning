@@ -369,9 +369,6 @@ def run_predict(opts: PredictOptions) -> PredictReport:
         id_to_stem[image_id] = img_path.stem
         originals[image_id] = (orig_h, orig_w)
 
-        # --- inverse-transform scale for bbox (spec §7.1) ---
-        scale = rcfg.image_size / max(orig_h, orig_w)
-
         # --- apply transforms ---
         import numpy as _np
 
@@ -397,48 +394,16 @@ def run_predict(opts: PredictOptions) -> PredictReport:
                 raise
 
             # postprocess (always per-image; queries_to_coco_results asserts batch==1)
-            # original_hw here is the PADDED size (image_size, image_size) — we invert
-            # the scale below to get back to original-image coords.
+            # Pass original_hw=(orig_h, orig_w) per spec §9 step 9 so that
+            # boxes are in original-image coords and masks are bilinear-upsampled
+            # to original resolution — no manual inversion needed.
             entries = queries_to_coco_results(
                 outputs_b,
                 image_id=image_id,
                 category_id=class_idx,
-                original_hw=(rcfg.image_size, rcfg.image_size),
+                original_hw=(orig_h, orig_w),
                 mask_threshold=0.0,
             )
-
-            # Invert longest-edge resize scale (spec §7.1 bbox row)
-            # scale = image_size / max(orig_h, orig_w); pad is top-left (no offset needed)
-            if scale > 0:
-                for entry in entries:
-                    x, y, w, h = cast(list[float], entry["bbox"])
-                    entry["bbox"] = [
-                        x / scale,
-                        y / scale,
-                        w / scale,
-                        h / scale,
-                    ]
-                # Re-encode segmentation masks at original image HxW
-                import numpy as _np2
-                from PIL import Image as _PILImg2
-
-                from custom_sam_peft.predict.writers import (
-                    decode_rle_to_uint8,
-                    encode_rle_dict,
-                )
-
-                _entries_with_orig_masks: list[dict[str, object]] = []
-                for entry in entries:
-                    mask_arr = decode_rle_to_uint8(
-                        cast("dict[str, Any]", entry["segmentation"])
-                    )
-                    if mask_arr.shape != (orig_h, orig_w):
-                        pil_mask = _PILImg2.fromarray(mask_arr * 255)
-                        pil_mask = pil_mask.resize((orig_w, orig_h), _PILImg2.Resampling.NEAREST)
-                        mask_arr = (_np2.array(pil_mask) > 127).astype(_np2.uint8)
-                    entry["segmentation"] = encode_rle_dict(mask_arr)
-                    _entries_with_orig_masks.append(entry)
-                entries = _entries_with_orig_masks
 
             # Apply score filter + top-K (per spec §9, inline)
             entries = [e for e in entries if cast(float, e["score"]) >= opts.score_threshold]
