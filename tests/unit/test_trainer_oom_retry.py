@@ -167,6 +167,44 @@ def test_oom_events_propagated_in_run_result() -> None:
     assert "oom_events" in fields
 
 
+def test_oom_gradient_magnitude_preserved_across_ladder() -> None:
+    """After OOM forces microbatch shrink, total backward gradient should equal
+    the non-OOM case — the helper's /n_micro must not double-scale."""
+    p = torch.nn.Parameter(torch.tensor([1.0]))
+
+    class _Model(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.p = p
+            self.calls = 0
+            self.fail_first = True
+
+        def forward(self, micro: list[int]) -> torch.Tensor:
+            self.calls += 1
+            # First call OOMs; after that succeed.
+            if self.fail_first and self.calls == 1:
+                raise torch.cuda.OutOfMemoryError("synthetic")
+            # Loss = p * sum(indices).  Grad of p w.r.t. total-batch loss
+            # should equal sum(all indices) regardless of microbatch slicing.
+            return self.p * sum(micro)
+
+    state = _State(micro_batch_size=4)
+    model = _Model()
+    p.grad = None  # ensure clean slate
+    _train_step_with_oom_ladder(model, _make_batch(4), state, forward_call=_fake_forward_call)
+    # batch = [0,1,2,3], sum = 6.  After OOM mb halves to 2 → n_micro = 2.
+    # The helper applies (loss / n_micro).backward() each microbatch.
+    # Microbatch [0,1]: loss = p*1; (loss/2).backward() → grad contribution = 1/2.
+    # Microbatch [2,3]: loss = p*5; (loss/2).backward() → grad contribution = 5/2.
+    # Total grad = 1/2 + 5/2 = 3.0.
+    # If the closure also divided by n_micro the total would be 1.5 (double-scale bug).
+    assert state.micro_batch_size == 2
+    assert p.grad is not None
+    assert abs(p.grad.item() - 3.0) < 1e-5, (
+        f"Expected grad 3.0 (sum/n_micro = 6/2), got {p.grad.item()} — double-divide?"
+    )
+
+
 @pytest.mark.xfail(reason="depends on Task 5 bundler restructure", strict=False)
 def test_oom_events_serialise_into_bundle_edge_cases() -> None:
     """An end-to-end sanity check that events flowed into the bundler renders.

@@ -213,12 +213,12 @@ def train_step(
             if oom_state is not None:
                 # OOM ladder (Pattern B): treat the batch indices as the microbatch
                 # sequence so the ladder can halve B on OOM. The forward_call
-                # receives a list of image indices (one microbatch slice at a time).
-                # Loss is already divided by (n_classes * grad_accum_steps * n_micro)
-                # inside forward_call; _train_step_with_oom_ladder divides by n_micro
-                # a second time via `(loss / n_micro).backward()`, which double-counts.
-                # To avoid that, we return loss / n_micro from forward_call so the
-                # ladder's backward is correct end-to-end.
+                # receives a list of image indices (one microbatch slice at a time)
+                # and returns the per-microbatch loss divided only by
+                # (n_classes * grad_accum_steps). The helper applies / n_micro via
+                # `(loss / n_micro).backward()`, so the closure must NOT include
+                # n_micro in its denominator — doing so would double-scale gradients
+                # whenever n_micro > 1 (i.e., after any OOM halving).
                 #
                 # We also capture the per-key loss dict for logging by storing it on
                 # a mutable container visible to the closure.
@@ -233,7 +233,6 @@ def train_step(
                     _n_classes: int = len(classes_in_batch),
                     _grad_accum: int = cfg.train.grad_accum_steps,
                 ) -> Tensor:
-                    n_micro = (B + oom_state.micro_batch_size - 1) // oom_state.micro_batch_size  # type: ignore[union-attr]
                     micro_prompts = [_prompts_c[i] for i in micro_indices]
                     micro_targets = [_targets_c[i] for i in micro_indices]
                     micro_hints = [_hints_c[i] for i in micro_indices]
@@ -243,9 +242,9 @@ def train_step(
                         micro_cls_losses = total_loss(micro_out, micro_targets, cfg.train.loss)
                     _last_class_losses.clear()
                     _last_class_losses.append(micro_cls_losses)
-                    # Divide by everything so that (loss / n_micro).backward() in the
-                    # ladder produces the correct gradient magnitude.
-                    return micro_cls_losses["total"] / (_n_classes * _grad_accum * n_micro)
+                    # Divide only by n_classes and grad_accum — NOT by n_micro.
+                    # The ladder helper applies / n_micro in (loss / n_micro).backward().
+                    return micro_cls_losses["total"] / (_n_classes * _grad_accum)
 
                 image_indices = list(range(B))
                 _train_step_with_oom_ladder(
