@@ -181,8 +181,17 @@ def test_adapter_pin_no_conflict_no_warn(tmp_path: Path, caplog: pytest.LogCaptu
         resolved = _resolve_config(opts)
 
     assert resolved.model_name == _BUILTIN_DEFAULT
-    warns = [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert len(warns) == 0, f"Expected no warnings but got: {[r.getMessage() for r in warns]}"
+    # Scope the assertion to its intent: no WARN about adapter/config model-name
+    # disagreement. Unrelated WARNs (e.g. AutoImageProcessor cache miss from
+    # resolve_normalization, see #69) are out of this test's contract.
+    disagreement_warns = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and "disagrees with config/default" in r.getMessage()
+    ]
+    assert len(disagreement_warns) == 0, (
+        f"Expected no disagreement warnings but got: {[r.getMessage() for r in disagreement_warns]}"
+    )
 
 
 # ---------------------------------------------------------------------------
