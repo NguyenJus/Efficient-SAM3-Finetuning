@@ -186,7 +186,7 @@ def test_run_training_resume_reuses_saved_val_source(
                 method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
             ),
             train=TrainHyperparams(
-                epochs=1, batch_size=1, grad_accum_steps=1, save_every=2, log_every=1,
+                epochs=1, batch_size=1, grad_accum_steps=1, save_every=1, log_every=1,
                 warmup_steps=0, num_workers=0,
             ),
         )

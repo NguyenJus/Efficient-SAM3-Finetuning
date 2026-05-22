@@ -323,7 +323,11 @@ def build_hf(
     if pipeline not in ("train", "eval"):
         raise ValueError(f"pipeline must be 'train' or 'eval'; got {pipeline!r}")
     hf_cfg = cfg["hf"]
-    split = hf_cfg["split_train"] if pipeline == "train" else hf_cfg["split_val"]
+    resolved = (cfg.get("_resolved_image_ids") or {}).get(pipeline)
+    if pipeline == "eval" and cfg.get("val") is None and resolved is not None:
+        split = hf_cfg["split_train"]
+    else:
+        split = hf_cfg["split_train"] if pipeline == "train" else hf_cfg["split_val"]
     image_size = int(cfg["image_size"])
     normalize = NormalizeConfig.model_validate(cfg.get("normalize", {}))
     text_prompt = TextPromptConfig.model_validate(cfg.get("text_prompt", {}))
@@ -335,7 +339,6 @@ def build_hf(
         )
     else:
         transforms = build_eval_transforms(image_size, model_name=model_name, normalize=normalize)
-    resolved = (cfg.get("_resolved_image_ids") or {}).get(pipeline)
     return HFDataset(
         name=hf_cfg["name"],
         split=split,
