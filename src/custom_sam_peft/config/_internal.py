@@ -7,11 +7,15 @@ their YAML configuration files.
 
 Per audit Section G (OQ2): dataclass by default; Pydantic only when enum fields,
 constrained ints/floats, or ≥3 end-user-set fields are present.
+
+Internal sub-configs retained here: MatcherWeights, WandbConfig, ExportConfig.
+LossConfig has been promoted to a Pydantic model in config.schema as part of
+the #112 schema break.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -28,33 +32,6 @@ class MatcherWeights:
     lambda_l1: float = 0.0
     lambda_giou: float = 0.0
     lambda_mask: float = 5.0
-
-
-@dataclass
-class LossConfig:
-    """Internal config — not user-set.
-
-    Loss-mix weights and focal CE params for SAM 3.1 training.
-
-    Most fields are demoted internal constants per audit Section E. Only
-    w_mask, w_obj, w_presence, and matcher_weights survive as advanced
-    settings read by the training loop, but none are exposed to the YAML
-    user schema — they are hardcoded defaults here.
-
-    No `w_cls`: discrimination across classes comes from running one forward
-    pass per class prompt. `w_presence` weights the image-level
-    "any-instance-of-this-class-present?" supervision.
-    """
-
-    w_mask: float = 1.0
-    w_obj: float = 1.0
-    w_presence: float = 1.0
-    # w_box is demoted: always 0.0 in all examples; no box supervision in v0.
-    w_box: float = 0.0
-    matcher_weights: MatcherWeights = field(default_factory=MatcherWeights)
-    # focal_gamma and focal_alpha are demoted internal constants.
-    focal_gamma: float = 2.0
-    focal_alpha: float = 0.25
 
 
 @dataclass
