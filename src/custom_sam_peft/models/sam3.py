@@ -331,9 +331,10 @@ def _build_channel_adapter(channels: int, channel_semantics: str) -> nn.Conv2d |
     if not profile.use_adapter:
         return None
     conv = nn.Conv2d(channels, 3, kernel_size=1, bias=True)
+    bias: Tensor = cast(Tensor, conv.bias)  # bias=True guarantees non-None
     with torch.no_grad():
         conv.weight.zero_()
-        conv.bias.zero_()
+        bias.zero_()
         if profile.adapter_init == "average_broadcast":
             conv.weight.fill_(1.0 / channels)
         elif profile.adapter_init == "identity_passthrough":
@@ -344,7 +345,7 @@ def _build_channel_adapter(channels: int, channel_semantics: str) -> nn.Conv2d |
         else:  # pragma: no cover - registry guards this
             raise ValueError(f"unknown adapter_init: {profile.adapter_init!r}")
     conv.weight.requires_grad_(True)
-    conv.bias.requires_grad_(True)
+    bias.requires_grad_(True)
     return conv
 
 
