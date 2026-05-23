@@ -192,6 +192,12 @@ Three short paragraphs:
 2. Larger GPUs (A100, L4, H100) MAY run the suite. A green run on a larger GPU does NOT substitute for a green T4 run for release validation — the VRAM headroom asymmetry means an A100 can mask a T4 OOM that a release-tier run must catch.
 3. The VRAM ceilings in the smoke YAMLs MUST NOT be raised to accommodate larger GPUs. If a future training-loop change pushes T4 above the ceiling, the fix is to reduce VRAM usage (gradient checkpointing knobs, micro-batch shape, etc.), not to raise the ceiling.
 
+> **Note (2026-05-23, #89):** the "gradient checkpointing knobs" named here as a
+> T4-ceiling remediation are now FUNCTIONAL (a dead reference before #89's fix).
+> The "ceilings must not be raised" policy is unchanged and reaffirmed — the fix
+> reduces usage under the existing 14/10 GB ceilings, verified on T4 per the
+> PR's acceptance criteria.
+
 ### 5.5 Section 5: "Data-size policy"
 
 Two short paragraphs:

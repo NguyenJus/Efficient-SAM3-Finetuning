@@ -297,6 +297,13 @@ tracking:
   backend: none
 ```
 
+> **Reconciliation (2026-05-23, #89):** `gpu_smoke_lora.yaml` now ships
+> `gradient_checkpointing: true` (the flag was flipped to `false` under #60 and
+> is re-enabled by #89's activation-checkpointing fix), so this listing is
+> accurate again. The VRAM-ceiling rationale can now cite a *working*
+> checkpointing lever (peak VRAM lower with checkpointing on, verified on T4 per
+> the PR's acceptance criteria).
+
 **Rationale block.**
 
 - `run.seed: 0` matches the existing test (deterministic on overfit setup).
