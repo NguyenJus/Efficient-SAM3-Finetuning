@@ -317,16 +317,17 @@ def run_predict(opts: PredictOptions) -> PredictReport:
     # Step 6b: resolve batch_size (spec §13 AC 13)
     # ---------------------------------------------------------------------------
     if opts.batch_size == "auto":
+        from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
         from custom_sam_peft.presets import decide_eval_batch_size
 
-        bs, _, _ = decide_eval_batch_size(rcfg.image_size, classes_per_forward=16)
+        bs, _, _ = decide_eval_batch_size(rcfg.image_size, classes_per_forward=MULTIPLEX_CAP)
     else:
         bs = int(opts.batch_size)
 
     # ---------------------------------------------------------------------------
     # Step 7: VRAM hint (spec §6, §12)
     # ---------------------------------------------------------------------------
-    if rcfg.device == "cuda" and opts.batch_size == 1:
+    if rcfg.device == "cuda" and bs == 1:
         try:
             free_bytes, _ = torch.cuda.mem_get_info()
             if free_bytes > 12 * 1024**3:

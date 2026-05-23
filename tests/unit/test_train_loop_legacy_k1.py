@@ -139,6 +139,95 @@ def test_legacy_k1_rng_draw_order_matches_per_class_loop(
     assert result.n_classes == K_total
 
 
+def test_legacy_k1_rng_draw_order_pinned_interleaving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the exact (image, class) interleaving of RNG draws at K=1.
+
+    At classes_per_forward=1, groups are single-class in sorted order.
+    For each group the inner loop runs `for i in range(B): for c in group:`,
+    so draws are image-major within each group:
+        call 0 → (i=0, cls="A"),  call 1 → (i=1, cls="A")
+        call 2 → (i=0, cls="B"),  call 3 → (i=1, cls="B")
+
+    We confirm this by returning a deterministic sequence from random.random()
+    and asserting that n_hint_applied matches the hand-computed expected count
+    based on which (draw_index) values fall below p_t=0.5.
+
+    Sequence: [0.0, 1.0, 1.0, 0.0]
+      draw 0 (i=0, cls=A): 0.0 < 0.5 → hint applied   (A has instances on img 0)
+      draw 1 (i=1, cls=A): 1.0 >= 0.5 → no hint        (A has instances on img 1, but val >= p_t)
+      draw 2 (i=0, cls=B): 1.0 >= 0.5 → no hint
+      draw 3 (i=1, cls=B): 0.0 < 0.5 → hint applied   (B has instances on img 1)
+    Expected n_hint_applied = 2 (draws 0 and 3).
+
+    If the loop order were swapped to (class-major within image), the assignment
+    of draw indices to (i, c) cells changes and the expected count would differ.
+    """
+    cfg = _make_cfg_k1()
+    cfg.train.box_hint.p_start = 0.5
+    cfg.train.box_hint.p_end = 0.5
+    cfg.train.box_hint.decay_steps = 1
+
+    B = 2
+    K_total = 2
+    class_names = ["A", "B"]
+
+    # Each image has instances for both classes, so every (i, c) cell is eligible
+    # for hint application; the gate is purely the RNG draw vs. p_t.
+    batch = _batch(
+        prompts=[["A", "B"], ["A", "B"]],
+        instances=[
+            [_instance(0), _instance(1)],
+            [_instance(0), _instance(1)],
+        ],
+    )
+
+    wrapper = _make_wrapper()
+    opt = _make_optimizer(wrapper)
+    sched = _make_scheduler(opt)
+
+    # Deterministic sequence: draw index → value.
+    # Expected draw-to-cell mapping (image-major within group, sorted group order):
+    #   draw 0 → (i=0, c=A): 0.0 < 0.5 → hint
+    #   draw 1 → (i=1, c=A): 1.0 >= 0.5 → no hint
+    #   draw 2 → (i=0, c=B): 1.0 >= 0.5 → no hint
+    #   draw 3 → (i=1, c=B): 0.0 < 0.5 → hint
+    rng_sequence = [0.0, 1.0, 1.0, 0.0]
+    rng_idx = [0]
+
+    def fake_random() -> float:
+        val = rng_sequence[rng_idx[0] % len(rng_sequence)]
+        rng_idx[0] += 1
+        return val
+
+    monkeypatch.setattr(random, "random", fake_random)
+
+    result = train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=0,
+        nan_streak=0,
+    )
+
+    # Exactly B * K_total = 4 draws.
+    assert rng_idx[0] == B * K_total, f"Expected {B * K_total} RNG draws; got {rng_idx[0]}"
+    # With the image-major draw order and the sequence above, exactly 2 hints fire
+    # (draws 0 and 3).  A class-minor-within-image loop order would assign different
+    # (i, c) pairs to draws 1 and 2, changing the count.
+    expected_hints = 2  # draws 0 and 3 are < p_t=0.5
+    assert result.n_hint_applied == expected_hints, (
+        f"Expected {expected_hints} hints (image-major draw order); got {result.n_hint_applied}. "
+        "This likely means the (i, c) loop order changed."
+    )
+    assert not result.skipped
+    assert result.n_classes == K_total
+
+
 def test_legacy_k1_each_model_call_has_one_class(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

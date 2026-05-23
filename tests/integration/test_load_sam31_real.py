@@ -61,5 +61,8 @@ def test_load_sam31_multiplex_K8_forward() -> None:
     with torch.no_grad():
         outputs = wrapper(image, prompts)
     assert outputs["pred_logits"].shape[0] == b * k
+    assert outputs["presence_logit_dec"].shape[0] == b * k
+    assert outputs["pred_masks"].shape[0] == b * k
+    assert outputs["pred_boxes"].shape[0] == b * k
     assert torch.isfinite(outputs["pred_logits"]).all()
     assert torch.isfinite(outputs["pred_boxes"]).all()

@@ -63,9 +63,7 @@ def _eval_forward_with_oom_ladder(
         if state["batch_size"] > 1:
             state["batch_size"] //= 2
             if not state["warned"]:
-                _LOG.warning(
-                    "eval OOM — halving batch_size to %d", state["batch_size"]
-                )
+                _LOG.warning("eval OOM — halving batch_size to %d", state["batch_size"])
                 state["warned"] = True
             raise
         raise RuntimeError(
@@ -197,6 +195,13 @@ class Evaluator:
                     images_t = to_device(
                         torch.stack([ex.image for ex in image_chunk]), eval_runtime
                     )
+                    # Collect this chunk's predictions into a local buffer so that
+                    # a mid-chunk OOM (which breaks out of the group loop) discards
+                    # the partial results rather than committing them.  Without this,
+                    # groups already processed before the OOM would be extended into
+                    # `predictions` and then re-emitted when the outer while-loop
+                    # re-runs the same image_chunk at the halved batch size.
+                    chunk_buf: list[dict[str, object]] = []
                     advanced_i = False
                     for group in _chunked(dataset.class_names, MULTIPLEX_CAP):
                         K_g = len(group)
@@ -206,7 +211,8 @@ class Evaluator:
                                 model, images_t, prompts_g, state=state
                             )
                         except torch.cuda.OutOfMemoryError:
-                            # state["batch_size"] was halved; re-chunk from i.
+                            # state["batch_size"] was halved; discard chunk_buf and
+                            # re-chunk from i at the new (smaller) batch size.
                             break
                         for r in range(len(image_chunk) * K_g):
                             ii, kk = divmod(r, K_g)
@@ -224,9 +230,11 @@ class Evaluator:
                                 original_hw,
                                 cfg.mask_threshold,
                             )
-                            predictions.extend(entries)
+                            chunk_buf.extend(entries)
                     else:
                         # No break: completed all groups for this image_chunk.
+                        # Only now commit the buffer — avoids duplicates on OOM retry.
+                        predictions.extend(chunk_buf)
                         advanced_i = True
                     if advanced_i:
                         i += len(image_chunk)

@@ -354,9 +354,22 @@ def decide_eval_batch_size(
 
     On CPU: returns (1, 0, "analytic") and logs once.
     Spec: design §8.
+
+    Note: ``classes_per_forward`` is accepted for API stability but does **not**
+    currently affect the returned batch size.  K (classes per forward) is folded
+    into ``forward_only_factor`` empirically (spec §8) rather than computed from
+    this parameter.  It is reserved for a future K-aware tuning pass (spec §12
+    follow-up).  Pass ``MULTIPLEX_CAP`` from ``custom_sam_peft.models.sam3`` so
+    that callsites remain correct when K-awareness is wired in.
     """
     if not isinstance(image_size, int) or image_size <= 0:
         raise ValueError("image_size must be a positive integer")
+    # Guard against mis-use: classes_per_forward must be in [1, MULTIPLEX_CAP].
+    # Import lazily to avoid a circular dependency at module load time.
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP as _CAP
+
+    if not (1 <= classes_per_forward <= _CAP):
+        raise ValueError(f"classes_per_forward must be in [1, {_CAP}]; got {classes_per_forward}")
     if not torch.cuda.is_available():
         _LOG.info("eval.batch_size=auto on CPU -> falling back to 1")
         return 1, 0, "analytic"
