@@ -442,7 +442,7 @@ class DataConfig(_Strict):
                 f"data.channels={allowed_str}, but data.channels={self.channels}."
             )
 
-        # (c) resolve normalize: explicit wins; else profile default; freeform requires explicit.
+        # (b) resolve normalize: explicit wins; else profile default; freeform requires explicit.
         if self.normalize is None:
             if profile.normalize_default is None:
                 raise ValueError(
@@ -453,7 +453,7 @@ class DataConfig(_Strict):
             mean, std = profile.normalize_default
             self.normalize = NormalizeConfig(mean=list(mean), std=list(std))
 
-        # (b) length cross-check (after default materialization)
+        # (c) length cross-check (after default materialization)
         if len(self.normalize.mean) != self.channels or len(self.normalize.std) != self.channels:
             raise ValueError(
                 f"data.normalize.mean has {len(self.normalize.mean)} entries but "

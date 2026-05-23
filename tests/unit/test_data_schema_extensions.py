@@ -228,3 +228,9 @@ def test_normalize_length_must_match_channels():
             channels=5, channel_semantics="freeform",
             normalize={"mean": [0.1, 0.2, 0.3], "std": [0.1, 0.2, 0.3]},
         )
+
+
+def test_explicit_normalize_wrong_length_rejected_for_named_semantic():
+    with pytest.raises(ValueError, match=r"data\.normalize\.mean has 4 entries but .*channels=3"):
+        _make_data(channels=3, channel_semantics="rgb",
+                   normalize={"mean": [0.1] * 4, "std": [0.2] * 4})
