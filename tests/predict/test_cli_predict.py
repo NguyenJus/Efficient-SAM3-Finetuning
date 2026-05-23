@@ -476,7 +476,9 @@ def test_cli_predict_accepts_auto_batch_size(tmp_path: Path) -> None:
             catch_exceptions=False,
         )
 
-    assert result.exit_code == 0, f"Expected exit 0 with --batch-size auto; got {result.exit_code}. Output: {result.output}"
+    assert result.exit_code == 0, (
+        f"Expected exit 0 with --batch-size auto; got {result.exit_code}. Output: {result.output}"
+    )
     # The option must have been forwarded correctly as "auto"
     assert len(captured) == 1
     assert captured[0].batch_size == "auto", (

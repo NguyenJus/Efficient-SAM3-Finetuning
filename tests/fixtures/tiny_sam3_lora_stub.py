@@ -79,7 +79,9 @@ class TinySam3LoraStub(nn.Module):
         # total_loss receives consistent (B*K, ...) shapes and _image_has_target (which
         # is also length B*K) does not trigger a BCE shape mismatch.
         k = 1
-        from custom_sam_peft.data.base import TextPrompts as _TextPrompts  # local import to avoid circulars
+        from custom_sam_peft.data.base import (
+            TextPrompts as _TextPrompts,
+        )  # local import to avoid circulars
 
         if isinstance(prompts, list) and prompts and isinstance(prompts[0], _TextPrompts):
             k = len(prompts[0].classes)
