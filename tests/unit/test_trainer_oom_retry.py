@@ -242,3 +242,20 @@ def test_oom_events_serialise_into_bundle_edge_cases() -> None:
         write_bundle(ctx, report, val_dataset=val_ds, model_wrapper=_MM())
         summary = (tmp_path / "run" / "summary.md").read_text()
         assert "OOM retries: 1" in summary
+
+
+def test_grad_ckpt_rung_applies_patch_to_live_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the ladder flips gradient_checkpointing on, it must apply the
+    activation-checkpoint patch to the live model (Break 3 / #89), not just
+    set the state flag."""
+    import custom_sam_peft.models.sam3 as sam3_mod
+
+    applied: list[object] = []
+    monkeypatch.setattr(sam3_mod, "_patch_enable_vit_act_checkpoint", lambda m: applied.append(m))
+
+    state = _State(micro_batch_size=1, gradient_checkpointing=False)
+    model = _OomThenOk(n_oom=1)  # mb already 1 → first OOM flips ckpt, retry succeeds
+    _train_step_with_oom_ladder(model, _make_batch(1), state, forward_call=_fake_forward_call)
+
+    assert state.gradient_checkpointing is True
+    assert applied == [model], "patch not applied exactly once to the live model on the ckpt rung"

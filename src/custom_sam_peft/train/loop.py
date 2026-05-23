@@ -125,6 +125,13 @@ def _train_step_with_oom_ladder(
                 continue
             if not state.gradient_checkpointing:
                 state.gradient_checkpointing = True
+                # Break 3 fix (#89): actually enable checkpointing on the LIVE
+                # model before retry — setting the flag alone never reached the
+                # model, so the retry ran unchanged and OOMed identically. The
+                # patch is idempotent, so a repeated apply across steps is safe.
+                from custom_sam_peft.models import sam3 as _sam3_mod
+
+                _sam3_mod._patch_enable_vit_act_checkpoint(model)
                 state.pending_oom_events.append(
                     OomEvent(
                         step=state.step,
@@ -134,7 +141,7 @@ def _train_step_with_oom_ladder(
                     )
                 )
                 _LOG.warning(
-                    "OOM at step %d — enabling gradient_checkpointing",
+                    "OOM at step %d — enabling gradient_checkpointing on the live model",
                     state.step,
                 )
                 continue
