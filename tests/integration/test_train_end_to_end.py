@@ -302,9 +302,9 @@ def test_missing_annotation_entry_does_not_crash(tmp_path: Path) -> None:
 def test_e2e_auto_split_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> None:
     """Spec §9.10.2: end-to-end run with val_split=0.5 creates val_source.json
     and metrics.json (with overall mAP from the carved val set)."""
+    import custom_sam_peft.train.runner as runner_mod
     from custom_sam_peft.config.schema import ValSplitConfig
     from custom_sam_peft.data.val_source import load_val_source
-    from custom_sam_peft.train.runner import run_training
 
     cfg = TrainConfig(
         run=RunConfig(name="e2e-auto", output_dir=str(tmp_path), seed=0),
@@ -334,12 +334,10 @@ def test_e2e_auto_split_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> Non
     )
 
     # Stub the model so this runs on CPU.
-    import custom_sam_peft.train.runner as runner_mod
-
     orig_load = runner_mod.load_sam31
     runner_mod.load_sam31 = lambda _m: make_stub_wrapper(dim=8, working=True)  # type: ignore[assignment]
     try:
-        result = run_training(cfg)
+        result = runner_mod.run_training(cfg)
     finally:
         runner_mod.load_sam31 = orig_load  # type: ignore[assignment]
 
@@ -355,8 +353,8 @@ def test_e2e_auto_split_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> Non
 def test_e2e_no_val_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> None:
     """Spec §9.10.3: end-to-end no-val run creates val_source.json with mode=none
     and metrics.json with the no-val note."""
+    import custom_sam_peft.train.runner as runner_mod
     from custom_sam_peft.data.val_source import load_val_source
-    from custom_sam_peft.train.runner import run_training
 
     cfg = TrainConfig(
         run=RunConfig(name="e2e-noval", output_dir=str(tmp_path), seed=0),
@@ -385,12 +383,10 @@ def test_e2e_no_val_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> None:
         ),
     )
 
-    import custom_sam_peft.train.runner as runner_mod
-
     orig_load = runner_mod.load_sam31
     runner_mod.load_sam31 = lambda _m: make_stub_wrapper(dim=8, working=True)  # type: ignore[assignment]
     try:
-        result = run_training(cfg)
+        result = runner_mod.run_training(cfg)
     finally:
         runner_mod.load_sam31 = orig_load  # type: ignore[assignment]
 

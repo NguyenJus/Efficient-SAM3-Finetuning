@@ -316,6 +316,8 @@ def test_write_bundle_no_val_contains_no_validation_set_line(tmp_path: Path) -> 
     write_bundle(ctx, metrics_report=None, val_dataset=None, model_wrapper=MagicMock())
     summary = (ctx.run_dir / "summary.md").read_text()
     assert "No validation set" in summary
+
+
 def _fake_reinfer(*_a: object, **_k: object) -> tuple[Image.Image, np.ndarray, np.ndarray]:
     return (
         Image.new("RGB", (8, 8)),
