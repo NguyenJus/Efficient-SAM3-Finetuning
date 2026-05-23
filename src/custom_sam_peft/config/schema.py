@@ -268,10 +268,20 @@ class NormalizeConfig(_Strict):
 
     # --- advanced --- (all normalize fields override the AutoImageProcessor-derived stats)
     mean: list[float] = Field(
-        default_factory=lambda: [0.485, 0.456, 0.406], min_length=3, max_length=3
+        default_factory=lambda: [0.485, 0.456, 0.406], min_length=1, max_length=16
     )
     std: list[float] = Field(
-        default_factory=lambda: [0.229, 0.224, 0.225], min_length=3, max_length=3
+        default_factory=lambda: [0.229, 0.224, 0.225], min_length=1, max_length=16
+    )
+    max_pixel_value: float = Field(
+        default=255.0,
+        gt=0.0,
+        description=(
+            "Divisor applied by A.Normalize before subtracting mean / dividing by "
+            "std. Default 255.0 assumes uint8 input. For float multi-band input "
+            "(e.g. SAR/height already in [0,1]), set this to your data's max (e.g. "
+            "1.0); mean/std must be expressed in the same units. See spec §7.2."
+        ),
     )
 
     @model_validator(mode="after")
