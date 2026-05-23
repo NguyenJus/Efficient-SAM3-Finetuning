@@ -166,17 +166,21 @@ def test_channels_defaults_to_three_and_semantic_rgb():
 
 
 def test_channels_accepts_1_and_16_rejects_0_and_17():
+    from pydantic import ValidationError as PydanticValidationError
+
     _make_data(channels=1, channel_semantics="grayscale")
     _make_data(channels=16, channel_semantics="freeform",
                normalize={"mean": [0.5] * 16, "std": [0.2] * 16})
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         _make_data(channels=0)
-    with pytest.raises(Exception):
+    with pytest.raises(PydanticValidationError):
         _make_data(channels=17)
 
 
 def test_channel_semantics_membership():
-    with pytest.raises(Exception):
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError):
         _make_data(channel_semantics="hyperspectral")
 
 

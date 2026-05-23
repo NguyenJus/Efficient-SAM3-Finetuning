@@ -423,7 +423,7 @@ class DataConfig(_Strict):
         return self
 
     @model_validator(mode="after")
-    def _check_channels_semantics_normalize(self) -> "DataConfig":
+    def _check_channels_semantics_normalize(self) -> DataConfig:
         profile = CHANNEL_SEMANTICS[self.channel_semantics]
 
         # (a) semantic <-> channels match
