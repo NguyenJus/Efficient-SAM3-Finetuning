@@ -1,13 +1,14 @@
+import dataclasses
+
 import pytest
 
 from custom_sam_peft.data.channel_semantics import (
-    CHANNEL_SEMANTICS,
     CHANNEL_SEMANTIC_NAMES,
-    ChannelSemanticsProfile,
+    CHANNEL_SEMANTICS,
 )
 
-_IMAGENET_MEAN = [0.485, 0.456, 0.406]
-_IMAGENET_STD = [0.229, 0.224, 0.225]
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 def test_registry_has_four_shipped_semantics():
@@ -30,8 +31,8 @@ def test_rgba_profile_identity_passthrough_alpha_default():
     assert p.adapter_init == "identity_passthrough"
     assert p.photometric is True
     mean, std = p.normalize_default
-    assert mean == _IMAGENET_MEAN + [0.5]
-    assert std == _IMAGENET_STD + [0.5]
+    assert mean == (*_IMAGENET_MEAN, 0.5)
+    assert std == (*_IMAGENET_STD, 0.5)
 
 
 def test_grayscale_profile_luminance_default():
@@ -40,7 +41,7 @@ def test_grayscale_profile_luminance_default():
     assert p.use_adapter is True
     assert p.adapter_init == "average_broadcast"
     assert p.photometric is True
-    assert p.normalize_default == ([0.449], [0.226])
+    assert p.normalize_default == ((0.449,), (0.226,))
 
 
 def test_freeform_profile_no_default_range_channels():
@@ -53,7 +54,7 @@ def test_freeform_profile_no_default_range_channels():
 
 
 def test_profile_is_frozen():
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         CHANNEL_SEMANTICS["rgb"].use_adapter = True  # type: ignore[misc]
 
 

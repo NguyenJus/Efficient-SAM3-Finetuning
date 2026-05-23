@@ -12,8 +12,8 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
 
-_IMAGENET_MEAN = [0.485, 0.456, 0.406]
-_IMAGENET_STD = [0.229, 0.224, 0.225]
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 @dataclass(frozen=True)
@@ -25,30 +25,30 @@ class ChannelSemanticsProfile:
     adapter_init: Literal["average_broadcast", "identity_passthrough"]
     photometric: bool  # True for rgb/rgba/grayscale; False for freeform
     # (mean, std) tuple, or None when explicit stats are required (freeform).
-    normalize_default: tuple[list[float], list[float]] | None
+    normalize_default: tuple[tuple[float, ...], tuple[float, ...]] | None
 
 
 CHANNEL_SEMANTICS: dict[str, ChannelSemanticsProfile] = {
     "rgb": ChannelSemanticsProfile(
         allowed_channels=frozenset({3}),
         use_adapter=False,
-        adapter_init="average_broadcast",
+        adapter_init="average_broadcast",  # unused when use_adapter=False (passthrough)
         photometric=True,
-        normalize_default=(list(_IMAGENET_MEAN), list(_IMAGENET_STD)),
+        normalize_default=(_IMAGENET_MEAN, _IMAGENET_STD),
     ),
     "rgba": ChannelSemanticsProfile(
         allowed_channels=frozenset({4}),
         use_adapter=True,
         adapter_init="identity_passthrough",
         photometric=True,
-        normalize_default=(_IMAGENET_MEAN + [0.5], _IMAGENET_STD + [0.5]),
+        normalize_default=((*_IMAGENET_MEAN, 0.5), (*_IMAGENET_STD, 0.5)),
     ),
     "grayscale": ChannelSemanticsProfile(
         allowed_channels=frozenset({1}),
         use_adapter=True,
         adapter_init="average_broadcast",
         photometric=True,
-        normalize_default=([0.449], [0.226]),
+        normalize_default=((0.449,), (0.226,)),
     ),
     "freeform": ChannelSemanticsProfile(
         allowed_channels=range(1, 17),
