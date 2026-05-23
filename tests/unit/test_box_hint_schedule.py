@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from custom_sam_peft.config.schema import (
     BoxHintSchedule,
-    LossConfig,
     MatcherWeights,
     TrainHyperparams,
 )
@@ -53,11 +52,6 @@ def test_train_hyperparams_optimizer_accepts_explicit_values() -> None:
     for opt in ("adamw", "adamw8bit", "auto"):
         h = TrainHyperparams(epochs=1, optimizer=opt)
         assert h.optimizer == opt
-
-
-def test_loss_config_default_w_box_is_zero() -> None:
-    """v0 text-only training drops box supervision."""
-    assert LossConfig().w_box == 0.0
 
 
 def test_matcher_weights_default_box_terms_are_zero() -> None:

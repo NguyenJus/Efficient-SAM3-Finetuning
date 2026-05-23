@@ -164,12 +164,22 @@ def total_loss(
 
     `outputs` is Meta's raw per-class forward dict. `targets[i]` is the list of
     GT instances of the prompt's class for image i (may be empty).
+
+    Phase-G bridge shim: resolves the new (preset, class_imbalance, overrides)
+    LossConfig into a ResolvedLosses so the old term helpers can be called with
+    concrete values.  Phase C will replace this function body with a proper
+    LossBundle-based implementation.
     """
+    from custom_sam_peft.models.losses.presets import resolve as _resolve
+
+    r = _resolve(cfg)
+    mw = r.matcher_weights
+
     canonical = meta_to_canonical(outputs)
     matcher = HungarianMatcher(
-        lambda_l1=cfg.matcher_weights.lambda_l1,
-        lambda_giou=cfg.matcher_weights.lambda_giou,
-        lambda_mask=cfg.matcher_weights.lambda_mask,
+        lambda_l1=mw.lambda_l1,
+        lambda_giou=mw.lambda_giou,
+        lambda_mask=mw.lambda_mask,
     )
     indices = matcher(canonical, targets)
 
@@ -186,15 +196,15 @@ def total_loss(
         "obj": objectness_loss(
             canonical.obj_logits,
             matched_mask,
-            gamma=cfg.focal_gamma,
-            alpha=cfg.focal_alpha,
+            gamma=r.focal_gamma,
+            alpha=r.focal_alpha,
         ),
         "presence": presence_loss(canonical.img_presence, has_target),
     }
     losses["total"] = (
-        cfg.w_mask * losses["mask"]
-        + cfg.w_box * losses["box"]
-        + cfg.w_obj * losses["obj"]
-        + cfg.w_presence * losses["presence"]
+        r.w_mask * losses["mask"]
+        + r.w_box * losses["box"]
+        + r.w_obj * losses["obj"]
+        + r.w_presence * losses["presence"]
     )
     return losses
