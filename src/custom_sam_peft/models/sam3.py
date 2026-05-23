@@ -162,6 +162,12 @@ def _build_geometric_prompt(
     return Prompt(box_embeddings=box_embeddings, box_mask=box_mask, box_labels=None)
 
 
+# SAM 3.1's multiplex forward is trained at K ≤ 16 class prompts per call.
+# This is a model property, not a tunable. Trainer/evaluator/predict cite
+# this constant for chunking; see docs/superpowers/specs/2026-05-23-multiplex-forward-design.md §4.
+MULTIPLEX_CAP: int = 16
+
+
 class Sam3Wrapper(nn.Module):
     """Thin wrapper around Meta's SAM 3.1 model.
 

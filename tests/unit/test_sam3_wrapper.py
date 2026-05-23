@@ -59,3 +59,9 @@ def test_sam3_wrapper_has_peft_model_slot() -> None:
     wrapper = Sam3Wrapper(nn.Identity(), image_size=8, mask_size=8)
     assert hasattr(wrapper, "peft_model")
     assert wrapper.peft_model is None
+
+
+def test_multiplex_cap_constant_exists() -> None:
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
+
+    assert MULTIPLEX_CAP == 16
