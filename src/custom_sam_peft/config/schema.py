@@ -54,9 +54,32 @@ class DataSplit(_Strict):
     images: str = Field(min_length=1)
 
 
+Preset = Literal["natural", "medical", "satellite", "microscopy", "none", "custom"]
+Intensity = Literal["safe", "medium", "aggressive"]
+
+
+class AugmentationOverrides(_Strict):
+    """Per-knob overrides. All None → inherit from (preset, intensity).
+
+    Setting any field to a non-None value replaces just that field in the
+    resolved table. Extra keys are rejected (extra="forbid"); typos surface
+    at config-load time.
+    """
+
+    hflip: bool | None = None
+    vflip: bool | None = None
+    rotate90: bool | None = None
+    rotate_arbitrary: float | None = Field(default=None, ge=0.0)
+    color_jitter: float | None = Field(default=None, ge=0.0)
+    stain_jitter: float | None = Field(default=None, ge=0.0)
+    blur: float | None = Field(default=None, ge=0.0)
+    gauss_noise: float | None = Field(default=None, ge=0.0)
+
+
 class AugmentationsConfig(_Strict):
-    hflip: bool = True
-    color_jitter: float = Field(default=0.1, ge=0.0, le=1.0)
+    preset: Preset = "natural"
+    intensity: Intensity = "medium"
+    overrides: AugmentationOverrides = Field(default_factory=AugmentationOverrides)
 
 
 class TextPromptConfig(_Strict):

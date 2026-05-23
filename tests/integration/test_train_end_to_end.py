@@ -34,7 +34,7 @@ def _ds(tiny_coco_dir: Path, pipeline: str) -> COCODataset:
 
     if pipeline == "train":
         transforms = build_train_transforms(
-            AugmentationsConfig(hflip=False, color_jitter=0.0),
+            AugmentationsConfig(preset="none"),
             32,
             model_name="facebook/sam3.1",
             normalize=NormalizeConfig(),
@@ -76,6 +76,7 @@ def test_fit_end_to_end_on_tiny_coco(backend: str, tmp_path: Path, tiny_coco_dir
             ),
             prompt_mode="text",
             image_size=32,
+            augmentations=AugmentationsConfig(preset="none"),
         ),
         peft=PEFTConfig(
             method="lora",
@@ -101,6 +102,13 @@ def test_fit_end_to_end_on_tiny_coco(backend: str, tmp_path: Path, tiny_coco_dir
 
     assert result.run_dir.exists()
     assert (result.run_dir / "adapter" / "adapter_config.json").exists()
+    sidecar = result.run_dir / "augmentation_pipeline.json"
+    assert sidecar.exists()
+    blob = json.loads(sidecar.read_text())
+    assert blob["preset"] == "none"  # this test uses preset=none (post-Phase-G migration)
+    assert blob["steps"][:2] == ["LongestMaxSize", "PadIfNeeded"]
+    assert blob["steps"][-2:] == ["Normalize", "ToTensorV2"]
+    assert blob["library_version"]
     payload = json.loads((result.run_dir / "metrics.json").read_text())
     assert payload["global_step"] >= 1
     ckpts = list((result.run_dir / "checkpoints").glob("step_*"))
@@ -165,7 +173,7 @@ def test_malformed_coco_json_raises_clear_error(tmp_path: Path) -> None:
             images=str(images),
             prompt_mode="text",
             transforms=build_train_transforms(
-                AugmentationsConfig(hflip=False, color_jitter=0.0),
+                AugmentationsConfig(preset="none"),
                 32,
                 model_name="facebook/sam3.1",
                 normalize=NormalizeConfig(),
@@ -206,7 +214,7 @@ def test_missing_image_file_raises_clear_error(tmp_path: Path) -> None:
         images=str(images),
         prompt_mode="text",
         transforms=build_train_transforms(
-            AugmentationsConfig(hflip=False, color_jitter=0.0),
+            AugmentationsConfig(preset="none"),
             32,
             model_name="facebook/sam3.1",
             normalize=NormalizeConfig(),
@@ -271,7 +279,7 @@ def test_missing_annotation_entry_does_not_crash(tmp_path: Path) -> None:
         images=str(images),
         prompt_mode="text",
         transforms=build_train_transforms(
-            AugmentationsConfig(hflip=False, color_jitter=0.0),
+            AugmentationsConfig(preset="none"),
             32,
             model_name="facebook/sam3.1",
             normalize=NormalizeConfig(),

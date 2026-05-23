@@ -10,6 +10,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from custom_sam_peft.config.loader import ConfigError, load_config
+from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.data.aug_presets import (
+    _STEP_NAMES_FOR,
+    dump_augmentation_pipeline,
+    resolve,
+)
+from custom_sam_peft.data.transforms import resolve_normalization_with_path
 from custom_sam_peft.diagnostics import DoctorReport, run_doctor
 
 
@@ -82,35 +90,87 @@ def _render_table(report: DoctorReport) -> None:
             issues.add_row("•", msg)
         console.print(issues)
 
-    if report.data is not None:
-        d = Table(title="Data", show_header=False, box=None)
-        d.add_row("val mode", report.data.val_mode)
-        if report.data.val_path is not None:
-            d.add_row("val path", report.data.val_path)
-        if report.data.val_split_fraction is not None:
-            d.add_row("val_split.fraction", f"{report.data.val_split_fraction:.3f}")
-            d.add_row("val_split.seed", str(report.data.val_split_seed))
-        console.print(d)
+
+def _render_resolved_config_tables(cfg: TrainConfig) -> None:
+    """Spec §11.2.1 + §11.2.2 — two additional tables when --config is set."""
+    console = Console()
+
+    resolved = resolve(cfg.data.augmentations)
+    aug = Table(title="Resolved augmentations", show_header=False, box=None)
+    aug.add_row("preset", cfg.data.augmentations.preset)
+    aug.add_row("intensity", cfg.data.augmentations.intensity)
+    aug.add_row("hflip", str(resolved.hflip))
+    aug.add_row("vflip", str(resolved.vflip))
+    aug.add_row("rotate90", str(resolved.rotate90))
+    aug.add_row("rotate_arbitrary", str(resolved.rotate_arbitrary))
+    aug.add_row("color_jitter", str(resolved.color_jitter))
+    aug.add_row("stain_jitter", str(resolved.stain_jitter))
+    aug.add_row("blur", str(resolved.blur))
+    aug.add_row("gauss_noise", str(resolved.gauss_noise))
+    aug.add_row("steps", ", ".join(_STEP_NAMES_FOR(resolved)))
+    console.print(aug)
+
+    mean, std, path = resolve_normalization_with_path(cfg.model.name, cfg.data.normalize)
+    norm = Table(title="Normalization", show_header=False, box=None)
+    norm.add_row("model.name", cfg.model.name)
+    norm.add_row("mean", str(mean))
+    norm.add_row("std", str(std))
+    norm.add_row("resolution path", path)
+    console.print(norm)
+
+
+def _build_resolved_config_json(cfg: TrainConfig) -> dict[str, object]:
+    """Spec §11.2.3 — additive `resolved_config` block injected into --json."""
+    aug_dump = dump_augmentation_pipeline(cfg.data.augmentations)
+    mean, std, path = resolve_normalization_with_path(cfg.model.name, cfg.data.normalize)
+    return {
+        "augmentations": {
+            "preset": aug_dump["preset"],
+            "intensity": aug_dump["intensity"],
+            "resolved": aug_dump["resolved"],
+            "steps": aug_dump["steps"],
+        },
+        "normalize": {
+            "model_name": cfg.model.name,
+            "mean": mean,
+            "std": std,
+            "resolution_path": path,
+        },
+    }
 
 
 def doctor(
     weights_path: Path | None = typer.Option(
         None, "--weights-path", help="Override SAM 3.1 weights file path."
     ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
     config_path: Path | None = typer.Option(
         None,
         "--config",
         help=(
-            "Load + validate a config YAML; enables the Data table and reports "
-            "resolved dataset sizes. Heavy: may import pycocotools or trigger "
-            "datasets.load_dataset."
+            "Load + validate a config YAML. Reports resolved dataset sizes (may "
+            "import pycocotools or trigger datasets.load_dataset) and renders the "
+            "resolved augmentations and normalization derived from the config."
         ),
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
 ) -> None:
     """Report environment + dependency status."""
     report = run_doctor(weights_path=weights_path, config_path=config_path)
+    # run_doctor already swallows ConfigError / ValidationError into report.issues;
+    # we mirror that here so a bad --config still exits 0 with the rendered report.
+    cfg = None
+    if config_path is not None:
+        try:
+            cfg = load_config(config_path)
+        except (ConfigError, ValueError):
+            cfg = None
+
     if json_output:
-        print(json.dumps(dataclasses.asdict(report), default=str, indent=2))  # noqa: T201
+        blob = dataclasses.asdict(report)
+        if cfg is not None:
+            blob["resolved_config"] = _build_resolved_config_json(cfg)
+        print(json.dumps(blob, default=str, indent=2))  # noqa: T201
     else:
         _render_table(report)
+        if cfg is not None:
+            _render_resolved_config_tables(cfg)

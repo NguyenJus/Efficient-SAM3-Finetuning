@@ -361,7 +361,7 @@ def test_register_hf_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
         },
         "prompt_mode": "bbox",
         "image_size": 8,
-        "augmentations": {"hflip": False, "color_jitter": 0.0},
+        "augmentations": {"preset": "none"},
         "text_prompt": {"mode": "present"},
         "normalize": {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     }
@@ -460,7 +460,7 @@ def test_build_hf_train_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
         },
         "prompt_mode": "bbox",
         "image_size": 8,
-        "augmentations": {"hflip": False, "color_jitter": 0.0},
+        "augmentations": {"preset": "none"},
         "text_prompt": {"mode": "present"},
         "normalize": {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     }

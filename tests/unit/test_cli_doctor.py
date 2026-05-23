@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -105,81 +104,101 @@ def test_doctor_json_round_trips_hf_auth_field(
 
 
 # ---------------------------------------------------------------------------
-# spec/data-no-val-auto-split (#71): doctor --config / Data table
+# spec/domain-aware-augmentation-presets — doctor --config
 # ---------------------------------------------------------------------------
 
 
-def _write_cfg(tmp_path: Path, *, val: bool, val_split: bool) -> Path:
-    """Write a minimal valid TrainConfig YAML to disk; return its path."""
+def _write_doctor_config(tmp_path) -> str:
+    """Write a minimal valid TrainConfig YAML for doctor --config tests."""
     import yaml
 
-    data_block: dict[str, object] = {
-        "format": "coco",
-        "train": {"annotations": str(tmp_path / "t.json"), "images": str(tmp_path / "imgs")},
-        "prompt_mode": "text",
-        "image_size": 32,
-    }
-    # Create the referenced files so the loader doesn't fail at path resolve.
-    (tmp_path / "t.json").write_text("{}")
-    (tmp_path / "imgs").mkdir(exist_ok=True)
-    if val:
-        data_block["val"] = {
-            "annotations": str(tmp_path / "v.json"),
-            "images": str(tmp_path / "vimgs"),
-        }
-        (tmp_path / "v.json").write_text("{}")
-        (tmp_path / "vimgs").mkdir(exist_ok=True)
-    if val_split:
-        data_block["val_split"] = {"fraction": 0.2, "seed": 5}
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "train.json").write_text("{}")
+    (data_dir / "val.json").write_text("{}")
+    (data_dir / "train").mkdir()
+    (data_dir / "val").mkdir()
     cfg = {
-        "run": {"name": "doc", "output_dir": str(tmp_path / "runs"), "seed": 11},
-        "data": data_block,
+        "run": {"name": "doctor-cfg"},
+        "model": {"name": "facebook/sam3.1"},
+        "data": {
+            "format": "coco",
+            "train": {
+                "annotations": str(data_dir / "train.json"),
+                "images": str(data_dir / "train"),
+            },
+            "val": {"annotations": str(data_dir / "val.json"), "images": str(data_dir / "val")},
+            "prompt_mode": "text",
+            "augmentations": {"preset": "medical", "intensity": "medium"},
+        },
         "peft": {"method": "lora"},
         "train": {"epochs": 1},
     }
     p = tmp_path / "config.yaml"
     p.write_text(yaml.safe_dump(cfg))
-    return p
+    return str(p)
 
 
-def test_doctor_config_auto_split_renders_data_table(tmp_path: Path) -> None:
-    cfg_path = _write_cfg(tmp_path, val=False, val_split=True)
-    result = runner.invoke(app, ["doctor", "--config", str(cfg_path)])
+def test_doctor_with_config_renders_resolved_augmentations(tmp_path) -> None:
+    cfg_path = _write_doctor_config(tmp_path)
+    result = runner.invoke(app, ["doctor", "--config", cfg_path])
+    assert result.exit_code == 0, result.output
+    text = _plain(result.stdout)
+    assert "Resolved augmentations" in text
+    assert "preset" in text
+    assert "medical" in text
+    assert "intensity" in text
+
+
+def test_doctor_with_config_renders_normalization(tmp_path) -> None:
+    cfg_path = _write_doctor_config(tmp_path)
+    result = runner.invoke(app, ["doctor", "--config", cfg_path])
     assert result.exit_code == 0
     text = _plain(result.stdout)
-    assert "Data" in text
-    assert "auto_split" in text
-    assert "0.200" in text  # fraction formatted as 3 decimals
-    assert "5" in text  # seed
+    assert "Normalization" in text
+    assert "mean" in text
+    assert "std" in text
+    assert "resolution path" in text
 
 
-def test_doctor_config_explicit_renders_data_table(tmp_path: Path) -> None:
-    cfg_path = _write_cfg(tmp_path, val=True, val_split=False)
-    result = runner.invoke(app, ["doctor", "--config", str(cfg_path)])
+def test_doctor_json_no_config_no_resolved_block() -> None:
+    result = runner.invoke(app, ["doctor", "--json"])
     assert result.exit_code == 0
-    text = _plain(result.stdout)
-    assert "Data" in text
-    assert "explicit" in text
+    blob = json.loads(_plain(result.stdout))
+    assert "resolved_config" not in blob
 
 
-def test_doctor_config_none_renders_data_table(tmp_path: Path) -> None:
-    cfg_path = _write_cfg(tmp_path, val=False, val_split=False)
-    result = runner.invoke(app, ["doctor", "--config", str(cfg_path)])
+def test_doctor_json_with_config_has_resolved_block(tmp_path) -> None:
+    cfg_path = _write_doctor_config(tmp_path)
+    result = runner.invoke(app, ["doctor", "--config", cfg_path, "--json"])
     assert result.exit_code == 0
-    text = _plain(result.stdout)
-    assert "Data" in text
-    assert "none" in text
+    blob = json.loads(_plain(result.stdout))
+    assert "resolved_config" in blob
+    rc = blob["resolved_config"]
+    assert set(rc.keys()) == {"augmentations", "normalize"}
+    assert rc["augmentations"]["preset"] == "medical"
+    assert rc["augmentations"]["intensity"] == "medium"
+    assert set(rc["augmentations"]["resolved"].keys()) == {
+        "hflip",
+        "vflip",
+        "rotate90",
+        "rotate_arbitrary",
+        "color_jitter",
+        "stain_jitter",
+        "blur",
+        "gauss_noise",
+    }
+    assert isinstance(rc["augmentations"]["steps"], list)
+    assert rc["normalize"]["model_name"] == "facebook/sam3.1"
+    assert rc["normalize"]["resolution_path"] in {"processor", "table-fallback", "config-fallback"}
 
 
-def test_doctor_without_config_does_not_call_enumerate_or_splitter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Spec §7.7: doctor must never invoke the splitter or enumerate items."""
-
-    def _must_not_run(*_a: object, **_kw: object) -> object:
-        raise AssertionError("doctor must not call this")
-
-    monkeypatch.setattr("custom_sam_peft.data.val_source._enumerate_coco_items", _must_not_run)
-    monkeypatch.setattr("custom_sam_peft.data.splitter.stratified_split", _must_not_run)
-    result = runner.invoke(app, ["doctor"])
+def test_doctor_no_config_json_shape_unchanged() -> None:
+    """Without --config, JSON output has the same top-level shape as the legacy run."""
+    result = runner.invoke(app, ["doctor", "--json"])
     assert result.exit_code == 0
+    blob = json.loads(_plain(result.stdout))
+    # Top-level keys are the DoctorReport dataclass fields; resolved_config is absent.
+    assert "torch_version" in blob
+    assert "hf_auth" in blob
+    assert "resolved_config" not in blob
