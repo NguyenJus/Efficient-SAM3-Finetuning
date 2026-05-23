@@ -287,6 +287,11 @@ class NormalizeConfig(_Strict):
 
     @model_validator(mode="after")
     def _check_ranges(self) -> NormalizeConfig:
+        if len(self.mean) != len(self.std):
+            raise ValueError(
+                f"normalize.mean has {len(self.mean)} entries but normalize.std has "
+                f"{len(self.std)}; mean and std must have the same length."
+            )
         for m in self.mean:
             if not (0.0 <= m <= 1.0):
                 raise ValueError(f"normalize.mean values must be in [0, 1]; got {m}")
