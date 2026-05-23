@@ -511,6 +511,22 @@ def _patch_module_input_dtype(model: nn.Module) -> None:
     _m.apply(model, Runtime(device=torch.device("cpu"), dtype=torch.float32))
 
 
+def _patch_enable_vit_act_checkpoint(model: nn.Module) -> None:
+    """Delegate to models/_patches/vit_act_checkpoint.apply.
+
+    Config-gated activation-checkpointing patch (NOT in _ALL_PATCHES). Called
+    conditionally from _construct_raw_model and the OOM ladder. See that module
+    for the recompute-mismatch rationale (issue #89).
+    """
+    from custom_sam_peft.models._patches import vit_act_checkpoint as _m
+    from custom_sam_peft.runtime._runtime import Runtime
+
+    params = list(model.parameters())
+    device = params[0].device if params else torch.device("cpu")
+    dtype = params[0].dtype if params else torch.float32
+    _m.apply(model, Runtime(device=device, dtype=dtype))
+
+
 def _locate_weights(cfg: ModelConfig) -> Path:
     """Resolve the checkpoint path from config (HF / local / cache).
 
