@@ -33,6 +33,7 @@ from custom_sam_peft.config._internal import (
     MatcherWeights,
     WandbConfig,
 )
+from custom_sam_peft.data.channel_semantics import CHANNEL_SEMANTICS
 
 __all__ = [  # noqa: RUF022
     # User-facing Pydantic models
@@ -382,9 +383,34 @@ class DataConfig(_Strict):
     val_split: ValSplitConfig | None = None
     prompt_mode: PromptMode
     image_size: PositiveInt = 1008  # SAM3.1's native input; see models/sam3.py:192,304,1202-1203.
+    channels: int = Field(
+        default=3,
+        ge=1,
+        le=16,
+        description=(
+            "Number of input image channels (1..16). The N->3 channel adapter "
+            "(a 1x1 conv inserted before the frozen SAM3.1 patch-embed) bridges "
+            "N channels down to the pretrained 3-channel stem. The cap of 16 is "
+            "deliberate: beyond ~16 channels the 3-channel bottleneck becomes "
+            "lossy, at which point a future 'bridge B' (replacing the patch-embed "
+            "with an in_chans=N stem; issue follow-up) would be warranted instead. "
+            "Explicit only — no auto-detection."
+        ),
+    )
+    channel_semantics: Literal["rgb", "rgba", "grayscale", "freeform"] = Field(
+        default="rgb",
+        description=(
+            "How the input channels are interpreted (independent of the channel "
+            "COUNT in `channels`). Drives the channel adapter (build + init), the "
+            "normalization default, and the augmentation regime. See the "
+            "CHANNEL_SEMANTICS registry (src/custom_sam_peft/data/channel_semantics.py) "
+            "for the per-semantic profile. Default 'rgb' reproduces today's behavior "
+            "exactly. Add new semantics by adding a registry entry."
+        ),
+    )
     augmentations: AugmentationsConfig = Field(default_factory=AugmentationsConfig)
     text_prompt: TextPromptConfig = Field(default_factory=TextPromptConfig)
-    normalize: NormalizeConfig = Field(default_factory=NormalizeConfig)
+    normalize: NormalizeConfig | None = None
     limit: LimitConfig = Field(default_factory=LimitConfig)
     # --- advanced ---
     test: DataSplit | None = None

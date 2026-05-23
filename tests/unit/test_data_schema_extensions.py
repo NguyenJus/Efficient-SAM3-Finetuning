@@ -142,3 +142,39 @@ def test_existing_example_yaml_still_validates() -> None:
         p = repo_root / "configs" / "examples" / name
         raw = yaml.safe_load(p.read_text())
         TrainConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
+# Task 4 + 5: channels / channel_semantics / normalize cross-validation
+# ---------------------------------------------------------------------------
+
+
+def _make_data(**kw):
+    base = dict(
+        format="coco",
+        train={"annotations": "a.json", "images": "imgs"},
+        prompt_mode="text",
+    )
+    base.update(kw)
+    return DataConfig.model_validate(base)
+
+
+def test_channels_defaults_to_three_and_semantic_rgb():
+    d = _make_data()
+    assert d.channels == 3
+    assert d.channel_semantics == "rgb"
+
+
+def test_channels_accepts_1_and_16_rejects_0_and_17():
+    _make_data(channels=1, channel_semantics="grayscale")
+    _make_data(channels=16, channel_semantics="freeform",
+               normalize={"mean": [0.5] * 16, "std": [0.2] * 16})
+    with pytest.raises(Exception):
+        _make_data(channels=0)
+    with pytest.raises(Exception):
+        _make_data(channels=17)
+
+
+def test_channel_semantics_membership():
+    with pytest.raises(Exception):
+        _make_data(channel_semantics="hyperspectral")
