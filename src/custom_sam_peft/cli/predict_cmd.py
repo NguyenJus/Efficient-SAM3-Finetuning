@@ -138,7 +138,7 @@ def predict(
         visualize=visualize,
         device=cast(Literal["auto", "cuda", "cpu"], device),
         dtype=cast(Literal["auto", "bfloat16", "float32"], dtype),
-        batch_size=batch_size,
+        batch_size=cast("int | Literal['auto']", batch_size),
         seed=seed,
         dry_run=dry_run,
         verbose=verbose,

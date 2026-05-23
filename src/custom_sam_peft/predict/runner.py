@@ -355,7 +355,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
     from custom_sam_peft.eval.postprocess import queries_to_coco_results
     from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
 
-    def _chunked(seq: list, n: int) -> list:
+    def _chunked(seq: list[Any], n: int) -> list[list[Any]]:
         return [seq[i : i + n] for i in range(0, len(seq), n)]
 
     all_predictions: list[dict[str, object]] = []

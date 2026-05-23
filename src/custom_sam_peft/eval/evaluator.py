@@ -10,7 +10,7 @@ import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 import numpy as np
 import pycocotools.mask as mask_utils
@@ -29,11 +29,11 @@ from custom_sam_peft.runtime import Runtime, to_device
 _LOG = logging.getLogger(__name__)
 
 
-def _chunked(seq, n):
+def _chunked[T](seq: Sequence[T], n: int) -> list[list[T]]:
     """Tiny local helper; mirrors train/loop.py:_chunked."""
     if n <= 0:
         raise ValueError(f"_chunked: n must be positive; got {n}")
-    return [seq[i : i + n] for i in range(0, len(seq), n)]
+    return [list(seq[i : i + n]) for i in range(0, len(seq), n)]
 
 
 def _row_outputs(outputs: dict[str, torch.Tensor], r: int) -> dict[str, torch.Tensor]:
@@ -56,7 +56,7 @@ def _eval_forward_with_oom_ladder(
     On OOM at state["batch_size"]==1, raises RuntimeError("eval OOM at batch_size=1; ...").
     """
     try:
-        return model(images, prompts, box_hints=None)
+        return cast("dict[str, torch.Tensor]", model(images, prompts, box_hints=None))
     except torch.cuda.OutOfMemoryError as oom_err:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
