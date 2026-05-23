@@ -21,6 +21,7 @@ function calls them.
 | `pos_enc_dtype.py` | Aligns positional-encoding dtype with the surrounding activation dtype. |
 | `roi_align_dtype.py` | Forces ROI-Align inputs to fp32 (kernel only supports fp32; see `2026-05-22-fix-roi-align-dtype-mismatch.md`). |
 | `text_pool_dtype.py` | Aligns text-pool projection dtype with the text-encoder output. |
+| `vit_act_checkpoint.py` | **Config-gated; NOT in `_ALL_PATCHES`.** Sets `use_act_checkpoint=True` on every ViT-Det block exposing that attribute (`vitdet.py:982`), enabling per-block activation checkpointing. A future Phase-1 fix adds a deterministic-autocast wrap to resolve a recompute-metadata `CheckpointError` on T4 (issue #89). |
 
 ## When SAM-3 bumps
 
@@ -38,3 +39,9 @@ walk through this checklist before merging the bump:
 5. Update the SAM-3 checkpoint SHA pin in
    `src/custom_sam_peft/presets.py::_current_sam3_checkpoint_sha` (the
    analytic VRAM cache uses this to invalidate prior calibrations).
+6. For `vit_act_checkpoint.py`: confirm `use_act_checkpoint` still exists on
+   ViT-Det blocks at `vitdet.py:982`. If the attribute was renamed or removed,
+   the patch will flip zero blocks and emit a loud `logger.warning`. Update
+   `_ACT_CHECKPOINT_ATTR` in `vit_act_checkpoint.py` to match the new name, or
+   open a `sam3-bump` issue to delete the patch if activation checkpointing is
+   now handled differently upstream.
