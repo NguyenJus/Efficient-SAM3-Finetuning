@@ -1,6 +1,9 @@
 extends: default
 ignore: |
   .venv/
+  # csp init templates contain ${...} placeholders rendered by string.Template
+  # before being written as user-facing YAML; they are not themselves valid YAML.
+  src/custom_sam_peft/cli/templates/
 rules:
   line-length: disable
   document-start: disable   # project-wide style omits leading ---

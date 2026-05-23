@@ -172,6 +172,15 @@ class Trainer:
 
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
+        from custom_sam_peft.data.aug_presets import dump_augmentation_pipeline
+
+        (run_dir / "augmentation_pipeline.json").write_text(
+            json.dumps(
+                dump_augmentation_pipeline(cfg.data.augmentations),
+                indent=2,
+                sort_keys=False,
+            )
+        )
         cfg_dict = cfg.model_dump(mode="json")
         vs_path = run_dir / "val_source.json"
         if vs_path.exists():

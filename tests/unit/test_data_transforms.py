@@ -232,7 +232,7 @@ from custom_sam_peft.data.transforms import build_train_transforms
 
 def test_train_transforms_deterministic_with_seeded_global_rng() -> None:
     """With albumentations 2.x, determinism is controlled via compose.set_random_seed()."""
-    aug = AugmentationsConfig(hflip=True, color_jitter=0.1)
+    aug = AugmentationsConfig(preset="natural", intensity="medium")
 
     def run() -> torch.Tensor:
         random.seed(0)
@@ -249,40 +249,6 @@ def test_train_transforms_deterministic_with_seeded_global_rng() -> None:
     assert torch.equal(a, b)
 
 
-def test_train_transforms_hflip_disabled() -> None:
-    aug = AugmentationsConfig(hflip=False, color_jitter=0.0)
-    with _patch_proc_to_imagenet():
-        compose = build_train_transforms(aug, 64, model_name="x", normalize=NormalizeConfig())
-    img = np.zeros((32, 64, 3), dtype=np.uint8)
-    img[:, :8, 0] = 200  # strong left column marker
-    flips = 0
-    for seed in range(50):
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        out = compose(image=img.copy(), bboxes=[], masks=[], class_labels=[])
-        left = out["image"][0, :32, :8].mean().item()
-        right = out["image"][0, :32, 56:64].mean().item()
-        if right > left:
-            flips += 1
-    assert flips == 0
-
-
-def test_train_transforms_color_jitter_zero_preserves_color() -> None:
-    with _patch_proc_to_imagenet():
-        eval_compose = build_eval_transforms(64, model_name="x", normalize=NormalizeConfig())
-        train_compose = build_train_transforms(
-            AugmentationsConfig(hflip=False, color_jitter=0.0),
-            64,
-            model_name="x",
-            normalize=NormalizeConfig(),
-        )
-    img = np.random.RandomState(0).randint(0, 256, size=(40, 60, 3), dtype=np.uint8)
-    e_out = eval_compose(image=img, bboxes=[], masks=[], class_labels=[])
-    t_out = train_compose(image=img, bboxes=[], masks=[], class_labels=[])
-    assert torch.allclose(e_out["image"], t_out["image"], atol=1e-5)
-
-
 from pathlib import Path
 
 from custom_sam_peft.config.loader import load_config
@@ -290,16 +256,18 @@ from custom_sam_peft.config.schema import DataConfig, ModelConfig
 
 
 def test_shipped_yamls_match_schema_defaults() -> None:
-    """All four shipped YAMLs resolve normalize / image_size / gradient_checkpointing
+    """Shipped example YAMLs resolve normalize / image_size / gradient_checkpointing
     to the schema's default values — i.e. the YAML echoes are consistent with the
     schema as the source of truth.
+
+    Note: CLI template files under cli/templates/ contain ${...} substitution
+    placeholders and are not valid standalone YAML — they are excluded from this
+    test and covered by CLI template tests instead.
     """
     repo_root = Path(__file__).resolve().parents[2]
     yaml_paths = [
         repo_root / "configs" / "examples" / "coco_text_lora.yaml",
         repo_root / "configs" / "examples" / "coco_text_qlora.yaml",
-        repo_root / "src" / "custom_sam_peft" / "cli" / "templates" / "coco_text_lora.yaml",
-        repo_root / "src" / "custom_sam_peft" / "cli" / "templates" / "coco_text_qlora.yaml",
     ]
     schema_image_size = DataConfig.model_fields["image_size"].default
     schema_grad_ckpt = ModelConfig.model_fields["gradient_checkpointing"].default
@@ -317,3 +285,134 @@ def test_shipped_yamls_match_schema_defaults() -> None:
         assert cfg.model.gradient_checkpointing == schema_grad_ckpt, p
         assert cfg.data.normalize.mean == schema_mean, p
         assert cfg.data.normalize.std == schema_std, p
+
+
+# ---------------------------------------------------------------------------
+# spec/domain-aware-augmentation-presets — pipeline step assembly
+# ---------------------------------------------------------------------------
+
+
+def _class_names(compose: object) -> list[str]:
+    """Return the ordered class-name list of an A.Compose's .transforms."""
+    return [type(t).__name__ for t in compose.transforms]  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "preset,intensity,expected_optional",
+    [
+        ("natural", "medium", ["HorizontalFlip", "ColorJitter"]),
+        ("medical", "medium", ["Affine", "GaussNoise", "StainJitter"]),
+        ("medical", "safe", []),  # all-zero → no optional steps
+        (
+            "satellite",
+            "aggressive",
+            [
+                "HorizontalFlip",
+                "VerticalFlip",
+                "RandomRotate90",
+                "Affine",
+                "GaussNoise",
+                "GaussianBlur",
+                "ColorJitter",
+            ],
+        ),
+        ("microscopy", "safe", ["VerticalFlip", "RandomRotate90"]),
+    ],
+)
+def test_pipeline_step_list_per_preset_intensity(
+    preset: str, intensity: str, expected_optional: list[str]
+) -> None:
+    from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig
+    from custom_sam_peft.data.transforms import build_train_transforms
+
+    compose = build_train_transforms(
+        AugmentationsConfig(preset=preset, intensity=intensity),  # type: ignore[arg-type]
+        image_size=32,
+        model_name="facebook/sam3.1",
+        normalize=NormalizeConfig(),
+    )
+    names = _class_names(compose)
+    # First two and last two steps are constant.
+    assert names[:2] == ["LongestMaxSize", "PadIfNeeded"]
+    assert names[-2:] == ["Normalize", "ToTensorV2"]
+    assert names[2:-2] == expected_optional
+
+
+def test_pipeline_preset_none_equals_eval_steps() -> None:
+    """preset=none → train pipeline contains only the eval steps."""
+    from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig
+    from custom_sam_peft.data.transforms import build_eval_transforms, build_train_transforms
+
+    train = build_train_transforms(
+        AugmentationsConfig(preset="none"),
+        image_size=32,
+        model_name="facebook/sam3.1",
+        normalize=NormalizeConfig(),
+    )
+    eval_ = build_eval_transforms(
+        image_size=32,
+        model_name="facebook/sam3.1",
+        normalize=NormalizeConfig(),
+    )
+    assert _class_names(train) == _class_names(eval_)
+
+
+def test_pipeline_custom_with_overrides_step_list() -> None:
+    from custom_sam_peft.config.schema import (
+        AugmentationOverrides,
+        AugmentationsConfig,
+        NormalizeConfig,
+    )
+    from custom_sam_peft.data.transforms import build_train_transforms
+
+    cfg = AugmentationsConfig(
+        preset="custom",
+        overrides=AugmentationOverrides(hflip=True, stain_jitter=0.05),
+    )
+    compose = build_train_transforms(
+        cfg, image_size=32, model_name="facebook/sam3.1", normalize=NormalizeConfig()
+    )
+    names = _class_names(compose)
+    assert names == [
+        "LongestMaxSize",
+        "PadIfNeeded",
+        "HorizontalFlip",
+        "StainJitter",
+        "Normalize",
+        "ToTensorV2",
+    ]
+
+
+def test_pipeline_omits_step_at_zero_magnitude() -> None:
+    """A knob at 0 omits the step entirely (not p=0)."""
+    import albumentations as A
+
+    from custom_sam_peft.config.schema import (
+        AugmentationOverrides,
+        AugmentationsConfig,
+        NormalizeConfig,
+    )
+    from custom_sam_peft.data.transforms import build_train_transforms
+
+    cfg = AugmentationsConfig(
+        preset="natural",
+        intensity="medium",
+        overrides=AugmentationOverrides(color_jitter=0.0),
+    )
+    compose = build_train_transforms(
+        cfg, image_size=32, model_name="facebook/sam3.1", normalize=NormalizeConfig()
+    )
+    assert not any(isinstance(t, A.ColorJitter) for t in compose.transforms)  # type: ignore[attr-defined]
+
+
+def test_pipeline_step_names_match_aug_presets_helper() -> None:
+    """The Albumentations compose's class-name list matches _STEP_NAMES_FOR(resolved)."""
+    from custom_sam_peft.config.schema import AugmentationsConfig, NormalizeConfig
+    from custom_sam_peft.data.aug_presets import _STEP_NAMES_FOR, resolve
+    from custom_sam_peft.data.transforms import build_train_transforms
+
+    cfg = AugmentationsConfig(preset="natural", intensity="aggressive")
+    compose = build_train_transforms(
+        cfg, image_size=32, model_name="facebook/sam3.1", normalize=NormalizeConfig()
+    )
+    assert _class_names(compose) == _STEP_NAMES_FOR(resolve(cfg))

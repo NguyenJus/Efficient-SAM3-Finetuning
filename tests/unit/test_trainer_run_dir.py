@@ -11,6 +11,7 @@ import torch
 
 import custom_sam_peft.train.trainer as trainer_mod
 from custom_sam_peft.config.schema import (
+    AugmentationsConfig,
     DataConfig,
     DataSplit,
     PEFTConfig,
@@ -34,6 +35,7 @@ def test_fit_uses_caller_provided_run_dir(tmp_path: Path, monkeypatch: pytest.Mo
     cfg.run.name = "irrelevant"
     cfg.run.seed = 0
     cfg.data.prompt_mode = "text"
+    cfg.data.augmentations = AugmentationsConfig(preset="none")
     cfg.train.num_workers = 0
     cfg.train.batch_size = 1
     cfg.train.epochs = 0  # Skip the train loop entirely.
@@ -177,7 +179,7 @@ def test_fit_calls_start_run_once_before_first_log(tmp_path: Path) -> None:
     from custom_sam_peft.config.schema import NormalizeConfig
 
     transforms_t = build_train_transforms(
-        AugmentationsConfig(hflip=False, color_jitter=0.0),
+        AugmentationsConfig(preset="none"),
         32,
         model_name="facebook/sam3.1",
         normalize=NormalizeConfig(),
@@ -309,3 +311,105 @@ def test_log_image_panel_moves_image_to_model_device() -> None:
         f"expected every forward to receive a meta-device image; got "
         f"{[str(d) for d in stub.received_image_devices]}"
     )
+
+
+def test_run_dir_writes_augmentation_pipeline_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After fit constructs run_dir, augmentation_pipeline.json is present and shaped."""
+    from custom_sam_peft.config.schema import (
+        AugmentationsConfig,
+        DataConfig,
+        DataSplit,
+        NormalizeConfig,
+        PEFTConfig,
+        RunConfig,
+        TextPromptConfig,
+        TrainConfig,
+        TrainHyperparams,
+    )
+    from custom_sam_peft.data.coco import COCODataset
+    from custom_sam_peft.data.transforms import build_eval_transforms, build_train_transforms
+    from custom_sam_peft.peft_adapters.lora import apply_lora
+
+    tiny_coco_dir = Path(__file__).resolve().parents[1] / "fixtures" / "tiny_coco"
+    transforms_t = build_train_transforms(
+        AugmentationsConfig(preset="medical", intensity="medium"),
+        32,
+        model_name="facebook/sam3.1",
+        normalize=NormalizeConfig(),
+    )
+    transforms_v = build_eval_transforms(
+        32,
+        model_name="facebook/sam3.1",
+        normalize=NormalizeConfig(),
+    )
+    ds_train = COCODataset(
+        annotations=str(tiny_coco_dir / "annotations.json"),
+        images=str(tiny_coco_dir / "images"),
+        prompt_mode="text",
+        transforms=transforms_t,
+        text_prompt=TextPromptConfig(),
+    )
+    ds_val = COCODataset(
+        annotations=str(tiny_coco_dir / "annotations.json"),
+        images=str(tiny_coco_dir / "images"),
+        prompt_mode="text",
+        transforms=transforms_v,
+        text_prompt=TextPromptConfig(),
+    )
+    wrapper = make_stub_wrapper(dim=8, working=True)
+    cfg = TrainConfig(
+        run=RunConfig(name="sidecar", output_dir=str(tmp_path), seed=0),
+        data=DataConfig(
+            format="coco",
+            train=DataSplit(
+                annotations=str(tiny_coco_dir / "annotations.json"),
+                images=str(tiny_coco_dir / "images"),
+            ),
+            val=DataSplit(
+                annotations=str(tiny_coco_dir / "annotations.json"),
+                images=str(tiny_coco_dir / "images"),
+            ),
+            prompt_mode="text",
+            image_size=32,
+            augmentations=AugmentationsConfig(preset="medical", intensity="medium"),
+        ),
+        peft=PEFTConfig(
+            method="lora",
+            scope="vision",
+            target_modules=FIXTURE_SCOPE_PATTERNS["vision"],
+        ),
+        train=TrainHyperparams(
+            epochs=1,
+            batch_size=1,
+            grad_accum_steps=1,
+            save_every=10_000,
+            log_every=10_000,
+            warmup_steps=0,
+            num_workers=0,
+        ),
+    )
+    apply_lora(wrapper, cfg.peft)
+
+    run_dir = tmp_path / "sidecar-run"
+    trainer = Trainer(wrapper, ds_train, ds_val, NoopTracker(), cfg)
+    trainer.fit(run_dir=run_dir)
+
+    sidecar = run_dir / "augmentation_pipeline.json"
+    assert sidecar.exists()
+    blob = json.loads(sidecar.read_text())
+    assert set(blob.keys()) == {"preset", "intensity", "resolved", "steps", "library_version"}
+    assert blob["preset"] == "medical"
+    assert blob["intensity"] == "medium"
+    assert set(blob["resolved"].keys()) == {
+        "hflip",
+        "vflip",
+        "rotate90",
+        "rotate_arbitrary",
+        "color_jitter",
+        "stain_jitter",
+        "blur",
+        "gauss_noise",
+    }
+    assert isinstance(blob["library_version"], str) and blob["library_version"]
