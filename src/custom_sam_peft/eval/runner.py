@@ -136,6 +136,12 @@ def run_eval(
     if save_predictions is not None:
         eval_cfg = eval_cfg.model_copy(update={"save_predictions": save_predictions})
 
+    if eval_cfg.batch_size == "auto":
+        from custom_sam_peft.presets import decide_eval_batch_size
+
+        bs, _, _ = decide_eval_batch_size(cfg.data.image_size, classes_per_forward=16)
+        eval_cfg = eval_cfg.model_copy(update={"batch_size": bs})
+
     evaluator = Evaluator(eval_cfg)
     # Output dir: prefer explicit, then artifacts.run_dir, then checkpoint parent.
     out = (

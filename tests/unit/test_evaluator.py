@@ -18,7 +18,7 @@ from custom_sam_peft.paths import predictions_path
 
 
 def test_evaluate_full_returns_metrics_report(stub_model, tiny_text_dataset):
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
     report = Evaluator(cfg).evaluate(stub_model, tiny_text_dataset)
     assert isinstance(report, MetricsReport)
     assert report.n_images == 2
@@ -28,7 +28,7 @@ def test_evaluate_full_returns_metrics_report(stub_model, tiny_text_dataset):
 
 
 def test_evaluate_lite_caps_images_and_skips_per_class(stub_model, tiny_text_dataset):
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], batch_size=1)
     report = Evaluator(cfg).evaluate(stub_model, tiny_text_dataset)
     assert report.n_images == 1
     assert report.per_class == {}
@@ -36,13 +36,13 @@ def test_evaluate_lite_caps_images_and_skips_per_class(stub_model, tiny_text_dat
 
 def test_evaluate_does_not_mutate_training_state(stub_model, tiny_text_dataset):
     stub_model.train()
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], batch_size=1)
     Evaluator(cfg).evaluate(stub_model, tiny_text_dataset)
     assert stub_model.training is True
 
 
 def test_evaluate_and_save_full_writes_predictions(stub_model, tiny_text_dataset, tmp_path: Path):
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], save_predictions=True)
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], save_predictions=True, batch_size=1)
     out = tmp_path / "out"
     Evaluator(cfg).evaluate_and_save(stub_model, tiny_text_dataset, out)
     assert (out / "metrics.json").exists()
@@ -55,7 +55,7 @@ def test_evaluate_and_save_full_writes_predictions(stub_model, tiny_text_dataset
 def test_evaluate_and_save_lite_never_writes_predictions(
     stub_model, tiny_text_dataset, tmp_path: Path
 ):
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], save_predictions=True)
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], save_predictions=True, batch_size=1)
     out = tmp_path / "out"
     Evaluator(cfg).evaluate_and_save(stub_model, tiny_text_dataset, out)
     assert (out / "metrics.json").exists()
@@ -63,7 +63,7 @@ def test_evaluate_and_save_lite_never_writes_predictions(
 
 
 def test_image_id_collision_detected(stub_model, tiny_text_dataset):
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
     # Force every image_id to hash to the same int.
     with (
         patch("custom_sam_peft.eval.evaluator._int_image_id", return_value=42),
@@ -99,7 +99,7 @@ def test_evaluate_disables_grad(tiny_text_dataset):
                 "presence_logit_dec": torch.zeros(rows, 1),
             }
 
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], batch_size=1)
     Evaluator(cfg).evaluate(GradSpyModel(), tiny_text_dataset)
 
     assert grad_enabled_during_forward, "model was never called"
@@ -141,7 +141,7 @@ def test_evaluate_single_dataset_traversal(stub_model):
                 ],
             )
 
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
     Evaluator(cfg).evaluate(stub_model, CountingDataset())
 
     assert set(access_counts.keys()) == {0, 1, 2}, "not all indices were accessed"
@@ -152,7 +152,7 @@ def test_evaluate_single_dataset_traversal(stub_model):
 def test_evaluate_returns_per_example_iou_when_requested(stub_model, tiny_text_dataset):
     """When return_per_example_iou=True, return (MetricsReport, list[float])
     aligned with dataset indices."""
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
     out = Evaluator(cfg).evaluate(stub_model, tiny_text_dataset, return_per_example_iou=True)
     assert isinstance(out, tuple)
     report, ious = out
@@ -164,7 +164,7 @@ def test_evaluate_returns_per_example_iou_when_requested(stub_model, tiny_text_d
 
 def test_evaluate_default_unchanged_returns_report_only(stub_model, tiny_text_dataset):
     """Backward-compat: omitting the flag returns MetricsReport, not a tuple."""
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
     out = Evaluator(cfg).evaluate(stub_model, tiny_text_dataset)
     assert not isinstance(out, tuple)
     assert isinstance(out, MetricsReport)
@@ -213,7 +213,7 @@ class _DeviceRecordingStub(torch.nn.Module):
 def test_evaluate_moves_image_to_model_device(tiny_text_dataset) -> None:
     """Evaluator must call `.to(device)` on dataset images before forward."""
     stub = _DeviceRecordingStub(param_device="meta")
-    cfg = EvalConfig(mode="lite", lite_max_images=2, iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="lite", lite_max_images=2, iou_thresholds=[0.5], batch_size=1)
     Evaluator(cfg).evaluate(stub, tiny_text_dataset)
     assert stub.received_image_devices, "model.forward was never called"
     assert all(d.type == "meta" for d in stub.received_image_devices), (
@@ -243,7 +243,7 @@ def test_evaluate_falls_back_to_cpu_for_parameterless_model(tiny_text_dataset) -
             }
 
     stub = _Parameterless()
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], batch_size=1)
     Evaluator(cfg).evaluate(stub, tiny_text_dataset)
     assert stub.seen and all(d.type == "cpu" for d in stub.seen)
 
@@ -257,7 +257,7 @@ def test_iter_predictions_returns_list(stub_model, tiny_text_dataset):
     """_iter_predictions returns a list of COCO-format prediction dicts."""
     from custom_sam_peft.eval.evaluator import _build_coco_gt_from_examples
 
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], batch_size=1)
     ev = Evaluator(cfg)
     examples = [tiny_text_dataset[0]]
     _gt, _ = _build_coco_gt_from_examples(examples, tiny_text_dataset)
@@ -273,7 +273,7 @@ def test_aggregate_metrics_returns_metrics_report(stub_model, tiny_text_dataset)
     """_aggregate_metrics wraps compute_coco_map and returns a MetricsReport."""
     from custom_sam_peft.eval.evaluator import _build_coco_gt_from_examples
 
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5])
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
     ev = Evaluator(cfg)
     n = len(tiny_text_dataset)
     examples = [tiny_text_dataset[i] for i in range(n)]
@@ -286,7 +286,7 @@ def test_aggregate_metrics_returns_metrics_report(stub_model, tiny_text_dataset)
 
 def test_maybe_save_predictions_noop_when_run_dir_none(stub_model, tiny_text_dataset):
     """_maybe_save_predictions is a no-op when run_dir is None."""
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], save_predictions=True)
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], save_predictions=True, batch_size=1)
     ev = Evaluator(cfg)
     # Should not raise; no file should be written.
     ev._maybe_save_predictions([{"image_id": 1}], run_dir=None)
@@ -294,7 +294,7 @@ def test_maybe_save_predictions_noop_when_run_dir_none(stub_model, tiny_text_dat
 
 def test_maybe_save_predictions_uses_canonical_path(tmp_path: Path):
     """_maybe_save_predictions writes to paths.predictions_path, not a bare filename."""
-    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], save_predictions=True)
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], save_predictions=True, batch_size=1)
     ev = Evaluator(cfg)
     preds = [{"image_id": 1, "category_id": 1, "score": 0.9, "segmentation": {}}]
     ev._maybe_save_predictions(preds, run_dir=tmp_path, split="val")
@@ -304,7 +304,7 @@ def test_maybe_save_predictions_uses_canonical_path(tmp_path: Path):
 
 def test_maybe_save_predictions_noop_in_lite_mode(tmp_path: Path):
     """_maybe_save_predictions skips disk I/O in lite mode."""
-    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], save_predictions=True)
+    cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], save_predictions=True, batch_size=1)
     ev = Evaluator(cfg)
     ev._maybe_save_predictions([{"image_id": 1}], run_dir=tmp_path, split="val")
     assert not predictions_path(tmp_path, split="val").exists()
