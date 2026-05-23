@@ -63,7 +63,7 @@ def run_init(
         raise ValueError(f"unknown template '{template}'. Available: {', '.join(TEMPLATES)}")
     valid_presets = set(get_args(Preset))
     valid_intensities = set(get_args(Intensity))
-    _CLASS_IMBALANCES = ClassImbalance.__args__  # type: ignore[attr-defined]
+    _CLASS_IMBALANCES = get_args(ClassImbalance)
     if preset not in valid_presets:
         raise ValueError(f"unknown preset '{preset}'. Available: {sorted(valid_presets)}")
     if intensity not in valid_intensities:

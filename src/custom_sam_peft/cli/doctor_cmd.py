@@ -173,7 +173,9 @@ def _build_resolved_config_json(cfg: TrainConfig) -> dict[str, object]:
             "std": std,
             "resolution_path": path,
         },
-        "loss": dump_loss_bundle(cfg.train.loss),
+        "loss": {
+            k: v for k, v in dump_loss_bundle(cfg.train.loss).items() if k != "library_version"
+        },
     }
 
 

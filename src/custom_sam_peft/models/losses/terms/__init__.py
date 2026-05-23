@@ -1,4 +1,4 @@
-"""14 term classes across 4 axes (mask / box / obj / presence).
+"""15 term classes across 4 axes (mask / box / obj / presence).
 
 This `__init__` re-exports the public class objects with axis-prefixed names
 (MaskBCELoss, ObjBCELoss, …) to avoid the same-name collision between axes.

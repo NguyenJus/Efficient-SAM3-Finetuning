@@ -47,6 +47,8 @@ class L1GIoULoss(_BoxTermBase):
 
 
 class GIoUOnlyLoss(_BoxTermBase):
+    """GIoU-only box loss without the L1 regularisation term."""
+
     def forward(self, pred_cxcywh: Tensor, target_cxcywh: Tensor) -> Tensor:
         if pred_cxcywh.numel() == 0:
             return pred_cxcywh.new_zeros(())

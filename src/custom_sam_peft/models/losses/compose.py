@@ -141,6 +141,10 @@ class LossBundle:
         outputs: dict[str, Tensor],
         targets: list[list[Instance]],
     ) -> dict[str, Tensor]:
+        """Run the matcher and four-term forward.
+
+        Returns a dict of {mask, box, obj, presence, total} losses.
+        """
         canonical = meta_to_canonical(outputs)
         indices = self.matcher(canonical, targets)
         pred_boxes_m, tgt_boxes_m, pred_masks_m, tgt_masks_m = _gather_matched_boxes_masks(

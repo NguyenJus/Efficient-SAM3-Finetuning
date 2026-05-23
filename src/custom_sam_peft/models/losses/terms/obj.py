@@ -24,6 +24,8 @@ class _ObjTermBase(nn.Module):
 
 
 class BCELoss(_ObjTermBase):
+    """Binary cross-entropy objectness loss over matched query assignments."""
+
     def forward(self, obj_logits: Tensor, matched_mask: Tensor) -> Tensor:
         return binary_cross_entropy_with_logits(obj_logits, matched_mask.float())
 

@@ -71,14 +71,23 @@ def test_build_loss_bundle_for_each_box_family() -> None:
 
 
 def test_total_loss_shim_routes_through_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The shim builds a bundle and calls forward — verify the route."""
+    """Spec §8.6: the back-compat shim builds a bundle and calls forward."""
     from custom_sam_peft.models import losses as losses_pkg
 
     spy = MagicMock(wraps=losses_pkg.build_loss_bundle)
     monkeypatch.setattr(losses_pkg, "build_loss_bundle", spy)
-    # Smallest possible synthetic call — we don't care about the math, just the route.
-    # Skip if the matcher/canonical machinery is too heavyweight; gate on its presence.
-    pytest.importorskip("custom_sam_peft.models.matching", reason="matcher needed")
+
+    # Stub forward so we don't need a real CanonicalOutputs / targets fixture.
+    sentinel = {"total": "ok"}
+
+    def fake_forward(self, outputs, targets):
+        return sentinel
+
+    monkeypatch.setattr(losses_pkg.LossBundle, "forward", fake_forward)
+
+    result = losses_pkg.total_loss({}, [], LossConfig())
+    assert result is sentinel
+    assert spy.call_count == 1
 
 
 def test_loss_bundle_weights_field() -> None:

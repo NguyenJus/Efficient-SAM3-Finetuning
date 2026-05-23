@@ -78,12 +78,16 @@ class _MaskTermBase(nn.Module):
 
 
 class BCELoss(_MaskTermBase):
+    """Pixel-wise binary cross-entropy loss on mask logits."""
+
     def forward(self, pred_logits: Tensor, target: Tensor) -> Tensor:
         pred = _align(pred_logits, target)
         return binary_cross_entropy_with_logits(pred, target.float())
 
 
 class DiceLoss(_MaskTermBase):
+    """Soft Dice loss on mask predictions."""
+
     def forward(self, pred_logits: Tensor, target: Tensor) -> Tensor:
         pred = _align(pred_logits, target)
         return _dice(pred.sigmoid(), target.float())
@@ -100,12 +104,16 @@ class DiceBCELoss(_MaskTermBase):
 
 
 class FocalBCELoss(_MaskTermBase):
+    """Focal binary cross-entropy loss that down-weights easy mask pixels."""
+
     def forward(self, pred_logits: Tensor, target: Tensor) -> Tensor:
         pred = _align(pred_logits, target)
         return _focal_bce_per_pixel(pred, target.float(), self.focal_gamma, self.focal_alpha)
 
 
 class FocalDiceLoss(_MaskTermBase):
+    """Equal-weighted combination of focal BCE and soft Dice for mask predictions."""
+
     def forward(self, pred_logits: Tensor, target: Tensor) -> Tensor:
         pred = _align(pred_logits, target)
         fbce = _focal_bce_per_pixel(pred, target.float(), self.focal_gamma, self.focal_alpha)
@@ -123,6 +131,8 @@ def _tversky_index(p: Tensor, t: Tensor, alpha: float) -> Tensor:
 
 
 class TverskyLoss(_MaskTermBase):
+    """Tversky loss that penalises false negatives and false positives asymmetrically."""
+
     def forward(self, pred_logits: Tensor, target: Tensor) -> Tensor:
         pred = _align(pred_logits, target)
         ti = _tversky_index(pred.sigmoid(), target.float(), self.tversky_alpha)
@@ -130,6 +140,8 @@ class TverskyLoss(_MaskTermBase):
 
 
 class FocalTverskyLoss(_MaskTermBase):
+    """Focal Tversky loss that applies an additional power focusing to difficult examples."""
+
     def forward(self, pred_logits: Tensor, target: Tensor) -> Tensor:
         pred = _align(pred_logits, target)
         ti = _tversky_index(pred.sigmoid(), target.float(), self.tversky_alpha)

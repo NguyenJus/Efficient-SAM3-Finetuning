@@ -31,6 +31,8 @@ class BCELoss(_PresenceTermBase):
 
 
 class FocalBCELoss(_PresenceTermBase):
+    """Focal BCE presence loss that down-weights easy image-level predictions."""
+
     def forward(self, img_presence: Tensor, image_has_target: Tensor) -> Tensor:
         p = img_presence.sigmoid()
         t = image_has_target.float()
