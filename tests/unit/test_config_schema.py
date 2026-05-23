@@ -502,3 +502,34 @@ def test_loss_overrides_w_mask_zero_rejected() -> None:
 
     with pytest.raises(ValidationError):
         LossOverrides(w_mask=0.0)  # PositiveFloat
+
+
+# ---------------------------------------------------------------------------
+# SAM 3.1 multiplex config (#122): MultiplexConfig
+# ---------------------------------------------------------------------------
+
+
+def test_multiplex_config_defaults() -> None:
+    from custom_sam_peft.config.schema import MultiplexConfig
+
+    cfg = MultiplexConfig()
+    assert cfg.classes_per_forward == 16
+
+
+def test_multiplex_config_validates_range() -> None:
+    from pydantic import ValidationError
+
+    from custom_sam_peft.config.schema import MultiplexConfig
+
+    with pytest.raises(ValidationError):
+        MultiplexConfig(classes_per_forward=0)
+    with pytest.raises(ValidationError):
+        MultiplexConfig(classes_per_forward=17)
+
+
+def test_train_hyperparams_has_multiplex_default() -> None:
+    from custom_sam_peft.config.schema import MultiplexConfig, TrainHyperparams
+
+    th = TrainHyperparams(epochs=1)
+    assert isinstance(th.multiplex, MultiplexConfig)
+    assert th.multiplex.classes_per_forward == 16

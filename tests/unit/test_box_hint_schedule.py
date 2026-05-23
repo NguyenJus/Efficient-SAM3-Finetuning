@@ -55,8 +55,13 @@ def test_train_hyperparams_optimizer_accepts_explicit_values() -> None:
 
 
 def test_matcher_weights_default_box_terms_are_zero() -> None:
-    """v0 matcher is mask-only by default."""
+    """v0 matcher is mask-only by default.
+
+    lambda_l1/giou are demoted internal constants (always 0.0); they remain
+    as fields on MatcherWeights so that compose.py can pass them to
+    HungarianMatcher without attribute errors (audit Section E, #92).
+    """
     w = MatcherWeights()
+    assert w.lambda_mask == 5.0
     assert w.lambda_l1 == 0.0
     assert w.lambda_giou == 0.0
-    assert w.lambda_mask == 5.0  # unchanged
