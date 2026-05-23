@@ -1,4 +1,4 @@
-"""Tests for src/custom_sam_peft/notebook_helpers.py."""
+"""Tests for notebooks/_lib/notebook_helpers.py."""
 
 from __future__ import annotations
 
@@ -9,7 +9,13 @@ from typing import Any
 
 import pytest
 
-from custom_sam_peft.notebook_helpers import (
+# The notebook_helpers module is co-located with the notebook under
+# notebooks/_lib/ (#99). Prepend the repo's notebooks/ dir to sys.path
+# so this test can import it the same way the notebook does.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_REPO_ROOT / "notebooks"))
+
+from _lib.notebook_helpers import (  # noqa: E402
     check_local_checkpoint,
     detect_env,
     resolve_hf_token_for_notebook,
