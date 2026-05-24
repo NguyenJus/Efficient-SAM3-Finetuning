@@ -181,6 +181,14 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
     channels = config_channels if config_channels is not None else 3
     channel_semantics = config_channel_semantics if config_channel_semantics is not None else "rgb"
 
+    from custom_sam_peft.data.channel_semantics import CHANNEL_SEMANTIC_NAMES
+
+    if channel_semantics not in CHANNEL_SEMANTIC_NAMES:
+        raise ValueError(
+            f"data.channel_semantics={channel_semantics!r} in the predict --config is not "
+            f"a valid semantic; expected one of {sorted(CHANNEL_SEMANTIC_NAMES)}."
+        )
+
     # --- device resolution ---
     if opts.device == "auto":
         device_str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -422,7 +430,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
         if not imgs:
             continue
 
-        img_batch = torch.stack(imgs, dim=0)  # (B, 3, H, W)
+        img_batch = torch.stack(imgs, dim=0)  # (B, C, H, W)
 
         # --- flat inner loop over class groups ---
         for group in _chunked(prompts, MULTIPLEX_CAP):

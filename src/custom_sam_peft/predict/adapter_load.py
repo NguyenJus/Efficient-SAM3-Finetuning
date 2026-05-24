@@ -64,6 +64,7 @@ def load_adapter(model: nn.Module, checkpoint_dir: Path, kind: AdapterKind) -> n
 
         model = _lora.load_lora(model, checkpoint_dir)  # type: ignore[arg-type]
 
+    # Reuse the shared channel-adapter restore helper (model is a Sam3Wrapper at runtime).
     from custom_sam_peft.train.checkpoint import _load_channel_adapter
 
     _load_channel_adapter(model, checkpoint_dir)

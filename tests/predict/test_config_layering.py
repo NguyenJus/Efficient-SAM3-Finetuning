@@ -364,3 +364,26 @@ def test_C12_defaults_when_absent(tmp_path: Path) -> None:
     rcfg = _resolve_config(opts)
     assert rcfg.channels == 3
     assert rcfg.channel_semantics == "rgb"
+
+
+# ---------------------------------------------------------------------------
+# C12b — bogus channel_semantics raises ValueError (Fix 2 validation gate)
+# ---------------------------------------------------------------------------
+
+
+def test_C12b_bogus_channel_semantics_raises_value_error(tmp_path: Path) -> None:
+    """_resolve_config must raise ValueError with a clear message for unknown semantics.
+
+    Guards Fix 2: a bad data.channel_semantics in the predict --config must be
+    caught at resolve time (not silently passed to load_sam31 as a KeyError).
+    The default 'rgb' must still pass (covered by test_C12_defaults_when_absent).
+    """
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        "model:\n  name: facebook/sam3.1\n"
+        "data:\n  image_size: 512\n  channels: 4\n  channel_semantics: hyperspectral\n",
+        encoding="utf-8",
+    )
+    opts = _make_opts(tmp_path, config=cfg, checkpoint=None)
+    with pytest.raises(ValueError, match="hyperspectral"):
+        _resolve_config(opts)

@@ -47,11 +47,11 @@ def _eval_path_tensor(image: Image.Image) -> torch.Tensor:
 def _predict_path_tensor(image: Image.Image) -> torch.Tensor:
     """Mirror the exact transform sequence used by predict/runner.py.
 
-    Source (runner.py lines 178-181, 299-307, 364-367):
+    Source (runner.py — _resolve_config + run_predict forward loop):
       mean, std = resolve_normalization(model_name, NormalizeConfig())
       normalize_cfg = NormalizeConfig(mean=mean, std=std)
       transforms = build_eval_transforms(image_size, model_name=model_name, normalize=normalize_cfg)
-      img_np = np.array(pil_img)
+      img_np = read_image(img_path, channels)   # via custom_sam_peft.data.io.read_image
       transformed = transforms(image=img_np, bboxes=[], class_labels=[])
       img_tensor = transformed["image"]
     """
@@ -159,7 +159,6 @@ def test_C13_predict_normalize_skips_processor_for_non_rgb(
 def test_C11_predict_reader_returns_correct_C(tmp_path: Path) -> None:
     """read_image(path, 4) on a (H,W,4) npy returns shape (H,W,4); mismatched C raises."""
     import numpy as np
-    import pytest
 
     from custom_sam_peft.data.io import read_image
 
