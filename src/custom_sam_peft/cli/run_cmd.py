@@ -88,7 +88,9 @@ def _orchestrate(cfg: TrainConfig, resume: Path | None, mode: ProgressMode) -> i
     if vs is None:
         raise RuntimeError(f"runner did not save val_source.json in {run_dir}")
 
-    wrapper: Any = load_sam31(cfg.model)
+    wrapper: Any = load_sam31(
+        cfg.model, channels=cfg.data.channels, channel_semantics=cfg.data.channel_semantics
+    )
     load_adapter(wrapper, adapter_path)
 
     val_dataset: Dataset | None = None

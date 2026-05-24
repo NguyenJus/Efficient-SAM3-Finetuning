@@ -52,7 +52,7 @@ def test_run_training_dispatches_via_registry(
         return lambda *a, **kw: MagicMock(__len__=lambda self: 0, class_names=[])
 
     monkeypatch.setattr("custom_sam_peft.train.runner.lookup", fake_lookup)
-    monkeypatch.setattr("custom_sam_peft.train.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.train.runner.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr(
         "custom_sam_peft.train.runner.build_tracker",
         lambda _cfg: MagicMock(close=MagicMock(), start_run=MagicMock()),
@@ -144,7 +144,7 @@ def test_run_training_writes_val_source_json_on_auto_split(
     )
 
     monkeypatch.setattr(
-        "custom_sam_peft.train.runner.load_sam31", lambda _m: make_stub_wrapper(dim=8, working=True)
+        "custom_sam_peft.train.runner.load_sam31", lambda _m, **_kw: make_stub_wrapper(dim=8, working=True)
     )
     from custom_sam_peft import train as _train_pkg  # noqa: F401
 
@@ -207,7 +207,7 @@ def test_run_training_resume_reuses_saved_val_source(
 
     monkeypatch.setattr(
         "custom_sam_peft.train.runner.load_sam31",
-        lambda _m: make_stub_wrapper(dim=8, working=True),
+        lambda _m, **_kw: make_stub_wrapper(dim=8, working=True),
     )
     from custom_sam_peft.train.runner import run_training
 

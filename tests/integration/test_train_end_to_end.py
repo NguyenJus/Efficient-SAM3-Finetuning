@@ -405,7 +405,7 @@ def test_e2e_auto_split_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> Non
 
     # Stub the model so this runs on CPU.
     orig_load = runner_mod.load_sam31
-    runner_mod.load_sam31 = lambda _m: make_stub_wrapper(dim=8, working=True)  # type: ignore[assignment]
+    runner_mod.load_sam31 = lambda _m, **_kw: make_stub_wrapper(dim=8, working=True)  # type: ignore[assignment]
     try:
         result = runner_mod.run_training(cfg)
     finally:
@@ -455,7 +455,7 @@ def test_e2e_no_val_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> None:
     )
 
     orig_load = runner_mod.load_sam31
-    runner_mod.load_sam31 = lambda _m: make_stub_wrapper(dim=8, working=True)  # type: ignore[assignment]
+    runner_mod.load_sam31 = lambda _m, **_kw: make_stub_wrapper(dim=8, working=True)  # type: ignore[assignment]
     try:
         result = runner_mod.run_training(cfg)
     finally:
