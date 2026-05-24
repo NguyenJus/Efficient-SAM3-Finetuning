@@ -1,10 +1,10 @@
 """QLoRA resume smoke: split the 50-step QLoRA overfit budget across a save/load
 boundary to pin that bnb 4-bit quant_state survives the resume seam.
 
-Gated by `@pytest.mark.gpu`, `@requires_compatible_gpu`, `@requires_checkpoint`,
+Gated by `@pytest.mark.gpu_t4`, `@requires_compatible_gpu`, `@requires_checkpoint`,
 plus per-test `@pytest.mark.requires_bnb` and `@pytest.mark.skipif(not _bnb_available())`.
 Not in CI by default. Run with:
-    pytest -m gpu tests/gpu/test_real_train_qlora_resume.py -v
+    pytest -m gpu_t4 tests/gpu/test_real_train_qlora_resume.py -v
 
 Phase A trains ~26 grad steps (epochs=13 against 2-image tiny_coco, batch=1,
 just past save_every=25 to land a checkpoint). Phase B resumes from that
@@ -28,7 +28,7 @@ from custom_sam_peft.train.runner import run_training
 from tests.gpu.conftest import _bnb_available, _RecordingTracker
 
 pytestmark = [
-    pytest.mark.gpu,
+    pytest.mark.gpu_t4,
     pytest.mark.requires_compatible_gpu,
     pytest.mark.requires_checkpoint,
 ]

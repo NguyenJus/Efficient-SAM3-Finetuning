@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _BUILTIN_DEFAULT_MODEL = "facebook/sam3.1"
-_BUILTIN_DEFAULT_IMAGE_SIZE = 1024  # SAM 3.1 native resolution
+_BUILTIN_DEFAULT_IMAGE_SIZE = 1008  # SAM 3.1 actual input resolution used by load_sam31
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
 
     Precedence for image_size:
       1. --config.data.image_size
-      2. Builtin default (1024).
+      2. Builtin default (1008).
     """
     # --- parse --config YAML (if given) ---
     config_model_name: str | None = None

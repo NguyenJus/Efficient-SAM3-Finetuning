@@ -488,6 +488,7 @@ class DataConfig(_Strict):
 class QLoRAConfig(_Strict):
     quant_type: QuantType = "nf4"
     compute_dtype: Dtype = "bfloat16"
+    use_double_quant: bool = False  # bnb nested quantization of the quant constants
 
 
 class PEFTConfig(_Strict):

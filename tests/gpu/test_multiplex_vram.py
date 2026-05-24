@@ -18,7 +18,7 @@ from custom_sam_peft.presets import decide_eval_batch_size
 pytestmark = [
     pytest.mark.requires_checkpoint,
     pytest.mark.requires_compatible_gpu,
-    pytest.mark.gpu,
+    pytest.mark.gpu_t4,
 ]
 
 

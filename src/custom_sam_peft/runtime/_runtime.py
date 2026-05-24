@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import torch
 
 from custom_sam_peft.errors import ConfigError
+
+logger = logging.getLogger(__name__)
+
+_dtype_coercion_warned = False
 
 _DTYPE_MAP = {
     "float32": torch.float32,
@@ -51,3 +56,38 @@ class Runtime:
                 fix="update runtime.dtype in your config to one of the supported values",
             ) from e
         return cls(device=torch.device(device), dtype=resolved_dtype)
+
+
+def coerce_dtype_for_capability(
+    dtype: torch.dtype,
+    *,
+    capability: tuple[int, int] | None = None,
+    device: torch.device | None = None,
+) -> torch.dtype:
+    """Coerce bfloat16 -> float16 on hardware below compute capability 8.0.
+
+    bf16 is emulated below CC 8.0 (Pascal/Turing/Volta), so we run those cards
+    in float16. Only bfloat16 is touched; float16/float32 pass through. Emits a
+    one-time warning per process when a coercion happens.
+
+    Pass ``capability`` directly (CPU-testable) or a ``device`` to read it from.
+    """
+    global _dtype_coercion_warned
+    if dtype is not torch.bfloat16:
+        return dtype
+    if capability is None:
+        if device is not None and device.type == "cuda":
+            capability = torch.cuda.get_device_capability(device)
+        else:
+            return dtype  # CPU / unknown: leave bf16 alone (autocast path handles CPU)
+    if capability >= (8, 0):
+        return dtype
+    if not _dtype_coercion_warned:
+        logger.warning(
+            "Requested bfloat16 on a device with compute capability %s (< 8.0, "
+            "where bf16 is emulated); coercing to float16. This is expected on "
+            "Pascal (GTX 1080).",
+            capability,
+        )
+        _dtype_coercion_warned = True
+    return torch.float16

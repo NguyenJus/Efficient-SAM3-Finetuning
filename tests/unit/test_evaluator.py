@@ -412,3 +412,34 @@ def test_row_outputs_returns_single_row_dict() -> None:
     assert row["pred_boxes"].shape == (1, 2, 4)
     assert row["pred_masks"].shape == (1, 2, 4, 4)
     assert row["presence_logit_dec"].shape == (1, 1)
+
+
+def test_row_outputs_skips_non_tensor_values() -> None:
+    """_row_outputs drops non-tensor entries (e.g. sam3's prev_encoder_out dict).
+
+    Bug: the real model's forward_grounding returns non-tensor values such as
+    ``prev_encoder_out`` (a nested dict) alongside the prediction tensors.
+    ``dict[slice]`` raises KeyError; _row_outputs must skip non-tensor entries.
+    """
+    from custom_sam_peft.eval.evaluator import _row_outputs
+
+    outputs = {
+        "pred_logits": torch.randn(4, 3, 1),
+        "pred_boxes": torch.randn(4, 3, 4),
+        # non-tensor entries that the real model returns:
+        "prev_encoder_out": {"x": 1, "y": [2, 3]},
+        "encoder_hidden_states": None,
+    }
+    # Must not raise; non-tensor entries are dropped
+    row = _row_outputs(outputs, r=0)
+
+    # Only tensor keys are present
+    assert set(row.keys()) == {"pred_logits", "pred_boxes"}
+
+    # Tensor values are correctly sliced to batch dim 1
+    assert row["pred_logits"].shape == (1, 3, 1)
+    assert row["pred_boxes"].shape == (1, 3, 4)
+
+    # Non-tensor entries are absent
+    assert "prev_encoder_out" not in row
+    assert "encoder_hidden_states" not in row
