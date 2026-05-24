@@ -50,15 +50,24 @@ def load_adapter(model: nn.Module, checkpoint_dir: Path, kind: AdapterKind) -> n
     peft_adapters is imported lazily to keep it off the base-model hot path.
     The peft_adapters API expects Sam3Wrapper but we accept the wider nn.Module
     type here so callers don't need to import Sam3Wrapper.
+
+    After loading the PEFT adapter, also restores the channel adapter (if the
+    bundle contains one) via the shared train.checkpoint helper (spec §10.3).
+    For rgb bundles the wrapper has no channel adapter → no-op.
     """
     if kind == "qlora":
         from custom_sam_peft.peft_adapters import qlora as _qlora
 
-        return _qlora.load_qlora(model, checkpoint_dir)  # type: ignore[arg-type]
+        model = _qlora.load_qlora(model, checkpoint_dir)  # type: ignore[arg-type]
     else:
         from custom_sam_peft.peft_adapters import lora as _lora
 
-        return _lora.load_lora(model, checkpoint_dir)  # type: ignore[arg-type]
+        model = _lora.load_lora(model, checkpoint_dir)  # type: ignore[arg-type]
+
+    from custom_sam_peft.train.checkpoint import _load_channel_adapter
+
+    _load_channel_adapter(model, checkpoint_dir)
+    return model
 
 
 def maybe_merge_adapter(model: nn.Module, *, merge: bool) -> nn.Module:
