@@ -277,3 +277,69 @@ def test_save_adapter_calls_save_channel_adapter(tmp_path: Path) -> None:
     assert len(calls) == 1, f"expected 1 call to _save_channel_adapter, got {len(calls)}"
     _, called_dir = calls[0]
     assert called_dir == out, f"expected dir={out}, got {called_dir}"
+
+
+def test_load_channel_adapter_noop_when_file_absent_but_adapter_present(
+    tmp_path: Path,
+) -> None:
+    """_load_channel_adapter is a clean no-op when the file is absent but an adapter IS present.
+
+    Guards the distinct case where a non-RGB wrapper (adapter != None) resumes from a
+    checkpoint directory that was written before the channel-adapter feature existed (or
+    the file was simply never saved).  The adapter weights must remain bit-for-bit
+    unchanged — no silent zeroing or partial overwrite.
+    """
+    import torch
+    import torch.nn as nn
+
+    from custom_sam_peft.train import checkpoint as C
+
+    class _StubAdapterModel:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.channel_adapter = adapter
+
+    class _StubWrapper:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.model = _StubAdapterModel(adapter)
+
+    conv = nn.Conv2d(4, 3, 1)
+    before = conv.weight.detach().clone()
+
+    w = _StubWrapper(conv)
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+
+    # Must not raise, and must leave weights unchanged.
+    C._load_channel_adapter(w, empty_dir)  # type: ignore[arg-type]
+
+    assert torch.allclose(conv.weight, before), "adapter weights were mutated despite missing file"
+
+
+def test_load_channel_adapter_shape_mismatch_raises(tmp_path: Path) -> None:
+    """_load_channel_adapter propagates RuntimeError on shape mismatch (silent-corruption guard).
+
+    Saves a 4-channel adapter then attempts to load it into a 3-channel adapter.  The
+    strict=True load must surface the size-mismatch error rather than swallow it, locking
+    in the loud-failure contract that prevents silent weight corruption on config drift.
+    """
+    import torch
+    import torch.nn as nn
+
+    from custom_sam_peft.train import checkpoint as C
+
+    class _StubAdapterModel:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.channel_adapter = adapter
+
+    class _StubWrapper:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.model = _StubAdapterModel(adapter)
+
+    saved_conv = nn.Conv2d(4, 3, 1)
+    with torch.no_grad():
+        saved_conv.weight.normal_()
+    C._save_channel_adapter(_StubWrapper(saved_conv), tmp_path / "ck")  # type: ignore[arg-type]
+
+    mismatched_conv = nn.Conv2d(3, 3, 1)  # different in_channels → shape mismatch
+    with pytest.raises(RuntimeError):
+        C._load_channel_adapter(_StubWrapper(mismatched_conv), tmp_path / "ck")  # type: ignore[arg-type]
