@@ -73,7 +73,10 @@ def _run_probe(image_size: int) -> int:
     from custom_sam_peft.peft_adapters.lora import apply_lora
 
     model_cfg = ModelConfig()
-    wrapper = load_sam31(model_cfg)
+    # calibrate is a VRAM probe with no DataConfig in scope; the rgb default is the
+    # documented exception (spec §5.4 / risk #2): probe RAM is for the base model,
+    # not channel-adapter sizing.
+    wrapper = load_sam31(model_cfg, channels=3, channel_semantics="rgb")
     peft_cfg = PEFTConfig(method="lora", r=4)
     apply_lora(wrapper, peft_cfg)
 

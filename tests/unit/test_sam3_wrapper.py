@@ -74,36 +74,102 @@ def _imgs(b: int) -> torch.Tensor:
     return torch.zeros(b, 3, 8, 8)
 
 
+def _default_wrapper() -> Sam3Wrapper:
+    """Return a Sam3Wrapper with default (rgb, 3-channel) settings for _validate_inputs tests."""
+    from torch import nn
+
+    return Sam3Wrapper(nn.Identity(), image_size=8, mask_size=8)
+
+
 def test_validate_inputs_accepts_K_between_1_and_cap() -> None:
     from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
 
+    w = _default_wrapper()
     for k in (1, 5, MULTIPLEX_CAP):
         prompts = [TextPrompts(classes=[f"c{i}" for i in range(k)])] * 2
-        Sam3Wrapper._validate_inputs(_imgs(2), prompts, None)
+        w._validate_inputs(_imgs(2), prompts, None)
 
 
 def test_validate_inputs_rejects_K_zero() -> None:
+    w = _default_wrapper()
     with pytest.raises(ValueError, match="MULTIPLEX_CAP"):
-        Sam3Wrapper._validate_inputs(_imgs(1), [TextPrompts(classes=[])], None)
+        w._validate_inputs(_imgs(1), [TextPrompts(classes=[])], None)
 
 
 def test_validate_inputs_rejects_K_over_cap() -> None:
     from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
 
+    w = _default_wrapper()
     too_many = [f"c{i}" for i in range(MULTIPLEX_CAP + 1)]
     with pytest.raises(ValueError, match="MULTIPLEX_CAP"):
-        Sam3Wrapper._validate_inputs(_imgs(1), [TextPrompts(classes=too_many)], None)
+        w._validate_inputs(_imgs(1), [TextPrompts(classes=too_many)], None)
 
 
 def test_validate_inputs_rejects_mismatched_class_lists_across_batch() -> None:
+    w = _default_wrapper()
     prompts = [TextPrompts(classes=["cat", "dog"]), TextPrompts(classes=["dog", "cat"])]
     with pytest.raises(ValueError, match=r"same.*class"):
-        Sam3Wrapper._validate_inputs(_imgs(2), prompts, None)
+        w._validate_inputs(_imgs(2), prompts, None)
 
 
 def test_validate_inputs_k1_still_passes() -> None:
-    Sam3Wrapper._validate_inputs(
+    w = _default_wrapper()
+    w._validate_inputs(
         _imgs(3),
         [TextPrompts(classes=["cat"]) for _ in range(3)],
         None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 11: channel-adapter wiring tests
+# ---------------------------------------------------------------------------
+
+import torch.nn as nn  # noqa: E402 — after module-level imports above
+
+from custom_sam_peft.models.sam3 import _Sam3ImageAdapter  # noqa: E402
+
+
+class _StubBackbone(nn.Module):
+    def forward_image(self, images):  # pragma: no cover - shape probe
+        return {"_chans": images.shape[1]}
+
+
+class _StubModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = _StubBackbone()
+
+
+def test_validate_inputs_accepts_configured_channels_rejects_wrong():
+    w = Sam3Wrapper(
+        _Sam3ImageAdapter(_StubModel(), channels=5, channel_semantics="freeform"),
+        channels=5,
+        channel_semantics="freeform",
+    )
+    # Accept: correct channel count, correct ndim
+    w._validate_inputs(
+        torch.zeros(1, 5, 8, 8),
+        [TextPrompts(classes=["cat"])],
+        None,
+    )
+    # Reject: wrong channel count (3 instead of 5)
+    with pytest.raises(ValueError, match=r"\(B, 5, H, W\)"):
+        w._validate_inputs(torch.zeros(1, 3, 8, 8), [TextPrompts(classes=["cat"])], None)
+    # Reject: ndim != 4
+    with pytest.raises(ValueError):
+        w._validate_inputs(torch.zeros(5, 8, 8), [], None)
+
+
+def test_rgb_adapter_is_none_zero_new_params():
+    ad = _Sam3ImageAdapter(_StubModel(), channels=3, channel_semantics="rgb")
+    assert ad.channel_adapter is None
+    base = sum(p.numel() for p in _StubModel().parameters())
+    total = sum(p.numel() for p in ad.parameters())
+    assert total == base  # zero new params for rgb
+
+
+def test_freeform_adapter_present_and_trainable():
+    ad = _Sam3ImageAdapter(_StubModel(), channels=4, channel_semantics="freeform")
+    assert isinstance(ad.channel_adapter, nn.Conv2d)
+    assert any(p.requires_grad for p in ad.channel_adapter.parameters())

@@ -305,7 +305,7 @@ def test_verbose_emits_per_image_latency_log(
 
     monkeypatch.setattr(
         "custom_sam_peft.models.sam3.load_sam31",
-        lambda _cfg: _StubSamModule(),
+        lambda _cfg, **_kw: _StubSamModule(),
     )
 
     opts = PredictOptions(
@@ -332,3 +332,58 @@ def test_verbose_emits_per_image_latency_log(
 
     per_image = [r for r in caplog.records if r.getMessage().startswith("image 1/1 a.png")]
     assert per_image, "verbose=True should emit a per-image latency log line"
+
+
+# ---------------------------------------------------------------------------
+# C12 — _resolve_config reads channels + semantics
+# ---------------------------------------------------------------------------
+
+
+def test_C12_resolve_config_reads_channels_and_semantics(tmp_path: Path) -> None:
+    """_resolve_config parses data.channels and data.channel_semantics from YAML."""
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        "model:\n  name: facebook/sam3.1\n"
+        "data:\n  image_size: 512\n  channels: 4\n  channel_semantics: rgba\n",
+        encoding="utf-8",
+    )
+    opts = _make_opts(tmp_path, config=cfg, checkpoint=None)
+    rcfg = _resolve_config(opts)
+    assert rcfg.channels == 4
+    assert rcfg.channel_semantics == "rgba"
+
+
+def test_C12_defaults_when_absent(tmp_path: Path) -> None:
+    """When data.channels / data.channel_semantics absent, defaults to 3 / 'rgb'."""
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(
+        "model:\n  name: facebook/sam3.1\ndata:\n  image_size: 512\n",
+        encoding="utf-8",
+    )
+    opts = _make_opts(tmp_path, config=cfg, checkpoint=None)
+    rcfg = _resolve_config(opts)
+    assert rcfg.channels == 3
+    assert rcfg.channel_semantics == "rgb"
+
+
+# ---------------------------------------------------------------------------
+# C12b — bogus channel_semantics raises ValueError (Fix 2 validation gate)
+# ---------------------------------------------------------------------------
+
+
+def test_C12b_bogus_channel_semantics_raises_value_error(tmp_path: Path) -> None:
+    """_resolve_config must raise ValueError with a clear message for unknown semantics.
+
+    Guards Fix 2: a bad data.channel_semantics in the predict --config must be
+    caught at resolve time (not silently passed to load_sam31 as a KeyError).
+    The default 'rgb' must still pass (covered by test_C12_defaults_when_absent).
+    """
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(
+        "model:\n  name: facebook/sam3.1\n"
+        "data:\n  image_size: 512\n  channels: 4\n  channel_semantics: hyperspectral\n",
+        encoding="utf-8",
+    )
+    opts = _make_opts(tmp_path, config=cfg, checkpoint=None)
+    with pytest.raises(ValueError, match="hyperspectral"):
+        _resolve_config(opts)

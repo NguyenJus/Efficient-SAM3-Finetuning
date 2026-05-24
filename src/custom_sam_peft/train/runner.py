@@ -111,7 +111,9 @@ def run_training(
     if (lim_cfg.train is not None or lim_cfg.val is not None) and val_ds is not None:
         _write_subset_manifest(run_dir, train_ds, val_ds, cfg)
 
-    wrapper: Any = load_sam31(cfg.model)
+    wrapper: Any = load_sam31(
+        cfg.model, channels=cfg.data.channels, channel_semantics=cfg.data.channel_semantics
+    )
     peft_factory = lookup("peft", cfg.peft.method)
     peft_factory(wrapper, cfg.peft)
     tracker = build_tracker(cfg)

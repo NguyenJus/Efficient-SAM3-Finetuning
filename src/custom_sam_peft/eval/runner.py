@@ -127,7 +127,9 @@ def run_eval(
         dataset = val_dataset
 
     if model is None:
-        wrapper = load_sam31(cfg.model)
+        wrapper = load_sam31(
+            cfg.model, channels=cfg.data.channels, channel_semantics=cfg.data.channel_semantics
+        )
         load_lora(wrapper, resolved_checkpoint)
     else:
         wrapper = model

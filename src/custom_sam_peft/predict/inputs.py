@@ -12,7 +12,7 @@ import typer
 logger = logging.getLogger(__name__)
 
 ALLOWED_IMAGE_EXTS: frozenset[str] = frozenset(
-    {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+    {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".npy", ".npz"}
 )
 
 

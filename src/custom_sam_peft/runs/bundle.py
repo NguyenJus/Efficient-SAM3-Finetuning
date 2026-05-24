@@ -64,7 +64,9 @@ def run_export(
     from custom_sam_peft.train.checkpoint import load_adapter, save_adapter, save_merged
 
     run_dir = checkpoint.parent
-    wrapper = load_sam31(cfg.model)
+    wrapper = load_sam31(
+        cfg.model, channels=cfg.data.channels, channel_semantics=cfg.data.channel_semantics
+    )
     load_adapter(wrapper, checkpoint)
 
     if merge:

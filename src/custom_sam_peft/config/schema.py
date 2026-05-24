@@ -33,6 +33,7 @@ from custom_sam_peft.config._internal import (
     MatcherWeights,
     WandbConfig,
 )
+from custom_sam_peft.data.channel_semantics import CHANNEL_SEMANTICS
 
 __all__ = [  # noqa: RUF022
     # User-facing Pydantic models
@@ -268,14 +269,29 @@ class NormalizeConfig(_Strict):
 
     # --- advanced --- (all normalize fields override the AutoImageProcessor-derived stats)
     mean: list[float] = Field(
-        default_factory=lambda: [0.485, 0.456, 0.406], min_length=3, max_length=3
+        default_factory=lambda: [0.485, 0.456, 0.406], min_length=1, max_length=16
     )
     std: list[float] = Field(
-        default_factory=lambda: [0.229, 0.224, 0.225], min_length=3, max_length=3
+        default_factory=lambda: [0.229, 0.224, 0.225], min_length=1, max_length=16
+    )
+    max_pixel_value: float = Field(
+        default=255.0,
+        gt=0.0,
+        description=(
+            "Divisor applied by A.Normalize before subtracting mean / dividing by "
+            "std. Default 255.0 assumes uint8 input. For float multi-band input "
+            "(e.g. SAR/height already in [0,1]), set this to your data's max (e.g. "
+            "1.0); mean/std must be expressed in the same units. See spec §7.2."
+        ),
     )
 
     @model_validator(mode="after")
     def _check_ranges(self) -> NormalizeConfig:
+        if len(self.mean) != len(self.std):
+            raise ValueError(
+                f"normalize.mean has {len(self.mean)} entries but normalize.std has "
+                f"{len(self.std)}; mean and std must have the same length."
+            )
         for m in self.mean:
             if not (0.0 <= m <= 1.0):
                 raise ValueError(f"normalize.mean values must be in [0, 1]; got {m}")
@@ -372,9 +388,34 @@ class DataConfig(_Strict):
     val_split: ValSplitConfig | None = None
     prompt_mode: PromptMode
     image_size: PositiveInt = 1008  # SAM3.1's native input; see models/sam3.py:192,304,1202-1203.
+    channels: int = Field(
+        default=3,
+        ge=1,
+        le=16,
+        description=(
+            "Number of input image channels (1..16). The N->3 channel adapter "
+            "(a 1x1 conv inserted before the frozen SAM3.1 patch-embed) bridges "
+            "N channels down to the pretrained 3-channel stem. The cap of 16 is "
+            "deliberate: beyond ~16 channels the 3-channel bottleneck becomes "
+            "lossy, at which point a future 'bridge B' (replacing the patch-embed "
+            "with an in_chans=N stem; issue follow-up) would be warranted instead. "
+            "Explicit only — no auto-detection."
+        ),
+    )
+    channel_semantics: Literal["rgb", "rgba", "grayscale", "freeform"] = Field(
+        default="rgb",
+        description=(
+            "How the input channels are interpreted (independent of the channel "
+            "COUNT in `channels`). Drives the channel adapter (build + init), the "
+            "normalization default, and the augmentation regime. See the "
+            "CHANNEL_SEMANTICS registry (src/custom_sam_peft/data/channel_semantics.py) "
+            "for the per-semantic profile. Default 'rgb' reproduces today's behavior "
+            "exactly. Add new semantics by adding a registry entry."
+        ),
+    )
     augmentations: AugmentationsConfig = Field(default_factory=AugmentationsConfig)
     text_prompt: TextPromptConfig = Field(default_factory=TextPromptConfig)
-    normalize: NormalizeConfig = Field(default_factory=NormalizeConfig)
+    normalize: NormalizeConfig | None = None
     limit: LimitConfig = Field(default_factory=LimitConfig)
     # --- advanced ---
     test: DataSplit | None = None
@@ -384,6 +425,39 @@ class DataConfig(_Strict):
     def _check_format_specific(self) -> DataConfig:
         if self.format == "hf" and self.hf is None:
             raise ValueError("data.hf is required when data.format == 'hf'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_channels_semantics_normalize(self) -> DataConfig:
+        profile = CHANNEL_SEMANTICS[self.channel_semantics]
+
+        # (a) semantic <-> channels match
+        if self.channels not in profile.allowed_channels:
+            allowed = sorted(profile.allowed_channels)
+            allowed_str = f"{allowed[0]}" if len(allowed) == 1 else f"{allowed[0]}..{allowed[-1]}"
+            raise ValueError(
+                f"data.channel_semantics={self.channel_semantics!r} requires "
+                f"data.channels={allowed_str}, but data.channels={self.channels}."
+            )
+
+        # (b) resolve normalize: explicit wins; else profile default; freeform requires explicit.
+        if self.normalize is None:
+            if profile.normalize_default is None:
+                raise ValueError(
+                    f"data.channel_semantics={self.channel_semantics!r} requires explicit "
+                    f"data.normalize.mean/std (one value per channel; no default exists for "
+                    f"freeform). Provide N={self.channels} mean and {self.channels} std values."
+                )
+            mean, std = profile.normalize_default
+            self.normalize = NormalizeConfig(mean=list(mean), std=list(std))
+
+        # (c) length cross-check (after default materialization)
+        if len(self.normalize.mean) != self.channels or len(self.normalize.std) != self.channels:
+            raise ValueError(
+                f"data.normalize.mean has {len(self.normalize.mean)} entries but "
+                f"data.channels={self.channels}; provide exactly {self.channels} per-channel "
+                f"mean values (and {self.channels} std values)."
+            )
         return self
 
     @model_validator(mode="after")

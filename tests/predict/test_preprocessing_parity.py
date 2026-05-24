@@ -8,6 +8,8 @@ CPU-only — no model load.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -45,11 +47,11 @@ def _eval_path_tensor(image: Image.Image) -> torch.Tensor:
 def _predict_path_tensor(image: Image.Image) -> torch.Tensor:
     """Mirror the exact transform sequence used by predict/runner.py.
 
-    Source (runner.py lines 178-181, 299-307, 364-367):
+    Source (runner.py — _resolve_config + run_predict forward loop):
       mean, std = resolve_normalization(model_name, NormalizeConfig())
       normalize_cfg = NormalizeConfig(mean=mean, std=std)
       transforms = build_eval_transforms(image_size, model_name=model_name, normalize=normalize_cfg)
-      img_np = np.array(pil_img)
+      img_np = read_image(img_path, channels)   # via custom_sam_peft.data.io.read_image
       transformed = transforms(image=img_np, bboxes=[], class_labels=[])
       img_tensor = transformed["image"]
     """
@@ -116,3 +118,52 @@ def test_predict_normalize_uses_resolved_default_when_no_config() -> None:
     assert torch.equal(tensor_predict, tensor_eval), (
         "Tensors differ — runner normalization diverges from eval normalization."
     )
+
+
+# ---------------------------------------------------------------------------
+# C13 — predict normalize skips AutoImageProcessor for non-rgb
+# ---------------------------------------------------------------------------
+
+
+def test_C13_predict_normalize_skips_processor_for_non_rgb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resolve_normalization must NOT consult AutoImageProcessor for non-rgb semantics."""
+    import transformers
+
+    from custom_sam_peft.config.schema import NormalizeConfig
+    from custom_sam_peft.data.transforms import resolve_normalization
+
+    def boom(*a: object, **k: object) -> None:
+        raise AssertionError("processor must not be consulted for non-rgb channel_semantics")
+
+    monkeypatch.setattr(
+        transformers,
+        "AutoImageProcessor",
+        type("X", (), {"from_pretrained": staticmethod(boom)}),
+    )
+    mean, std = resolve_normalization(
+        "facebook/sam3.1",
+        NormalizeConfig(mean=[0.1] * 4, std=[0.1] * 4),
+        channel_semantics="rgba",
+    )
+    assert mean == [0.1, 0.1, 0.1, 0.1]
+    assert std == [0.1, 0.1, 0.1, 0.1]
+
+
+# ---------------------------------------------------------------------------
+# C11 — predict reader returns correct C
+# ---------------------------------------------------------------------------
+
+
+def test_C11_predict_reader_returns_correct_C(tmp_path: Path) -> None:
+    """read_image(path, 4) on a (H,W,4) npy returns shape (H,W,4); mismatched C raises."""
+    import numpy as np
+
+    from custom_sam_peft.data.io import read_image
+
+    p = tmp_path / "x.npy"
+    np.save(p, np.zeros((8, 10, 4), np.float32))
+    assert read_image(p, 4).shape == (8, 10, 4)
+    with pytest.raises(ValueError):
+        read_image(p, 3)

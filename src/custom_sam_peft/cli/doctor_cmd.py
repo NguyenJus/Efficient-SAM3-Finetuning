@@ -113,6 +113,7 @@ def _render_resolved_config_tables(cfg: TrainConfig) -> None:
     aug.add_row("steps", ", ".join(_STEP_NAMES_FOR(resolved)))
     console.print(aug)
 
+    assert cfg.data.normalize is not None  # materialized by DataConfig validator  # noqa: S101
     mean, std, path = resolve_normalization_with_path(cfg.model.name, cfg.data.normalize)
     norm = Table(title="Normalization", show_header=False, box=None)
     norm.add_row("model.name", cfg.model.name)
@@ -159,6 +160,7 @@ def _render_resolved_config_tables(cfg: TrainConfig) -> None:
 def _build_resolved_config_json(cfg: TrainConfig) -> dict[str, object]:
     """Spec §11.2.3 — additive `resolved_config` block injected into --json."""
     aug_dump = dump_augmentation_pipeline(cfg.data.augmentations)
+    assert cfg.data.normalize is not None  # materialized by DataConfig validator  # noqa: S101
     mean, std, path = resolve_normalization_with_path(cfg.model.name, cfg.data.normalize)
     return {
         "augmentations": {
