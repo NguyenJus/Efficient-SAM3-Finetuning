@@ -232,7 +232,7 @@ otherwise        →  build nn.Conv2d(channels, 3, 1) with profile.adapter_init
 For `semantic == rgb` (the shipped default, which requires `channels == 3`): **no adapter is constructed** and **no new parameters exist**. The forward path is byte-for-byte identical to today's RGB path. Implementation: `self.channel_adapter` is `None` (or `nn.Identity`) and the forward skips it entirely. A test MUST assert this (§12, CPU case C3 "passthrough keyed on `semantic == rgb`").
 
 > **Zero-regression now attaches to `semantic == rgb`, NOT to `channels == 3`.** This is the key change. A `freeform` config with `channels == 3` does **NOT** get a passthrough — it builds a learned 3→3 `Conv2d(3,3,1)` with `average_broadcast` init (non-zero, trainable new params). The only passthrough is the default `rgb` semantic.
-
+>
 > Note: prefer `None` over `nn.Identity` if `nn.Identity` would alter `state_dict` keys or break the "params unchanged" assertion; the planner picks the mechanism, but the observable contract is "no new params, output identical to pre-feature RGB path" for `semantic == rgb`.
 
 ### 5.3 Non-rgb semantics — learned channel adapter
