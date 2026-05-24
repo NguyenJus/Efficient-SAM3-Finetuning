@@ -28,6 +28,7 @@ from custom_sam_peft.models.losses import total_loss
 from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, Sam3Wrapper
 from custom_sam_peft.peft_adapters import PEFTMethod, make_peft_method
 from custom_sam_peft.runtime import Runtime, to_device
+from custom_sam_peft.runtime._runtime import coerce_dtype_for_capability
 from custom_sam_peft.tracking.base import Tracker
 from custom_sam_peft.train.types import OomEvent
 
@@ -181,7 +182,10 @@ def _autocast_ctx(cfg: TrainConfig, peft_method: PEFTMethod) -> Any:
         return contextlib.nullcontext()
     if not torch.cuda.is_available():
         return contextlib.nullcontext()
-    dtype = torch.bfloat16 if cfg.model.dtype == "bfloat16" else torch.float16
+    requested = torch.bfloat16 if cfg.model.dtype == "bfloat16" else torch.float16
+    dtype = coerce_dtype_for_capability(
+        requested, device=torch.device("cuda", torch.cuda.current_device())
+    )
     return torch.autocast(device_type="cuda", dtype=dtype)
 
 

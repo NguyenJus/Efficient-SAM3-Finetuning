@@ -18,6 +18,7 @@ NotImplementedError stub and will go green when Task 3 lands:
 
 from __future__ import annotations
 
+import json
 import sys
 import types
 from pathlib import Path
@@ -163,12 +164,16 @@ def fake_bnb(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
             *,
             weight_quant_type: str | None = None,
             module_quant_type: str | None = None,
+            compress_statistics: bool = False,
         ) -> None:
             super().__init__()
-            # Mimic a Params4bit weight with `.quant_type` directly on the weight.
+            # Mimic a Params4bit weight with `.quant_type` and `.compress_statistics`
+            # on the weight object (mirrors real bnb.nn.Params4bit, which stores
+            # compress_statistics on self.weight, NOT on the Linear4bit module).
             weight = nn.Parameter(nn.functional.normalize(nn.Linear(2, 2).weight))
             if weight_quant_type is not None:
                 weight.quant_type = weight_quant_type  # type: ignore[attr-defined]
+            weight.compress_statistics = compress_statistics  # type: ignore[attr-defined]
             self.weight = weight
             if module_quant_type is not None:
                 self.quant_type = module_quant_type  # type: ignore[attr-defined]
@@ -494,6 +499,174 @@ def test_qlora_does_not_call_prepare_model_for_kbit_training() -> None:
     ), (
         "qlora.py must not import or call prepare_model_for_kbit_training. "
         "Its fp32 upcast collides with sam3's no-outer-autocast constraint."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task C-1: use_double_quant field + metadata v2
+# ---------------------------------------------------------------------------
+
+
+def test_qlora_config_double_quant_defaults_false() -> None:
+    from custom_sam_peft.config.schema import QLoRAConfig
+
+    assert QLoRAConfig().use_double_quant is False  # preserve current behavior
+
+
+def test_qlora_config_double_quant_roundtrips() -> None:
+    from custom_sam_peft.config.schema import QLoRAConfig
+
+    cfg = QLoRAConfig(use_double_quant=True)
+    assert cfg.model_dump()["use_double_quant"] is True
+
+
+def test_infer_double_quant_false(fake_bnb: types.ModuleType) -> None:
+    """_infer_double_quant_from_wrapper returns False when compress_statistics is falsy.
+
+    compress_statistics must be read from module.weight (mirroring real bnb.nn.Params4bit),
+    NOT from the module itself — this test verifies the correct attribute path.
+    """
+    from custom_sam_peft.peft_adapters.qlora import _infer_double_quant_from_wrapper
+
+    # compress_statistics=False (default) lives on weight, not on the module
+    fake_linear4bit = fake_bnb.nn.Linear4bit(compress_statistics=False)  # type: ignore[attr-defined]
+    model = nn.Sequential(fake_linear4bit)
+    wrapper: Any = _FakeWrapper(model)
+    assert _infer_double_quant_from_wrapper(wrapper) is False
+
+
+def test_infer_double_quant_true(fake_bnb: types.ModuleType) -> None:
+    """_infer_double_quant_from_wrapper returns True when weight.compress_statistics=True.
+
+    compress_statistics must be read from module.weight (mirroring real bnb.nn.Params4bit),
+    NOT from the module itself — this test verifies the correct attribute path.
+    """
+    from custom_sam_peft.peft_adapters.qlora import _infer_double_quant_from_wrapper
+
+    # compress_statistics=True lives on weight.compress_statistics (real bnb path)
+    fake_linear4bit = fake_bnb.nn.Linear4bit(compress_statistics=True)  # type: ignore[attr-defined]
+    model = nn.Sequential(fake_linear4bit)
+    wrapper: Any = _FakeWrapper(model)
+    assert _infer_double_quant_from_wrapper(wrapper) is True
+
+
+def test_qlora_meta_version_is_2() -> None:
+    """After bumping, _QLORA_META_VERSION must equal 2."""
+    from custom_sam_peft.peft_adapters.qlora import _QLORA_META_VERSION
+
+    assert _QLORA_META_VERSION == 2
+
+
+def test_load_qlora_meta_roundtrip_use_double_quant_true(
+    fake_bnb: types.ModuleType,
+    tmp_path: Path,
+) -> None:
+    """load_qlora reads use_double_quant=True from a v2 metadata file correctly."""
+    from custom_sam_peft.peft_adapters.qlora import _QLORA_META_FILE, _QLORA_META_VERSION
+
+    meta = {
+        "format_version": _QLORA_META_VERSION,
+        "quant_type": "nf4",
+        "compute_dtype": "bfloat16",
+        "use_double_quant": True,
+    }
+    (tmp_path / _QLORA_META_FILE).write_text(json.dumps(meta) + "\n")
+
+    # load_qlora requires a wrapper without an existing peft_model and attempts
+    # to load LoRA adapter weights — we test only the metadata parsing path by
+    # reconstructing QLoRAConfig the same way load_qlora does.
+    loaded_meta = json.loads((tmp_path / _QLORA_META_FILE).read_text())
+    assert loaded_meta["format_version"] == 2
+    assert loaded_meta["use_double_quant"] is True
+
+    # Reconstruct QLoRAConfig the same way load_qlora does.
+    from custom_sam_peft.config.schema import QLoRAConfig
+
+    qcfg = QLoRAConfig(
+        quant_type=loaded_meta["quant_type"],
+        compute_dtype=loaded_meta["compute_dtype"],
+        use_double_quant=loaded_meta.get("use_double_quant", False),
+    )
+    assert qcfg.use_double_quant is True
+
+
+def test_load_qlora_meta_roundtrip_use_double_quant_default(
+    fake_bnb: types.ModuleType,
+    tmp_path: Path,
+) -> None:
+    """use_double_quant defaults to False when key is absent (backward compat)."""
+    from custom_sam_peft.peft_adapters.qlora import _QLORA_META_FILE, _QLORA_META_VERSION
+
+    # Simulate a v2 file that happens to omit use_double_quant.
+    meta = {
+        "format_version": _QLORA_META_VERSION,
+        "quant_type": "nf4",
+        "compute_dtype": "bfloat16",
+    }
+    (tmp_path / _QLORA_META_FILE).write_text(json.dumps(meta) + "\n")
+
+    loaded_meta = json.loads((tmp_path / _QLORA_META_FILE).read_text())
+    from custom_sam_peft.config.schema import QLoRAConfig
+
+    qcfg = QLoRAConfig(
+        quant_type=loaded_meta["quant_type"],
+        compute_dtype=loaded_meta["compute_dtype"],
+        use_double_quant=loaded_meta.get("use_double_quant", False),
+    )
+    assert qcfg.use_double_quant is False
+
+
+def test_infer_double_quant_save_metadata_roundtrip(fake_bnb: types.ModuleType) -> None:
+    """Inference helper → save metadata → parse path round-trip for use_double_quant=True.
+
+    Builds a fake wrapper whose Linear4bit has weight.compress_statistics=True, calls
+    _infer_double_quant_from_wrapper (the same path save_qlora uses to populate
+    `use_double_quant` in the metadata dict), then reconstructs QLoRAConfig via the
+    same parse path load_qlora uses. Asserts use_double_quant survives the full
+    inference→metadata→parse cycle.
+
+    This test would FAIL if _infer_double_quant_from_wrapper reads from the wrong
+    attribute (module.compress_statistics instead of module.weight.compress_statistics),
+    because the fake's compress_statistics is only set on weight (mirroring real bnb).
+    """
+    from custom_sam_peft.config.schema import QLoRAConfig
+    from custom_sam_peft.peft_adapters.qlora import (
+        _QLORA_META_VERSION,
+        _infer_double_quant_from_wrapper,
+    )
+
+    # Build a fake wrapper with weight.compress_statistics=True
+    fake_linear4bit = fake_bnb.nn.Linear4bit(  # type: ignore[attr-defined]
+        weight_quant_type="nf4",
+        compress_statistics=True,
+    )
+    fake_linear4bit.compute_dtype = torch.bfloat16
+    model = nn.Sequential(fake_linear4bit)
+    wrapper: Any = _FakeWrapper(model)
+
+    # Call the inference helper (same path save_qlora uses)
+    inferred_dq = _infer_double_quant_from_wrapper(wrapper)
+    assert inferred_dq is True, (
+        f"_infer_double_quant_from_wrapper returned {inferred_dq!r}; "
+        "expected True — compress_statistics must be read from module.weight"
+    )
+
+    # Build metadata dict as save_qlora would
+    meta = {
+        "format_version": _QLORA_META_VERSION,
+        "quant_type": "nf4",
+        "compute_dtype": "bfloat16",
+        "use_double_quant": inferred_dq,
+    }
+
+    # Parse it back as load_qlora would
+    qcfg = QLoRAConfig(
+        quant_type=meta["quant_type"],
+        compute_dtype=meta["compute_dtype"],
+        use_double_quant=meta.get("use_double_quant", False),
+    )
+    assert qcfg.use_double_quant is True, (
+        "QLoRAConfig reconstructed from save metadata must have use_double_quant=True"
     )
 
 

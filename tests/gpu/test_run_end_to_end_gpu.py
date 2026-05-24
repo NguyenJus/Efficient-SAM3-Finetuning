@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from custom_sam_peft.cli.main import app
 
 pytestmark = [
-    pytest.mark.gpu,
+    pytest.mark.gpu_t4,
     pytest.mark.requires_compatible_gpu,
     pytest.mark.requires_checkpoint,
 ]

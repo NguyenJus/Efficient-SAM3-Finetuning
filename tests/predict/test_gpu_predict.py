@@ -1,12 +1,11 @@
-"""GPU integration tests for ``csp predict`` — gated by mark.gpu.
+"""GPU integration tests for ``csp predict`` — mixed gpu_local / gpu_t4 tiers.
 
 All four tests require:
-  - A CUDA device with compute capability >= 7.5 (requires_compatible_gpu)
+  - A CUDA device with compute capability >= 6.0 (requires_compatible_gpu)
   - The real SAM 3.1 checkpoint at models/sam3.1/sam3.1_multiplex.pt (requires_checkpoint)
 
 These tests are excluded from default pytest collection / CI and are intended
-to be run explicitly:
-    pytest -m gpu tests/predict/test_gpu_predict.py -v
+to be run explicitly via scripts/run_gpu_tests.sh (local or t4 tier).
 
 Mirrors the module-level mark pattern from tests/gpu/test_real_train_overfits.py.
 """
@@ -30,7 +29,6 @@ from custom_sam_peft.train.runner import run_training
 from tests.gpu.conftest import _RecordingTracker
 
 pytestmark = [
-    pytest.mark.gpu,
     pytest.mark.requires_compatible_gpu,
     pytest.mark.requires_checkpoint,
 ]
@@ -152,6 +150,7 @@ def _train_and_get_adapter(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.gpu_local
 def test_predict_base_model_cuda(tmp_path: Path) -> None:
     """Real facebook/sam3.1 load + warmup + one synthetic 1024x1024 image + two text prompts.
 
@@ -168,6 +167,7 @@ def test_predict_base_model_cuda(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.gpu_t4
 def test_predict_lora_adapter_cuda(
     tmp_path: Path,
     tiny_coco_dir: Path,
@@ -197,6 +197,7 @@ def test_predict_lora_adapter_cuda(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.gpu_t4
 def test_predict_qlora_no_merge_cuda(
     tmp_path: Path,
     tiny_coco_dir: Path,
@@ -226,6 +227,7 @@ def test_predict_qlora_no_merge_cuda(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.gpu_local
 def test_predict_vram_hint_log(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,

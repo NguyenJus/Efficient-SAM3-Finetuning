@@ -12,8 +12,8 @@ Isolation contract: this module imports from lora.py (for _resolve_targets +
 SCOPE_TARGETS) but lora.py never imports from qlora.py. lora.py never imports
 bitsandbytes.
 
-custom_sam_peft_qlora.json format (v1):
-  {"format_version": 1, "quant_type": "nf4", "compute_dtype": "bfloat16"}
+custom_sam_peft_qlora.json format (v2):
+  {"format_version": 2, "quant_type": "nf4", "compute_dtype": "bfloat16", "use_double_quant": false}
 Bump format_version whenever fields change shape.
 """
 
@@ -31,12 +31,13 @@ from custom_sam_peft._registry import register
 from custom_sam_peft.config.schema import Dtype, PEFTConfig, QLoRAConfig
 from custom_sam_peft.models.sam3 import Sam3Wrapper
 from custom_sam_peft.peft_adapters.lora import _resolve_targets
+from custom_sam_peft.runtime._runtime import coerce_dtype_for_capability
 
 logger = logging.getLogger(__name__)
 
 
 _QLORA_META_FILE = "custom_sam_peft_qlora.json"
-_QLORA_META_VERSION = 1
+_QLORA_META_VERSION = 2
 
 
 def _import_bnb() -> Any:
@@ -143,12 +144,14 @@ def _replace_with_bnb_linear4bit(base: nn.Module, names: list[str], qcfg: QLoRAC
     for name in names:
         parent, attr = _resolve_parent(base, name)
         old = cast(nn.Linear, getattr(parent, attr))
+        block_dtype = coerce_dtype_for_capability(compute_dtype, device=old.weight.device)
         new = bnb.nn.Linear4bit(
             old.in_features,
             old.out_features,
             bias=old.bias is not None,
             quant_type=qcfg.quant_type,
-            compute_dtype=compute_dtype,
+            compute_dtype=block_dtype,
+            compress_statistics=qcfg.use_double_quant,
         )
         new.load_state_dict(old.state_dict())
         new = new.to(old.weight.device)  # quantization fires on .to(cuda)
@@ -344,6 +347,25 @@ def _infer_compute_dtype_from_wrapper(wrapper: Sam3Wrapper) -> str:
     raise RuntimeError("save_qlora: wrapper.peft_model contains no Linear4bit modules")
 
 
+def _infer_double_quant_from_wrapper(wrapper: Sam3Wrapper) -> bool:
+    """Read compress_statistics from the first Linear4bit module in the wrapped base.
+
+    Returns True when double quantization (nested quantization of the quant constants)
+    was enabled at quantization time, False otherwise (including when the attribute is
+    absent on older bnb builds).
+    """
+    bnb = _import_bnb()
+    if wrapper.peft_model is None:
+        raise RuntimeError("_infer_double_quant_from_wrapper: wrapper.peft_model is None")
+    for module in wrapper.peft_model.modules():
+        if isinstance(module, bnb.nn.Linear4bit):
+            weight = getattr(module, "weight", None)
+            return bool(getattr(weight, "compress_statistics", False))
+    raise RuntimeError(
+        "_infer_double_quant_from_wrapper: wrapper.peft_model contains no Linear4bit modules"
+    )
+
+
 def save_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> None:
     """Write LoRA adapter weights + custom_sam_peft_qlora.json (quant metadata) to `dirpath`."""
     if wrapper.peft_model is None:
@@ -355,6 +377,7 @@ def save_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> None:
         "format_version": _QLORA_META_VERSION,
         "quant_type": _infer_quant_type_from_wrapper(wrapper),
         "compute_dtype": _infer_compute_dtype_from_wrapper(wrapper),
+        "use_double_quant": _infer_double_quant_from_wrapper(wrapper),
     }
     (out / _QLORA_META_FILE).write_text(json.dumps(meta, indent=2) + "\n")
 
@@ -380,6 +403,7 @@ def load_qlora(wrapper: Sam3Wrapper, dirpath: str | Path) -> Sam3Wrapper:
     qcfg = QLoRAConfig(
         quant_type=meta["quant_type"],
         compute_dtype=meta["compute_dtype"],
+        use_double_quant=meta.get("use_double_quant", False),
     )
 
     from peft import PeftModel

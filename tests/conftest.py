@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import pathlib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,8 +24,9 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
-        "requires_compatible_gpu: skip unless a CUDA device with compute capability "
-        ">= 7.5 is available",
+        "requires_compatible_gpu: skip unless a CUDA device with compute "
+        "capability >= 6.0 is available (NF4 QLoRA + LoRA work from CC 6.0 / "
+        "Pascal; only LLM.int8() needs CC 7.5 and is unused here)",
     )
     config.addinivalue_line(
         "markers",
@@ -31,9 +34,36 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
-        "gpu_inspection: cheap GPU-gated structural/forward tests (Tier 1); "
-        "see docs/testing/gpu-test-policy.md",
+        "gpu_local: GPU test that fits the GTX 1080 (<=~7 GB, CC 6.0+, NF4+float16); "
+        "run via run_gpu_tests.sh local",
     )
+    config.addinivalue_line(
+        "markers",
+        "gpu_t4: GPU test needing >8 GB and <=16 GB, or bf16-representative numerics; Colab T4",
+    )
+    config.addinivalue_line(
+        "markers",
+        "gpu_xl: GPU test beyond a T4 (>16 GB / larger arch); cloud auto-provision (needs #124)",
+    )
+
+
+def _torch_can_launch_kernel() -> bool:
+    """Whether the *installed* torch build can run a kernel on the current CUDA device.
+
+    CC >= 6.0 is necessary but not sufficient: the default cu130 wheel ships no
+    sm_61 cubin/PTX, so on a GTX 1080 a kernel launch raises "no kernel image is
+    available". The opt-in gpu-pascal (cu118) build JITs compute_60 -> sm_61 and
+    runs. Probing an actual launch is the only reliable signal. Separated out so
+    unit tests can monkeypatch it without a real GPU.
+    """
+    try:
+        torch.zeros(8, device="cuda").add_(1.0).cpu()
+        return True
+    except Exception:
+        return False
+
+
+_TIER_ORDER = {"gpu_local": 0, "gpu_t4": 1, "gpu_xl": 2}
 
 
 def _has_compatible_gpu() -> bool:
@@ -43,19 +73,74 @@ def _has_compatible_gpu() -> bool:
         major, minor = torch.cuda.get_device_capability()
     except RuntimeError:
         return False
-    return (major, minor) >= (7, 5)
+    if (major, minor) < (6, 0):
+        return False
+    return _torch_can_launch_kernel()
+
+
+def _current_tier() -> str | None:
+    """The highest tier the current runner's live hardware can satisfy.
+
+    The 1080 (and any usable CC>=6.0 card <=~7 GB) is the local tier. We cannot
+    reliably auto-detect >8 GB / bf16-faithful capability here, so a t4/xl runner
+    asserts its own tier out-of-band; on the dev box this returns 'gpu_local'.
+    Returns None on CPU-only / no usable GPU.
+    """
+    if not _has_compatible_gpu():
+        return None
+    return "gpu_local"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     ckpt = pathlib.Path("models/sam3.1/sam3.1_multiplex.pt")
     skip_no_ckpt = pytest.mark.skip(reason="real SAM 3.1 checkpoint not present locally")
-    skip_no_gpu = pytest.mark.skip(reason="real SAM 3.1 forward requires a CUDA GPU with CC >= 7.5")
+    skip_no_gpu = pytest.mark.skip(
+        reason="requires a CUDA GPU with CC >= 6.0 (NF4 QLoRA + LoRA; "
+        "LLM.int8() would need CC 7.5 but is unused here)"
+    )
     have_gpu = _has_compatible_gpu()
     for item in items:
         if "requires_checkpoint" in item.keywords and not ckpt.exists():
             item.add_marker(skip_no_ckpt)
         if "requires_compatible_gpu" in item.keywords and not have_gpu:
             item.add_marker(skip_no_gpu)
+
+    runner_tier = _current_tier()
+    for item in items:
+        item_tier = next((t for t in _TIER_ORDER if t in item.keywords), None)
+        if item_tier is None:
+            continue
+        if runner_tier is None:
+            # CPU-only / unusable GPU: already skipped via requires_compatible_gpu above.
+            continue
+        if _TIER_ORDER[item_tier] > _TIER_ORDER[runner_tier]:
+            if item_tier == "gpu_xl":
+                reason = (
+                    "gpu_xl tier needs a >16 GB / larger-arch runner via cloud "
+                    "auto-provision (#124); not available on this runner"
+                )
+            else:
+                reason = f"{item_tier} tier needs hardware beyond this runner ({runner_tier})"
+            item.add_marker(pytest.mark.skip(reason=reason))
+
+
+@pytest.fixture(autouse=True)
+def _free_cuda_after_gpu_test(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Release CUDA cache after each GPU-gated test so the local tier doesn't OOM.
+
+    Real-model GPU tests each load the full SAM 3.1 checkpoint (and some load it
+    twice, e.g. an export/reload round-trip). Without freeing between tests, the
+    caching allocator accumulates and a ~7 GB card (GTX 1080, gpu_local tier)
+    OOMs partway through a file. Gated on ``requires_compatible_gpu`` so this is
+    a no-op for the CPU suite (the only marker every GPU test carries, stable
+    across the tier-marker swap).
+    """
+    yield
+    if request.node.get_closest_marker("requires_compatible_gpu") is None:
+        return
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 @pytest.fixture

@@ -1,7 +1,8 @@
 """Integration test: load real SAM 3.1 checkpoint and run a forward pass.
 
 Skipped automatically unless the .pt checkpoint is present AND a CUDA GPU
-with compute capability >= 7.5 is available.
+with compute capability >= 6.0 is available.  The two cheaper tests use
+gpu_local (fits a GTX 1080); the K=8 multiplex forward uses gpu_t4.
 """
 
 from __future__ import annotations
@@ -17,16 +18,17 @@ from custom_sam_peft.models.sam3 import Sam3Wrapper, load_sam31
 pytestmark = [
     pytest.mark.requires_checkpoint,
     pytest.mark.requires_compatible_gpu,
-    pytest.mark.gpu_inspection,
 ]
 
 
+@pytest.mark.gpu_local
 def test_load_sam31_returns_wrapper() -> None:
     cfg = ModelConfig(device="cuda", gradient_checkpointing=False, dtype="bfloat16")
     wrapper = load_sam31(cfg)
     assert isinstance(wrapper, Sam3Wrapper)
 
 
+@pytest.mark.gpu_local
 def test_load_sam31_forward_to_canonical() -> None:
     cfg = ModelConfig(device="cuda", gradient_checkpointing=False, dtype="bfloat16")
     wrapper = load_sam31(cfg)
@@ -45,6 +47,7 @@ def test_load_sam31_forward_to_canonical() -> None:
     assert canonical.img_presence.dim() == 1  # (B,)
 
 
+@pytest.mark.gpu_t4
 def test_load_sam31_multiplex_K8_forward() -> None:
     """Real K=8 multiplex forward emits pred_logits.shape[0] == B*8 and finite outputs.
 

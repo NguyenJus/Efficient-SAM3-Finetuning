@@ -169,5 +169,5 @@ def test_dry_run_prints_resolved_config(tmp_path: Path, capsys: pytest.CaptureFi
     assert "facebook/sam3.1" in captured, "Resolved model name missing from dry-run output"
     assert "cpu" in captured, "Device missing from dry-run output"
     assert "float32" in captured, "Dtype missing from dry-run output"
-    # image_size (default 1024) should appear
-    assert "1024" in captured, "image_size missing from dry-run output"
+    # image_size (default 1008) should appear
+    assert "1008" in captured, "image_size missing from dry-run output"

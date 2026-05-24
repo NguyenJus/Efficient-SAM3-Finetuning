@@ -1,11 +1,11 @@
 """GPU-gated test for N-channel predict: G4 real-model N-channel predict forward.
 
 Requires:
-  - A CUDA device with compute capability >= 7.5  (requires_compatible_gpu)
+  - A CUDA device with compute capability >= 6.0  (requires_compatible_gpu)
   - The real SAM 3.1 checkpoint at models/sam3.1/sam3.1_multiplex.pt  (requires_checkpoint)
 
 Run explicitly:
-    pytest -m gpu tests/gpu/test_predict_nchannel_gpu.py -v
+    pytest -m gpu_local tests/gpu/test_predict_nchannel_gpu.py -v
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 pytestmark = [
-    pytest.mark.gpu,
+    pytest.mark.gpu_local,
     pytest.mark.requires_compatible_gpu,
     pytest.mark.requires_checkpoint,
 ]

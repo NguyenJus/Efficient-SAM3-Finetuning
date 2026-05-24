@@ -1,8 +1,8 @@
 """50-step LoRA overfit on tiny_coco via run_training(gpu_smoke_lora.yaml).
 
-Gated by `@pytest.mark.gpu`, `@requires_compatible_gpu`, and
+Gated by `@pytest.mark.gpu_t4`, `@requires_compatible_gpu`, and
 `@requires_checkpoint`. Not in CI by default. Run with:
-    pytest -m gpu tests/gpu/test_real_train_overfits.py -v
+    pytest -m gpu_t4 tests/gpu/test_real_train_overfits.py -v
 
 This test exercises the same `run_training(cfg)` seam that `custom_sam_peft train` uses,
 so the YAML at configs/examples/gpu_smoke_lora.yaml is both the user-facing
@@ -23,7 +23,7 @@ from custom_sam_peft.train.runner import run_training
 from tests.gpu.conftest import _RecordingTracker
 
 pytestmark = [
-    pytest.mark.gpu,
+    pytest.mark.gpu_t4,
     pytest.mark.requires_compatible_gpu,
     pytest.mark.requires_checkpoint,
 ]

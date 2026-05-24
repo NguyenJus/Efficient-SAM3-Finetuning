@@ -37,8 +37,14 @@ def _chunked[T](seq: Sequence[T], n: int) -> list[list[T]]:
 
 
 def _row_outputs(outputs: dict[str, torch.Tensor], r: int) -> dict[str, torch.Tensor]:
-    """Slice multiplex outputs at row r, preserving the batch dim (size 1)."""
-    return {k: v[r : r + 1] for k, v in outputs.items()}
+    """Slice multiplex outputs at row r, preserving the batch dim (size 1).
+
+    Non-tensor entries (e.g. sam3's ``prev_encoder_out`` nested dict or
+    ``encoder_hidden_states``) are dropped silently. The only consumer
+    (``queries_to_coco_results``) needs just the tensor prediction keys
+    (``pred_logits``, ``pred_boxes``, ``pred_masks``, ``presence_logit_dec``).
+    """
+    return {k: v[r : r + 1] for k, v in outputs.items() if isinstance(v, torch.Tensor)}
 
 
 def _eval_forward_with_oom_ladder(
