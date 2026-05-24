@@ -343,3 +343,78 @@ def test_load_channel_adapter_shape_mismatch_raises(tmp_path: Path) -> None:
     mismatched_conv = nn.Conv2d(3, 3, 1)  # different in_channels → shape mismatch
     with pytest.raises(RuntimeError):
         C._load_channel_adapter(_StubWrapper(mismatched_conv), tmp_path / "ck")  # type: ignore[arg-type]
+
+
+def test_load_channel_adapter_warns_on_orphaned_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """G7 review guard: _load_channel_adapter warns when channel_adapter.pt exists but
+    the model has no channel adapter (ca is None).  This catches the mis-threading case
+    where load_sam31 was called with channels=3/rgb but the checkpoint was written with
+    a real adapter.
+    """
+    import logging
+
+    import torch
+    import torch.nn as nn
+
+    from custom_sam_peft.train import checkpoint as C
+
+    class _StubAdapterModel:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.channel_adapter = adapter
+
+    class _StubWrapper:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.model = _StubAdapterModel(adapter)
+
+    # Write a real channel_adapter.pt to simulate an orphaned checkpoint file.
+    ck_dir = tmp_path / "ck"
+    ck_dir.mkdir()
+    conv = nn.Conv2d(4, 3, 1)
+    torch.save(conv.state_dict(), ck_dir / C._CHANNEL_ADAPTER_FILENAME)
+
+    # Wrapper with no adapter (rgb model, ca=None).
+    w_rgb = _StubWrapper(None)
+
+    with caplog.at_level(logging.WARNING, logger="custom_sam_peft.train.checkpoint"):
+        C._load_channel_adapter(w_rgb, ck_dir)  # type: ignore[arg-type]
+
+    # Must warn and NOT raise.
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warning_records, "Expected a WARNING log when channel_adapter.pt exists but ca is None"
+    assert "channel_adapter.pt" in warning_records[0].getMessage() or \
+           C._CHANNEL_ADAPTER_FILENAME in warning_records[0].getMessage()
+
+
+def test_load_channel_adapter_silent_noop_when_file_absent_and_ca_none(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """G7 review guard: the rgb-no-adapter-no-file path is a clean silent no-op.
+
+    No warning should be emitted when both ca is None AND the file is absent
+    (the normal rgb case).
+    """
+    import logging
+
+    import torch.nn as nn
+
+    from custom_sam_peft.train import checkpoint as C
+
+    class _StubAdapterModel:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.channel_adapter = adapter
+
+    class _StubWrapper:
+        def __init__(self, adapter: nn.Conv2d | None) -> None:
+            self.model = _StubAdapterModel(adapter)
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    w_rgb = _StubWrapper(None)
+
+    with caplog.at_level(logging.WARNING, logger="custom_sam_peft.train.checkpoint"):
+        C._load_channel_adapter(w_rgb, empty_dir)  # type: ignore[arg-type]
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert not warning_records, f"Unexpected warnings for clean rgb no-op: {warning_records}"

@@ -59,7 +59,16 @@ def _load_channel_adapter(wrapper: Sam3Wrapper, adapter_dir: Path) -> None:
     absent (rgb) or the wrapper has no adapter."""
     ca = _wrapper_channel_adapter(wrapper)
     path = adapter_dir / _CHANNEL_ADAPTER_FILENAME
-    if ca is None or not path.exists():
+    if ca is None:
+        if path.exists():
+            _LOG.warning(
+                "Found %s but the loaded model has no channel adapter; the saved "
+                "channel-adapter weights will NOT be restored. Was the model built "
+                "with the right data.channels/data.channel_semantics?",
+                path.name,
+            )
+        return
+    if not path.exists():
         return
     state = torch.load(path, weights_only=True, map_location="cpu")
     ca.load_state_dict(state)
