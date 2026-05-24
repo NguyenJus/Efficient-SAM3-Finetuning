@@ -57,6 +57,21 @@ class TestChannelAdapterDtype:
             f"got {adapter.channel_adapter.weight.dtype}"
         )
 
+    def test_channel_adapter_stays_trainable_after_dtype_cast(self) -> None:
+        """The construction-time `.to(dtype=...)` cast must not strip requires_grad.
+
+        The adapter must remain a trainable parameter the optimizer can track
+        (the cast is applied to the module once at construction, never re-applied
+        inside forward, which would detach it from the optimizer).
+        """
+        fake_model = _TinyFakeModel(dtype=torch.bfloat16)
+        adapter = _Sam3ImageAdapter(fake_model, channels=4, channel_semantics="rgba")
+
+        assert adapter.channel_adapter is not None
+        assert adapter.channel_adapter.weight.requires_grad is True
+        assert adapter.channel_adapter.bias is not None
+        assert adapter.channel_adapter.bias.requires_grad is True
+
     def test_channel_adapter_forward_does_not_raise_on_bfloat16_input(self) -> None:
         """A bf16 input tensor fed directly to the adapter conv must not raise.
 

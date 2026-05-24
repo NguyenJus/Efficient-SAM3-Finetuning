@@ -2,9 +2,9 @@
 
 Skipped automatically unless:
   * the Meta checkpoint is present at models/sam3.1/sam3.1_multiplex.pt
-  * a CUDA GPU with compute capability >= 7.5 is available (bnb 4-bit
-    requires Turing+); SAM 3.1's PositionEmbeddingSine also hardcodes
-    device="cuda".
+  * a CUDA GPU with compute capability >= 6.0 is available (bnb NF4 4-bit +
+    LoRA work from Pascal; only LLM.int8() needs Turing 7.5 and is unused);
+    SAM 3.1's PositionEmbeddingSine also hardcodes device="cuda".
   * bitsandbytes is importable.
 
 The Colab notebook in notebooks/colab_gpu_tests.ipynb is the primary
@@ -24,7 +24,12 @@ from torch import nn
 from custom_sam_peft.config.schema import ModelConfig, PEFTConfig
 from custom_sam_peft.models.sam3 import load_sam31
 from custom_sam_peft.peft_adapters.lora import merge_lora
-from custom_sam_peft.peft_adapters.qlora import apply_qlora, load_qlora, save_qlora
+from custom_sam_peft.peft_adapters.qlora import (
+    _infer_compute_dtype_from_wrapper,
+    apply_qlora,
+    load_qlora,
+    save_qlora,
+)
 from tests.helpers.lora_predicates import has_plain_nn_linear as _has_plain_nn_linear
 
 pytestmark = [
@@ -81,14 +86,18 @@ def test_save_qlora_writes_adapter_and_metadata(tmp_path: Path) -> None:
     adapter_weights = list(tmp_path.glob("adapter_model.*"))
     assert adapter_weights, "no adapter_model.* file written"
 
-    # custom_sam_peft_qlora.json present with the expected fields.
+    # custom_sam_peft_qlora.json present with the expected fields (format v2).
+    # compute_dtype reflects the *effective* quantization dtype: bfloat16 is
+    # coerced to float16 on pre-Ampere cards (e.g. the GTX 1080 gpu_local
+    # runner), so derive it from the wrapper rather than hardcoding.
     meta_path = tmp_path / "custom_sam_peft_qlora.json"
     assert meta_path.exists()
     meta = json.loads(meta_path.read_text())
     assert meta == {
-        "format_version": 1,
+        "format_version": 2,
         "quant_type": "nf4",
-        "compute_dtype": "bfloat16",
+        "compute_dtype": _infer_compute_dtype_from_wrapper(w),
+        "use_double_quant": False,
     }
 
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import stat
 import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "run_gpu_tests.sh"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _src() -> str:
@@ -48,3 +50,34 @@ def test_rejects_unknown_tier() -> None:
     )
     assert res.returncode != 0
     assert "usage" in (res.stderr + res.stdout).lower()
+
+
+def _run_local_with_stub_python(tmp_path: Path, stub_rc: int) -> subprocess.CompletedProcess[str]:
+    """Run the `local` tier with a stub `python` that exits `stub_rc` for every file.
+
+    Exercises the per-file exit-code semantics without a GPU: every per-file
+    pytest invocation returns the same code, so the script's overall exit
+    reflects how it treats that code.
+    """
+    stub = tmp_path / "fake_python"
+    stub.write_text("#!/usr/bin/env bash\nexit ${STUB_RC:-0}\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    return subprocess.run(  # noqa: S603
+        ["bash", str(SCRIPT), "local"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),  # script uses relative `find tests/...` paths
+        env={"PYTHON": str(stub), "STUB_RC": str(stub_rc), "PATH": "/usr/bin:/bin"},
+    )
+
+
+def test_local_exit5_per_file_is_success(tmp_path: Path) -> None:
+    """Per-file pytest exit code 5 (no tests collected) → overall success."""
+    res = _run_local_with_stub_python(tmp_path, 5)
+    assert res.returncode == 0, res.stderr
+
+
+def test_local_propagates_per_file_failure(tmp_path: Path) -> None:
+    """A per-file pytest failure (exit 1) → overall non-zero exit."""
+    res = _run_local_with_stub_python(tmp_path, 1)
+    assert res.returncode != 0, res.stderr
