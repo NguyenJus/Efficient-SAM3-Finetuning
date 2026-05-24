@@ -22,17 +22,16 @@ pytestmark = [
 def test_G4_real_nchannel_predict(tmp_path):
     """run_predict on a non-rgb multi-channel image produces predictions without error."""
     import numpy as np
-    from PIL import Image as PILImage
 
     from custom_sam_peft.predict.runner import PredictOptions, PredictReport, run_predict
 
-    # Write a synthetic RGBA PNG — resolve_images only accepts raster extensions;
-    # read_image dispatches to PIL for .png and converts to RGBA (4 channels).
+    # Write a synthetic 4-channel .npy array — exercises the array-read predict path
+    # now that resolve_images discovers .npy inputs (spec §6/§11 parity).
     img_dir = tmp_path / "images"
     img_dir.mkdir()
-    arr = np.random.randint(0, 255, (256, 256, 4), dtype=np.uint8)
-    img_path = img_dir / "synthetic_rgba.png"
-    PILImage.fromarray(arr, mode="RGBA").save(img_path)
+    img = np.random.rand(256, 256, 4).astype(np.float32)
+    img_path = img_dir / "img.npy"
+    np.save(img_path, img)
 
     # Minimal predict config: model name, image_size, channels, channel_semantics.
     # No 'format' or 'train' keys needed — runner.py raw-parses only model/data sections.

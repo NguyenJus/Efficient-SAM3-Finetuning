@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 import typer
 from PIL import Image
 
-from custom_sam_peft.predict.inputs import resolve_images
+from custom_sam_peft.predict.inputs import ALLOWED_IMAGE_EXTS, resolve_images
 
 
 def test_resolve_images_directory_recursive(image_dir: Path) -> None:
@@ -159,3 +160,42 @@ def test_resolve_images_sort_determinism(tmp_path: Path) -> None:
     result = resolve_images(str(tmp_path))
     resolved_strs = [str(p.resolve()) for p in result]
     assert resolved_strs == sorted(resolved_strs)
+
+
+def test_npy_in_allowed_exts() -> None:
+    """.npy and .npz are present in ALLOWED_IMAGE_EXTS (spec §6 parity)."""
+    assert ".npy" in ALLOWED_IMAGE_EXTS
+    assert ".npz" in ALLOWED_IMAGE_EXTS
+
+
+def test_resolve_images_npy_discovered_in_directory(tmp_path: Path) -> None:
+    """.npy files in a directory are discovered by resolve_images."""
+    arr = np.zeros((8, 8, 4), dtype=np.float32)
+    npy_path = tmp_path / "multichannel.npy"
+    np.save(npy_path, arr)
+
+    result = resolve_images(str(tmp_path))
+    assert len(result) == 1
+    assert result[0].name == "multichannel.npy"
+
+
+def test_resolve_images_npz_discovered_in_directory(tmp_path: Path) -> None:
+    """.npz files in a directory are discovered by resolve_images."""
+    arr = np.zeros((8, 8, 3), dtype=np.float32)
+    npz_path = tmp_path / "multichannel.npz"
+    np.savez(npz_path, arr)
+
+    result = resolve_images(str(tmp_path))
+    assert len(result) == 1
+    assert result[0].name == "multichannel.npz"
+
+
+def test_resolve_images_npy_single_file(tmp_path: Path) -> None:
+    """.npy file passed as a single path is returned directly."""
+    arr = np.random.rand(16, 16, 4).astype(np.float32)
+    npy_path = tmp_path / "img.npy"
+    np.save(npy_path, arr)
+
+    result = resolve_images(str(npy_path))
+    assert len(result) == 1
+    assert result[0].resolve() == npy_path.resolve()
