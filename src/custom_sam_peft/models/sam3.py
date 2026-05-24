@@ -397,6 +397,14 @@ class _Sam3ImageAdapter(nn.Module):
         self.channels = channels
         self.channel_semantics = channel_semantics
         self.channel_adapter = _build_channel_adapter(channels, channel_semantics)
+        # Cast the adapter to match the inner model's parameter dtype so that a
+        # bf16/fp16 model doesn't raise dtype mismatch on the first Conv2d call.
+        # _apply_dtype casts only the raw inner model; the adapter is built after
+        # that step and would otherwise default to float32.
+        if self.channel_adapter is not None:
+            _first_param = next(model.parameters(), None)
+            if _first_param is not None:
+                self.channel_adapter = self.channel_adapter.to(dtype=_first_param.dtype)
 
     def forward(
         self,
@@ -415,6 +423,11 @@ class _Sam3ImageAdapter(nn.Module):
         model_dtype = next(self.model.parameters()).dtype
 
         if self.channel_adapter is not None:
+            # Cast input to the adapter's weight dtype first (mirrors the inner
+            # model's module_input_dtype patch, which doesn't cover our adapter).
+            # Only the input tensor is cast — the module itself is never re-cast
+            # inside forward, which would break the optimizer's parameter tracking.
+            images = images.to(dtype=self.channel_adapter.weight.dtype)
             images = self.channel_adapter(images)  # (B, N, H, W) -> (B, 3, H, W)
 
         backbone_out = self.model.backbone.forward_image(images)  # type: ignore[union-attr, operator]

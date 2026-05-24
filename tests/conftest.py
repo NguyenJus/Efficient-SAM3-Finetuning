@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import pathlib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -125,6 +127,25 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             else:
                 reason = f"{item_tier} tier needs hardware beyond this runner ({runner_tier})"
             item.add_marker(pytest.mark.skip(reason=reason))
+
+
+@pytest.fixture(autouse=True)
+def _free_cuda_after_gpu_test(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Release CUDA cache after each GPU-gated test so the local tier doesn't OOM.
+
+    Real-model GPU tests each load the full SAM 3.1 checkpoint (and some load it
+    twice, e.g. an export/reload round-trip). Without freeing between tests, the
+    caching allocator accumulates and a ~7 GB card (GTX 1080, gpu_local tier)
+    OOMs partway through a file. Gated on ``requires_compatible_gpu`` so this is
+    a no-op for the CPU suite (the only marker every GPU test carries, stable
+    across the tier-marker swap).
+    """
+    yield
+    if request.node.get_closest_marker("requires_compatible_gpu") is None:
+        return
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 @pytest.fixture

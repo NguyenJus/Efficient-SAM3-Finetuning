@@ -206,12 +206,12 @@ def test_image_size_from_config(tmp_path: Path) -> None:
     assert resolved.image_size == 512
 
 
-def test_image_size_defaults_to_1024_when_no_config(tmp_path: Path) -> None:
-    """image_size defaults to 1024 (SAM 3.1 native) when no config is given."""
+def test_image_size_defaults_to_1008_when_no_config(tmp_path: Path) -> None:
+    """image_size defaults to 1008 (SAM 3.1 actual input resolution) when no config is given."""
     opts = _make_opts(tmp_path, config=None)
     resolved = _resolve_config(opts)
 
-    assert resolved.image_size == 1024
+    assert resolved.image_size == 1008
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +231,7 @@ def test_invalid_config_yaml_logs_warning_and_falls_back(
         resolved = _resolve_config(opts)
 
     assert resolved.model_name == _BUILTIN_DEFAULT
-    assert resolved.image_size == 1024
+    assert resolved.image_size == 1008
     warns = [r for r in caplog.records if "Failed to parse --config" in r.getMessage()]
     assert warns, "expected a WARN about the corrupt YAML"
 
