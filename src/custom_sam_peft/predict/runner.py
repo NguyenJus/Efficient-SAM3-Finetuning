@@ -95,6 +95,8 @@ class _ResolvedConfig:
 
     model_name: str
     image_size: int
+    channels: int
+    channel_semantics: str
     device: str  # "cuda" or "cpu" (auto already resolved)
     dtype: torch.dtype  # resolved torch.dtype
     dtype_str: str  # "bfloat16" or "float32"
@@ -123,6 +125,8 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
     # --- parse --config YAML (if given) ---
     config_model_name: str | None = None
     config_image_size: int | None = None
+    config_channels: int | None = None
+    config_channel_semantics: str | None = None
 
     if opts.config is not None:
         try:
@@ -139,6 +143,12 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
                 val = data_section.get("image_size")
                 if val is not None:
                     config_image_size = int(val)
+                val = data_section.get("channels")
+                if val is not None:
+                    config_channels = int(val)
+                val = data_section.get("channel_semantics")
+                if val is not None:
+                    config_channel_semantics = str(val)
         except Exception as exc:
             logger.warning("Failed to parse --config %s: %s", opts.config, exc)
 
@@ -167,6 +177,18 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
     # --- image_size ---
     image_size = config_image_size if config_image_size is not None else _BUILTIN_DEFAULT_IMAGE_SIZE
 
+    # --- channels + channel_semantics ---
+    channels = config_channels if config_channels is not None else 3
+    channel_semantics = config_channel_semantics if config_channel_semantics is not None else "rgb"
+
+    from custom_sam_peft.data.channel_semantics import CHANNEL_SEMANTIC_NAMES
+
+    if channel_semantics not in CHANNEL_SEMANTIC_NAMES:
+        raise ValueError(
+            f"data.channel_semantics={channel_semantics!r} in the predict --config is not "
+            f"a valid semantic; expected one of {sorted(CHANNEL_SEMANTIC_NAMES)}."
+        )
+
     # --- device resolution ---
     if opts.device == "auto":
         device_str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -185,11 +207,15 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
     from custom_sam_peft.config.schema import NormalizeConfig
     from custom_sam_peft.data.transforms import resolve_normalization
 
-    mean, std = resolve_normalization(model_name, NormalizeConfig())
+    mean, std = resolve_normalization(
+        model_name, NormalizeConfig(), channel_semantics=channel_semantics
+    )
 
     return _ResolvedConfig(
         model_name=model_name,
         image_size=image_size,
+        channels=channels,
+        channel_semantics=channel_semantics,
         device=device_str,
         dtype=dtype_torch,
         dtype_str=dtype_str,
@@ -283,7 +309,9 @@ def run_predict(opts: PredictOptions) -> PredictReport:
 
     model_cfg = ModelConfig(name=rcfg.model_name)
 
-    model: torch.nn.Module = load_sam31(model_cfg)
+    model: torch.nn.Module = load_sam31(
+        model_cfg, channels=rcfg.channels, channel_semantics=rcfg.channel_semantics
+    )
     model = model.to(rcfg.device, dtype=rcfg.dtype)
     model.eval()
 
@@ -311,6 +339,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
         rcfg.image_size,
         model_name=rcfg.model_name,
         normalize=normalize_cfg,
+        channel_semantics=rcfg.channel_semantics,
     )
 
     # ---------------------------------------------------------------------------
@@ -342,7 +371,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
 
     with torch.no_grad():
         _warmup_input = torch.zeros(
-            1, 3, rcfg.image_size, rcfg.image_size, device=rcfg.device, dtype=rcfg.dtype
+            1, rcfg.channels, rcfg.image_size, rcfg.image_size, device=rcfg.device, dtype=rcfg.dtype
         )
         _dummy_prompt = [TextPrompts(classes=["warmup"])]
         with contextlib.suppress(Exception):
@@ -380,20 +409,19 @@ def run_predict(opts: PredictOptions) -> PredictReport:
 
         for img_path in chunk_paths:
             try:
-                from PIL import Image as _PILImage
+                from custom_sam_peft.data.io import read_image as _read_image
 
-                pil_img = _PILImage.open(img_path).convert("RGB")
+                img_np = _read_image(img_path, rcfg.channels)
             except Exception as exc:
                 logger.warning("Skipping unreadable image %s: %s", img_path, exc)
                 continue
 
-            orig_h, orig_w = pil_img.height, pil_img.width
+            orig_h, orig_w = img_np.shape[0], img_np.shape[1]
             image_id = _int_image_id(img_path)
             id_to_path[image_id] = img_path.resolve()
             id_to_stem[image_id] = img_path.stem
             originals[image_id] = (orig_h, orig_w)
 
-            img_np = np.array(pil_img)
             transformed = transforms(image=img_np, bboxes=[], class_labels=[])
             imgs.append(transformed["image"].to(rcfg.device, dtype=rcfg.dtype))
             metas.append((image_id, orig_h, orig_w))
@@ -402,7 +430,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
         if not imgs:
             continue
 
-        img_batch = torch.stack(imgs, dim=0)  # (B, 3, H, W)
+        img_batch = torch.stack(imgs, dim=0)  # (B, C, H, W)
 
         # --- flat inner loop over class groups ---
         for group in _chunked(prompts, MULTIPLEX_CAP):

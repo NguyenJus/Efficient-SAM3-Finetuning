@@ -159,7 +159,7 @@ def _patch_phases(
     monkeypatch.setattr("custom_sam_peft.cli.run_cmd.run_eval", _eval)
     monkeypatch.setattr("custom_sam_peft.cli.run_cmd.save_merged", _save_merged)
     monkeypatch.setattr("custom_sam_peft.cli.run_cmd.write_bundle", _write_bundle)
-    monkeypatch.setattr("custom_sam_peft.cli.run_cmd.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.cli.run_cmd.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr("custom_sam_peft.cli.run_cmd.load_adapter", lambda *_a, **_kw: None)
     # Build a stub val_dataset.
     fake_ds = MagicMock(__len__=lambda self: 3, class_names=["a"])

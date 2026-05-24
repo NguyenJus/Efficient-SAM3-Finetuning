@@ -260,6 +260,10 @@ def _STEP_NAMES_FOR(resolved: ResolvedAugmentations) -> list[str]:
 
     MUST match the conditional emission in
     `custom_sam_peft.data.transforms.build_train_transforms` step-for-step.
+
+    # NOTE: reflects the rgb full-family regime only. For non-rgb channel_semantics
+    # (rgba/grayscale substitute RandomBrightnessContrast; freeform geometry-only)
+    # this list is stale. Regime-aware step prediction tracked in issue #128.
     """
     steps: list[str] = ["LongestMaxSize", "PadIfNeeded"]
     if resolved.hflip:

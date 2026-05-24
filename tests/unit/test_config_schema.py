@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from custom_sam_peft.config.schema import TrainConfig
+from custom_sam_peft.config.schema import NormalizeConfig, TrainConfig
 
 
 def _minimal_dict() -> dict[str, object]:
@@ -533,3 +533,37 @@ def test_train_hyperparams_has_multiplex_default() -> None:
     th = TrainHyperparams(epochs=1)
     assert isinstance(th.multiplex, MultiplexConfig)
     assert th.multiplex.classes_per_forward == 16
+
+
+def test_normalize_accepts_length_one_and_sixteen():
+    NormalizeConfig(mean=[0.5], std=[0.2])
+    NormalizeConfig(mean=[0.5] * 16, std=[0.2] * 16)
+
+
+def test_normalize_rejects_length_zero():
+    with pytest.raises(ValidationError):
+        NormalizeConfig(mean=[], std=[])
+
+
+def test_normalize_rejects_length_seventeen():
+    with pytest.raises(ValidationError):
+        NormalizeConfig(mean=[0.5] * 17, std=[0.2] * 17)
+
+
+def test_normalize_max_pixel_value_default_and_override():
+    assert NormalizeConfig().max_pixel_value == 255.0
+    assert NormalizeConfig(max_pixel_value=1.0).max_pixel_value == 1.0
+
+
+def test_normalize_max_pixel_value_must_be_positive():
+    with pytest.raises(ValidationError):
+        NormalizeConfig(max_pixel_value=0.0)
+    with pytest.raises(ValidationError):
+        NormalizeConfig(max_pixel_value=-1.0)
+
+
+def test_normalize_keeps_per_value_range_checks():
+    with pytest.raises(ValueError, match=r"normalize\.mean values must be in"):
+        NormalizeConfig(mean=[1.5], std=[0.2])
+    with pytest.raises(ValueError, match=r"normalize\.std values must be > 0"):
+        NormalizeConfig(mean=[0.5], std=[0.0])

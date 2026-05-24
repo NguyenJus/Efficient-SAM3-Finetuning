@@ -35,3 +35,18 @@ def test_coco_text_lora_subset_yaml_validates() -> None:
     assert cfg.data.limit.val == 16
     assert cfg.data.limit.seed == 42
     assert cfg.data.limit.strategy == "random"
+
+
+def test_existing_rgb_config_unchanged(tmp_path):
+    """An rgb config that omits channels/channel_semantics resolves to the
+    pre-feature ImageNet-3 normalize default, byte-for-byte (spec §3.4)."""
+    from custom_sam_peft.config.schema import DataConfig
+
+    d = DataConfig.model_validate(
+        dict(format="coco", train={"annotations": "a.json", "images": "i"}, prompt_mode="text")
+    )
+    assert d.channels == 3
+    assert d.channel_semantics == "rgb"
+    assert d.normalize.mean == [0.485, 0.456, 0.406]
+    assert d.normalize.std == [0.229, 0.224, 0.225]
+    assert d.normalize.max_pixel_value == 255.0

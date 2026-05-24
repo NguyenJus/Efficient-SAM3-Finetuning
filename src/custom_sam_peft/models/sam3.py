@@ -203,11 +203,21 @@ class Sam3Wrapper(nn.Module):
         sam3's matching call is never read by us.
     """
 
-    def __init__(self, model: nn.Module, image_size: int = 1008, mask_size: int = 288) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        image_size: int = 1008,
+        mask_size: int = 288,
+        *,
+        channels: int = 3,
+        channel_semantics: str = "rgb",
+    ) -> None:
         super().__init__()
         self.model = model
         self.image_size = image_size
         self.mask_size = mask_size
+        self.channels = channels
+        self.channel_semantics = channel_semantics
         self.peft_model: PeftModel | None = None
 
     def forward(
@@ -220,14 +230,21 @@ class Sam3Wrapper(nn.Module):
         out: dict[str, Any] = self.model(images, prompts, box_hints=box_hints)
         return out
 
-    @staticmethod
     def _validate_inputs(
+        self,
         images: Tensor,
         prompts: list[Prompts],
         box_hints: list[Tensor | None] | None,
     ) -> None:
         if images.ndim != 4:
-            raise ValueError(f"images must be (B, 3, H, W); got shape {tuple(images.shape)}")
+            raise ValueError(
+                f"images must be (B, {self.channels}, H, W); got shape {tuple(images.shape)}"
+            )
+        if images.shape[1] != self.channels:
+            raise ValueError(
+                f"images must be (B, {self.channels}, H, W); got "
+                f"{images.shape[1]} channels in shape {tuple(images.shape)}"
+            )
         b = images.shape[0]
         if len(prompts) != b:
             raise ValueError(f"len(prompts)={len(prompts)} must equal batch size {b}")
@@ -319,6 +336,36 @@ def _resolve_checkpoint_path(cfg: ModelConfig) -> Path:
     return path
 
 
+def _build_channel_adapter(channels: int, channel_semantics: str) -> nn.Conv2d | None:
+    """Build the N->3 channel adapter per the semantic profile (spec §5.2/§5.3).
+
+    Returns None for semantic=='rgb' (passthrough, zero new params). Otherwise a
+    fully-trainable Conv2d(channels, 3, 1) initialized per profile.adapter_init.
+    """
+    from custom_sam_peft.data.channel_semantics import CHANNEL_SEMANTICS
+
+    profile = CHANNEL_SEMANTICS[channel_semantics]
+    if not profile.use_adapter:
+        return None
+    conv = nn.Conv2d(channels, 3, kernel_size=1, bias=True)
+    bias: Tensor = cast(Tensor, conv.bias)  # bias=True guarantees non-None
+    with torch.no_grad():
+        conv.weight.zero_()
+        bias.zero_()
+        if profile.adapter_init == "average_broadcast":
+            conv.weight.fill_(1.0 / channels)
+        elif profile.adapter_init == "identity_passthrough":
+            # Identity on first 3 input channels, zero on the rest.
+            for o in range(3):
+                if o < channels:
+                    conv.weight[o, o, 0, 0] = 1.0
+        else:  # pragma: no cover - registry guards this
+            raise ValueError(f"unknown adapter_init: {profile.adapter_init!r}")
+    conv.weight.requires_grad_(True)
+    bias.requires_grad_(True)
+    return conv
+
+
 class _Sam3ImageAdapter(nn.Module):
     """Adapt raw Sam3Image to the (images, prompts, box_hints) calling convention.
 
@@ -336,10 +383,20 @@ class _Sam3ImageAdapter(nn.Module):
     it through the constructor.
     """
 
-    def __init__(self, model: nn.Module, image_size: int = 1008) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        image_size: int = 1008,
+        *,
+        channels: int = 3,
+        channel_semantics: str = "rgb",
+    ) -> None:
         super().__init__()
         self.model = model
         self.image_size = image_size
+        self.channels = channels
+        self.channel_semantics = channel_semantics
+        self.channel_adapter = _build_channel_adapter(channels, channel_semantics)
 
     def forward(
         self,
@@ -356,6 +413,9 @@ class _Sam3ImageAdapter(nn.Module):
         device = images.device
         b = images.shape[0]
         model_dtype = next(self.model.parameters()).dtype
+
+        if self.channel_adapter is not None:
+            images = self.channel_adapter(images)  # (B, N, H, W) -> (B, 3, H, W)
 
         backbone_out = self.model.backbone.forward_image(images)  # type: ignore[union-attr, operator]
         text_outputs = self.model.backbone.forward_text(  # type: ignore[union-attr, operator]
@@ -668,7 +728,12 @@ def _freeze_base(model: nn.Module, peft_method: Any) -> None:
     # No-op: PEFT adapters handle freezing post-load.
 
 
-def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
+def load_sam31(
+    cfg: ModelConfig,
+    *,
+    channels: int = 3,
+    channel_semantics: str = "rgb",
+) -> Sam3Wrapper:
     """Load SAM 3.1 via Meta's `sam3` package and wrap it for our trainer.
 
     Returns a `Sam3Wrapper` whose `forward(images, prompts, box_hints=None)` returns Meta's
@@ -680,5 +745,13 @@ def load_sam31(cfg: ModelConfig) -> Sam3Wrapper:
     _apply_patches(raw_model)
     _freeze_base(raw_model, peft_method=None)
 
-    adapter = _Sam3ImageAdapter(raw_model, image_size=1008)
-    return Sam3Wrapper(adapter, image_size=1008, mask_size=288)
+    adapter = _Sam3ImageAdapter(
+        raw_model, image_size=1008, channels=channels, channel_semantics=channel_semantics
+    )
+    return Sam3Wrapper(
+        adapter,
+        image_size=1008,
+        mask_size=288,
+        channels=channels,
+        channel_semantics=channel_semantics,
+    )

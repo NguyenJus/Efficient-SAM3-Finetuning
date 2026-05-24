@@ -134,7 +134,7 @@ def _patch_load(stub: torch.nn.Module) -> mock.MagicMock:
     source module (custom_sam_peft.models.sam3) rather than runner's namespace.
     """
 
-    def _factory(cfg: Any) -> torch.nn.Module:
+    def _factory(cfg: Any, **kwargs: Any) -> torch.nn.Module:
         return stub
 
     return mock.patch("custom_sam_peft.models.sam3.load_sam31", side_effect=_factory)

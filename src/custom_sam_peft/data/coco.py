@@ -21,6 +21,7 @@ from pycocotools.coco import COCO
 from custom_sam_peft._registry import register
 from custom_sam_peft.config.schema import TextPromptConfig
 from custom_sam_peft.data.base import Dataset, Example
+from custom_sam_peft.data.io import read_image
 
 _LOG = logging.getLogger(__name__)
 
@@ -130,10 +131,12 @@ class COCODataset:
         text_prompt: TextPromptConfig,
         seed: int = 0,
         image_ids: Iterable[int] | None = None,
+        channels: int = 3,
     ) -> None:
         if prompt_mode not in ("text", "bbox"):
             raise ValueError(f"prompt_mode must be 'text' or 'bbox'; got {prompt_mode!r}")
         self._image_root = Path(images)
+        self._channels = channels
         self._prompt_mode: Literal["text", "bbox"] = prompt_mode
         self._transforms = transforms
         self._text_prompt_cfg = text_prompt
@@ -204,13 +207,10 @@ class COCODataset:
     def _decode_image(
         self, raw: tuple[int, dict[str, Any], list[dict[str, Any]]]
     ) -> np.ndarray[Any, Any]:
-        """Load and decode the image for *raw* to an (H, W, 3) uint8 ndarray."""
-        from PIL import Image
-
+        """Load and decode the image for *raw* to an (H, W, C) ndarray."""
         _image_id, rec, _anns = raw
         img_path = self._image_root / rec["file_name"]
-        with Image.open(img_path) as pil_img:
-            return np.asarray(pil_img.convert("RGB"))
+        return read_image(img_path, self._channels)
 
     def _decode_targets(
         self,
@@ -383,13 +383,24 @@ def build_coco(
     image_size = int(cfg["image_size"])
     normalize = NormalizeConfig.model_validate(cfg.get("normalize", {}))
     text_prompt = TextPromptConfig.model_validate(cfg.get("text_prompt", {}))
+    channel_semantics: str = str(cfg.get("channel_semantics", "rgb"))
     if pipeline == "train":
         aug = AugmentationsConfig.model_validate(cfg.get("augmentations", {}))
         transforms = build_train_transforms(
-            aug, image_size, model_name=model_name, normalize=normalize
+            aug,
+            image_size,
+            model_name=model_name,
+            normalize=normalize,
+            channel_semantics=channel_semantics,
+            channels=int(cfg.get("channels", 3)),
         )
     else:
-        transforms = build_eval_transforms(image_size, model_name=model_name, normalize=normalize)
+        transforms = build_eval_transforms(
+            image_size,
+            model_name=model_name,
+            normalize=normalize,
+            channel_semantics=channel_semantics,
+        )
     return COCODataset(
         annotations=split["annotations"],
         images=split["images"],
@@ -397,4 +408,5 @@ def build_coco(
         transforms=transforms,
         text_prompt=text_prompt,
         image_ids=[int(s) for s in resolved] if resolved is not None else None,
+        channels=int(cfg.get("channels", 3)),
     )

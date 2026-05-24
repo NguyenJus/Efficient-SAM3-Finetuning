@@ -59,7 +59,7 @@ def test_run_eval_dispatches_dataset_via_registry(
         return builder_mock
 
     monkeypatch.setattr("custom_sam_peft.eval.runner.lookup", fake_lookup)
-    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr("custom_sam_peft.eval.runner.load_lora", lambda *_a, **_kw: None)
 
     fake_report = MagicMock()
@@ -155,7 +155,7 @@ def test_run_eval_return_per_example_iou_default_false_unchanged(
         "custom_sam_peft.eval.runner.lookup",
         lambda *_a, **_kw: lambda *a, **kw: _empty_ds,
     )
-    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr("custom_sam_peft.eval.runner.load_lora", lambda *_a, **_kw: None)
 
     fake_report = MagicMock(overall={"mAP": 0.0})
@@ -226,7 +226,7 @@ def test_run_eval_auto_split_threads_resolved_image_ids_to_builder(
         "custom_sam_peft.eval.runner.lookup",
         lambda kind, name: fake_builder,
     )
-    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr("custom_sam_peft.eval.runner.load_lora", lambda *_a, **_kw: None)
     fake_report = MagicMock(overall={"mAP": 0.5}, per_class={}, n_images=2, n_predictions=2)
     monkeypatch.setattr(
@@ -286,7 +286,7 @@ def test_run_eval_resolves_auto_via_decide_eval_batch_size(
         "custom_sam_peft.eval.runner.lookup",
         lambda *_a, **_kw: lambda *a, **kw: MagicMock(__len__=lambda self: 0, class_names=[]),
     )
-    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr("custom_sam_peft.eval.runner.load_lora", lambda *_a, **_kw: None)
     monkeypatch.setattr("custom_sam_peft.eval.runner.Evaluator", _fake_evaluator)
 
@@ -324,7 +324,7 @@ def test_run_eval_cpu_fallback_logs_info(
         "custom_sam_peft.eval.runner.lookup",
         lambda *_a, **_kw: lambda *a, **kw: MagicMock(__len__=lambda self: 0, class_names=[]),
     )
-    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m: MagicMock())
+    monkeypatch.setattr("custom_sam_peft.eval.runner.load_sam31", lambda _m, **_kw: MagicMock())
     monkeypatch.setattr("custom_sam_peft.eval.runner.load_lora", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "custom_sam_peft.eval.runner.Evaluator",
