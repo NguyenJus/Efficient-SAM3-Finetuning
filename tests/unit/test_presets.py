@@ -22,11 +22,17 @@ def _force_cuda_available(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
 
 
-def _stub_gpu(monkeypatch: pytest.MonkeyPatch, total_bytes: int, name: str = "StubGPU") -> None:
+def _stub_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+    total_bytes: int,
+    name: str = "StubGPU",
+    cc: tuple[int, int] = (8, 0),
+) -> None:
     props = MagicMock(total_memory=total_bytes)
     props.name = name
     monkeypatch.setattr(torch.cuda, "get_device_properties", lambda _idx: props)
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda _idx: name)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _idx: cc)
 
 
 # ---- decide_preset: per-tier behavior --------------------------------------
@@ -273,3 +279,49 @@ def test_predicted_bytes_train_mode_unchanged() -> None:
     assert n == _predicted_bytes(
         "lora", r=4, batch=1, ckpt=False, image_size=1024, cache=None, mode="train"
     )
+
+
+# ---- dtype token in label / round-trip -------------------------------------
+
+
+def test_preset_decision_label_renders_fp16_token() -> None:
+    d = _make_decision()
+    object.__setattr__(d, "dtype", "float16")  # PresetDecision is a frozen dataclass
+    assert "fp16" in d.label()
+    assert "bf16" not in d.label()
+
+
+def test_preset_decision_label_renders_bf16_token() -> None:
+    d = _make_decision()  # default dtype="bfloat16"
+    assert "bf16" in d.label()
+
+
+def test_preset_decision_float16_round_trips() -> None:
+    d = _make_decision()
+    object.__setattr__(d, "dtype", "float16")
+    d2 = PresetDecision.from_json(d.to_json())
+    assert d2.dtype == "float16"
+    assert d == d2
+
+
+# ---- decide_preset dtype selection by compute capability -------------------
+
+
+def test_decide_preset_selects_float16_below_cc80(
+    monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
+) -> None:
+    """On CC<8.0 hardware (Pascal/GTX 1080) decide_preset must pick float16."""
+    _stub_gpu(monkeypatch, int(16 * _GB), cc=(6, 1))
+    decision = decide_preset(image_size=1024)
+    assert decision.dtype == "float16"
+    assert "fp16" in decision.label()
+    assert decision.config_patch["model"]["dtype"] == "float16"
+
+
+def test_decide_preset_selects_bfloat16_at_cc80(
+    monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
+) -> None:
+    """On CC>=8.0 hardware (Ampere+) decide_preset must pick bfloat16."""
+    _stub_gpu(monkeypatch, int(16 * _GB), cc=(8, 0))
+    decision = decide_preset(image_size=1024)
+    assert decision.dtype == "bfloat16"

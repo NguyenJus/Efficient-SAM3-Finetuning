@@ -80,7 +80,7 @@ class PresetDecision:
     batch_size: int
     grad_accum_steps: int
     gradient_checkpointing: bool
-    dtype: Literal["bfloat16"]
+    dtype: Literal["bfloat16", "float16"]
     headroom_bytes: int
     predicted_bytes: int
     budget_bytes: int
@@ -115,9 +115,10 @@ class PresetDecision:
             suffix = f"(calibrated {date_str})"
         else:
             suffix = "(analytic estimate)"
+        dtype_token = "fp16" if self.dtype == "float16" else "bf16"
         return (
             f"auto: {method} r={self.r} batch={self.batch_size} "
-            f"grad_accum={self.grad_accum_steps} ckpt={ckpt} bf16 — "
+            f"grad_accum={self.grad_accum_steps} ckpt={ckpt} {dtype_token} — "
             f"fits in {used_gib:.1f}/{total_gib:.1f} GiB on {self.gpu_name} {suffix}"
         )
 
@@ -139,7 +140,7 @@ class PresetDecision:
 
 
 def _bytes_per_param_for_method(method: str) -> float:
-    return 2.0 if method == "lora" else 0.5  # bf16 vs NF4
+    return 2.0 if method == "lora" else 0.5  # bf16/fp16 (2.0) vs NF4 (0.5)
 
 
 def _model_bytes(method: str) -> int:
@@ -295,6 +296,8 @@ def decide_preset(image_size: int) -> PresetDecision:
     props = torch.cuda.get_device_properties(0)
     total = int(props.total_memory)
     gpu_name = torch.cuda.get_device_name(0)
+    cc = torch.cuda.get_device_capability(0)
+    decided_dtype: Literal["bfloat16", "float16"] = "float16" if cc < (8, 0) else "bfloat16"
 
     headroom = _headroom_bytes()
     budget = total - headroom
@@ -332,7 +335,7 @@ def decide_preset(image_size: int) -> PresetDecision:
         batch_size=batch,
         grad_accum_steps=grad_accum,
         gradient_checkpointing=ckpt,
-        dtype="bfloat16",
+        dtype=decided_dtype,
         headroom_bytes=headroom,
         predicted_bytes=predicted,
         budget_bytes=budget,
