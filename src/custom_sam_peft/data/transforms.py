@@ -1,10 +1,11 @@
 """Image augmentation + normalization pipelines (Albumentations).
 
 Public API:
-  - resolve_normalization(model_name, fallback) -> (mean, std)
-  - resolve_normalization_with_path(model_name, fallback) -> (mean, std, path)
-  - build_eval_transforms(image_size, *, model_name, normalize) -> A.Compose
-  - build_train_transforms(aug_cfg, image_size, *, model_name, normalize) -> A.Compose
+  - resolve_normalization(model_name, fallback, *, channel_semantics) -> (mean, std)
+  - resolve_normalization_with_path(model_name, fallback, *, channel_semantics) -> (mean, std, path)
+  - build_eval_transforms(image_size, *, model_name, normalize, channel_semantics) -> A.Compose
+  - build_train_transforms(aug_cfg, image_size, *, model_name, normalize,
+                           channel_semantics, channels) -> A.Compose
   - StainJitter: HED-space stain jitter Albumentations transform
 """
 
@@ -354,6 +355,12 @@ def build_train_transforms(
             )
         if resolved.color_jitter > 0.0:
             v = resolved.color_jitter
+            # brightness_by_max=False scales the brightness shift to the image MEAN
+            # (Albumentations 2.0.8: beta = beta * mean(image)), NOT to dtype-max.
+            # Chosen so intensity augs stay range-proportional for arbitrary-range
+            # float multi-band data (SAR/height) where dtype-max would be 1.0 and the
+            # shift negligible. Trade-off: weaker/content-adaptive perturbation on
+            # uint8 rgba/grayscale. Deliberate, confirmed decision (spec §7.2/§8.4).
             steps.append(
                 A.RandomBrightnessContrast(
                     brightness_limit=v,
