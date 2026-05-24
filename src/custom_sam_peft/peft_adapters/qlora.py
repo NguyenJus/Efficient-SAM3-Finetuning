@@ -31,6 +31,7 @@ from custom_sam_peft._registry import register
 from custom_sam_peft.config.schema import Dtype, PEFTConfig, QLoRAConfig
 from custom_sam_peft.models.sam3 import Sam3Wrapper
 from custom_sam_peft.peft_adapters.lora import _resolve_targets
+from custom_sam_peft.runtime._runtime import coerce_dtype_for_capability
 
 logger = logging.getLogger(__name__)
 
@@ -143,12 +144,13 @@ def _replace_with_bnb_linear4bit(base: nn.Module, names: list[str], qcfg: QLoRAC
     for name in names:
         parent, attr = _resolve_parent(base, name)
         old = cast(nn.Linear, getattr(parent, attr))
+        block_dtype = coerce_dtype_for_capability(compute_dtype, device=old.weight.device)
         new = bnb.nn.Linear4bit(
             old.in_features,
             old.out_features,
             bias=old.bias is not None,
             quant_type=qcfg.quant_type,
-            compute_dtype=compute_dtype,
+            compute_dtype=block_dtype,
         )
         new.load_state_dict(old.state_dict())
         new = new.to(old.weight.device)  # quantization fires on .to(cuda)
