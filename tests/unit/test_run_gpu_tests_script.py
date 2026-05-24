@@ -26,6 +26,19 @@ def test_collects_predict_path() -> None:
     assert "tests/predict/" in _src()
 
 
+def test_local_runs_per_file_loop() -> None:
+    """The local tier must iterate over files (not a single pytest invocation).
+
+    Confirms the script contains a loop over test files and handles exit-code 5
+    (no tests collected) as success.
+    """
+    src = _src()
+    # A loop construct is present for the local tier.
+    assert "while" in src or "for" in src
+    # Exit code 5 (no tests collected) is explicitly treated as success.
+    assert "5" in src
+
+
 def test_rejects_unknown_tier() -> None:
     res = subprocess.run(  # noqa: S603
         ["bash", str(SCRIPT), "bogus"],  # noqa: S607

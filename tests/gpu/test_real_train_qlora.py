@@ -1,8 +1,8 @@
 """50-step QLoRA overfit on tiny_coco via run_training(gpu_smoke_qlora.yaml).
 
-Gated by `@pytest.mark.gpu`, `@requires_compatible_gpu`, `@requires_checkpoint`,
+Gated by `@pytest.mark.gpu_t4`, `@requires_compatible_gpu`, `@requires_checkpoint`,
 plus a per-test `skipif(not _bnb_available())`. Not in CI by default. Run with:
-    pytest -m gpu tests/gpu/test_real_train_qlora.py -v
+    pytest -m gpu_t4 tests/gpu/test_real_train_qlora.py -v
 
 This test exercises the same `run_training(cfg)` seam that `custom_sam_peft train` uses,
 proving 4-bit base + bf16 LoRA + 8-bit optimizer trains end-to-end on real
@@ -25,7 +25,7 @@ from custom_sam_peft.train.runner import run_training
 from tests.gpu.conftest import _bnb_available, _RecordingTracker
 
 pytestmark = [
-    pytest.mark.gpu,
+    pytest.mark.gpu_t4,
     pytest.mark.requires_compatible_gpu,
     pytest.mark.requires_checkpoint,
 ]

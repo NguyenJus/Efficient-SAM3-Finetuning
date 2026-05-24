@@ -32,7 +32,7 @@ set -euo pipefail
 TIER="${1:-local}"
 
 case "$TIER" in
-  local) MARKER_EXPR="gpu_local" ;;
+  local) ;;
   t4)    MARKER_EXPR="gpu_t4" ;;
   xl)    MARKER_EXPR="gpu_xl" ;;
   *) echo "usage: $0 [local|t4|xl]" >&2; exit 2 ;;
@@ -44,7 +44,30 @@ PATHS="tests/gpu/ tests/integration/ tests/predict/"
 # same interpreter that `pip install -e .` populated. Bare `pytest` on
 # PATH can resolve to a different Python (common in Colab) and trigger
 # `ModuleNotFoundError: No module named 'custom_sam_peft'`.
-# PATHS is a controlled space-separated list of paths; intentional word split.
-# shellcheck disable=SC2086
-"${PYTHON:-python}" -m pytest -v --tb=short \
-  -m "$MARKER_EXPR" --no-cov $PATHS
+
+if [ "$TIER" = "local" ]; then
+  # Run one pytest process per file so the ~3.3 GB SAM 3.1 checkpoint is
+  # released between files, preventing cumulative OOM on the GTX 1080 (~7 GB).
+  # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True reduces fragmentation.
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  _failed=0
+  # Collect all test files under the search paths.
+  # PATHS is a controlled space-separated list; intentional word split.
+  # shellcheck disable=SC2086
+  while IFS= read -r _file; do
+    # Exit code 5 means "no tests collected" — not a failure for this tier
+    # (a file may contain only gpu_t4/gpu_xl tests). Any other non-zero exit
+    # is a real failure and must fail the overall run.
+    rc=0
+    "${PYTHON:-python}" -m pytest -v --tb=short -m gpu_local --no-cov "$_file" || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 5 ]; then
+      _failed=1
+    fi
+  done < <(find $PATHS -name "test_*.py" | sort)
+  exit "$_failed"
+else
+  # PATHS is a controlled space-separated list of paths; intentional word split.
+  # shellcheck disable=SC2086
+  "${PYTHON:-python}" -m pytest -v --tb=short \
+    -m "$MARKER_EXPR" --no-cov $PATHS
+fi

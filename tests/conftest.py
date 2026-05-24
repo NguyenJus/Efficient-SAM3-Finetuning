@@ -34,11 +34,6 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
-        "gpu_inspection: cheap GPU-gated structural/forward tests (Tier 1); "
-        "see docs/testing/gpu-test-policy.md",
-    )
-    config.addinivalue_line(
-        "markers",
         "gpu_local: GPU test that fits the GTX 1080 (<=~7 GB, CC 6.0+, NF4+float16); "
         "run via run_gpu_tests.sh local",
     )
