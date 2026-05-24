@@ -30,4 +30,37 @@ follow-up (gpu_t4 tier).
 
 ## Milestone evidence
 
-<!-- Filled in by the A-2 hard-gate task: the sm_61-kernel + bnb-Linear4bit proofs. -->
+Recorded 2026-05-24 by task A-2. Full session log:
+[`manual-gpu-pass-2026-05-24-gtx1080.md`](manual-gpu-pass-2026-05-24-gtx1080.md).
+
+**Resolution facts (Task A-1, commit eb523ab):**
+
+| env | torch | bitsandbytes |
+|---|---|---|
+| bare `uv sync` / `uv sync --extra dev` | 2.12.0+cu130 (no sm_61 cubin) | — |
+| `uv sync --extra gpu-pascal` | **2.7.1+cu118** (sm_60..sm_90 + PTX) | **0.49.2** |
+
+### Proof 1 — sm_61 CUDA matmul via PTX JIT (PASS)
+
+```
+torch 2.7.1+cu118
+device NVIDIA GeForce GTX 1080 cc (6, 1)
+matmul max abs err 0.00011444091796875
+SM_61 KERNEL OK
+```
+
+cu118 torch reaches sm_61 via PTX JIT compiled from `compute_60`. No
+`no kernel image is available` error. Matmul error 1.14e-4 < 1e-2.
+
+### Proof 2 — bnb Linear4bit NF4 forward on sm_61, float16 (PASS)
+
+```
+bnb 0.49.2
+out (4, 128) torch.float16 finite True
+BNB LINEAR4BIT OK
+```
+
+bitsandbytes 0.49.2 NF4 4-bit kernel runs on sm_61 under float16. Output
+shape (4, 128), dtype float16, all values finite. No CC-rejection error.
+
+**Gate decision: PASS — Pascal track unblocked; downstream B/C/D tasks may proceed.**
