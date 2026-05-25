@@ -10,6 +10,9 @@ Registered factories:
   ``lookup("peft_method", "lora")``  → ``LoraAdapter``        () → PEFTMethod
   ``lookup("peft_method", "qlora")`` → ``QloraAdapter``       () → PEFTMethod
 
+For disk-load dispatch in evaluators/CLI:
+  ``_peft_method.load_from_disk(wrapper, dirpath)``  → delegates to load_lora or load_qlora
+
 For method-dispatch decisions (optimizer, autocast, checkpoint detection)
 call the appropriate ``LoraAdapter`` or ``QloraAdapter`` instance methods
 instead of testing ``cfg.peft.method``.
@@ -18,7 +21,7 @@ instead of testing ``cfg.peft.method``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from custom_sam_peft._registry import RegistryError, lookup, register
 from custom_sam_peft.errors import CheckpointError
@@ -64,8 +67,25 @@ class PEFTMethod(Protocol):
         """Return True if this method can load a checkpoint from disk without
         a pre-loaded model wrapper.
 
-        LoRA returns True. QLoRA returns False (requires a live wrapper with
-        quantized base; disk-only load is deferred to a follow-up PR).
+        LoRA returns True. QLoRA returns True (load_qlora reconstructs the 4-bit
+        quantized base from saved custom_sam_peft_qlora.json metadata, then loads
+        the LoRA adapter weights via PeftModel.from_pretrained).
+        """
+        ...
+
+    def load_from_disk(self, wrapper: Any, dirpath: Any) -> Any:
+        """Load a checkpoint from disk into a freshly-built wrapper.
+
+        Rebuilds the PEFT-adapted model from the saved checkpoint directory
+        (``dirpath``), mutating ``wrapper`` in place. Returns ``wrapper``.
+
+        LoRA implementation delegates to ``load_lora(wrapper, dirpath)``.
+        QLoRA implementation delegates to ``load_qlora(wrapper, dirpath)``,
+        which reconstructs the 4-bit quantized base from saved metadata before
+        loading the LoRA adapter weights.
+
+        Both implementations import their respective loaders lazily inside the
+        method body so that LoRA-only users never import bitsandbytes.
         """
         ...
 
@@ -92,6 +112,11 @@ class LoraAdapter:
     def supports_checkpoint_load_from_disk(self) -> bool:
         return True
 
+    def load_from_disk(self, wrapper: Any, dirpath: Any) -> Any:
+        from custom_sam_peft.peft_adapters.lora import load_lora
+
+        return load_lora(wrapper, dirpath)
+
 
 @register("peft_method", "qlora")
 class QloraAdapter:
@@ -113,7 +138,12 @@ class QloraAdapter:
         return "qlora"
 
     def supports_checkpoint_load_from_disk(self) -> bool:
-        return False
+        return True
+
+    def load_from_disk(self, wrapper: Any, dirpath: Any) -> Any:
+        from custom_sam_peft.peft_adapters.qlora import load_qlora
+
+        return load_qlora(wrapper, dirpath)
 
 
 def method_pretty_name(method: str) -> str:

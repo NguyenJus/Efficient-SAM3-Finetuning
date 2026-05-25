@@ -20,7 +20,7 @@ from custom_sam_peft.eval.evaluator import Evaluator
 from custom_sam_peft.eval.metrics import MetricsReport
 from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, load_sam31
 from custom_sam_peft.peft_adapters import make_peft_method
-from custom_sam_peft.peft_adapters.lora import load_lora
+from custom_sam_peft.train.checkpoint import _load_channel_adapter
 
 
 @overload
@@ -78,15 +78,13 @@ def run_eval(
 
     Optional additive kwargs (used by `custom_sam_peft run`):
       - ``val_dataset``: pre-built dataset; skips registry lookup + transform setup.
-      - ``model``: pre-loaded + adapted wrapper; skips ``load_sam31`` + ``load_lora``.
+      - ``model``: pre-loaded + adapted wrapper; skips ``load_sam31`` + adapter load.
       - ``return_per_example_iou``: when True, returns ``(MetricsReport, list[float])``.
 
     Backward-compat: defaults preserve the previous behavior (rebuild
     dataset, load model + LoRA, return ``MetricsReport``).
 
     Raises:
-        ValueError: cfg.peft.method != 'lora' AND model is None (QLoRA load
-            from disk is not yet supported; pre-loaded wrappers bypass this).
         ValueError: split == 'test' and cfg.data.test is None.
         ValueError: neither ``checkpoint`` nor ``artifacts`` provided.
     """
@@ -103,11 +101,6 @@ def run_eval(
         resolved_run_dir = None
 
     _peft_method = make_peft_method(resolved_peft_method)
-    if model is None and not _peft_method.supports_checkpoint_load_from_disk():
-        raise ValueError(
-            f"checkpoint loading currently supports only LoRA adapters; "
-            f"got peft.method={resolved_peft_method!r}"
-        )
     if split == "val" and cfg.data.val is None and cfg.data.val_split is None:
         raise ValueError("--split val requires data.val or data.val_split in config; got neither.")
     if split == "test" and cfg.data.test is None:
@@ -130,7 +123,8 @@ def run_eval(
         wrapper = load_sam31(
             cfg.model, channels=cfg.data.channels, channel_semantics=cfg.data.channel_semantics
         )
-        load_lora(wrapper, resolved_checkpoint)
+        _peft_method.load_from_disk(wrapper, resolved_checkpoint)
+        _load_channel_adapter(wrapper, resolved_checkpoint)
     else:
         wrapper = model
 
