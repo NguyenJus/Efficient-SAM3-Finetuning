@@ -410,3 +410,84 @@ def test_output_exists_without_force_errors_before_prompting(tmp_path, monkeypat
     assert result.exit_code != 0
     assert called == []
     assert out.read_text() == "existing\n"
+
+
+# ---------------------------------------------------------------------------
+# Task 21: render — HF-explicit split_val + no spurious no-val line
+# ---------------------------------------------------------------------------
+
+
+def test_render_hf_explicit_emits_split_val(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "hf",
+            "hf": {"name": "org/ds", "split_val": "myval"},
+            "augmentations": {"preset": "natural", "intensity": "medium"},
+        },
+        "peft": {"method": "lora"},
+        "train": {"epochs": 2, "loss": {"preset": "natural", "class_imbalance": "balanced"}},
+    }
+    rendered = sw.render(answers, run_mode="train")
+    assert "split_val: myval" in rendered
+    # No spurious COCO train: block, and no active no-val claim:
+    assert "  # no-val mode:" not in rendered  # the active no-val line must not appear
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.data.format == "hf"
+    assert cfg.data.hf is not None
+    assert cfg.data.hf.split_val == "myval"
+
+
+def test_render_hf_none_emits_no_split_val(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "hf",
+            "hf": {"name": "org/ds"},
+            "augmentations": {"preset": "natural", "intensity": "medium"},
+        },
+        "peft": {"method": "lora"},
+        "train": {"epochs": 1, "loss": {"preset": "natural", "class_imbalance": "balanced"}},
+    }
+    rendered = sw.render(answers, run_mode="train")
+    assert "split_val:" not in rendered.replace("#   split_val", "")  # no ACTIVE split_val line
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.data.hf is not None
+    assert cfg.data.hf.split_val is None
+
+
+# ---------------------------------------------------------------------------
+# Extra Fix A: auto-split fraction input validation
+# ---------------------------------------------------------------------------
+
+
+def test_fraction_validator_rejects_non_numeric(monkeypatch) -> None:
+    """_ask_validation's auto-split branch must validate the fraction input."""
+    calls: list[tuple] = []
+
+    def _capture_ask_text(*args, validate=None, **kwargs):
+        calls.append((args, kwargs, validate))
+        # return a valid value so the function completes
+        return "0.1"
+
+    monkeypatch.setattr(sw, "ask_choice", lambda *a, **k: "auto-split")
+    monkeypatch.setattr(sw, "ask_text", _capture_ask_text)
+    ctx = sw.Ctx(answers={"data": {"format": "coco"}}, cuda_available=False)
+    result = sw._ask_validation(ctx)
+    assert result == {"data": {"val_split": {"fraction": 0.1}}}
+    # The ask_text call must have received a validate= callback
+    assert len(calls) == 1
+    _args, _kwargs, validate = calls[0]
+    assert validate is not None
+    # validate rejects non-numeric
+    assert validate("abc") is not None
+    # validate rejects out-of-range
+    assert validate("0") is not None
+    assert validate("0.6") is not None
+    # validate accepts valid fractions
+    assert validate("0.1") is None
+    assert validate("0.5") is None

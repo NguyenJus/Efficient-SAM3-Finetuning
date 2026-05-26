@@ -144,19 +144,23 @@ def _model_block(answers: dict[str, Any]) -> str:
 def _dataset_block(answers: dict[str, Any]) -> str:
     data = answers.get("data", {})
     if data.get("format") == "hf":
-        name = data["hf"]["name"]
-        return (
-            "  format: hf\n"
-            "  train:\n"
-            "    annotations: data/train.json\n"
-            "    images: data/train/\n"
-            "  hf:\n"
-            f"    name: {name}\n"
-            "  # COCO alternative — set format: coco and uncomment:\n"
-            "  # train:\n"
-            "  #   annotations: data/train.json\n"
-            "  #   images: data/train/"
-        )
+        hf = data.get("hf", {})
+        name = hf["name"]
+        lines = [
+            "  format: hf",
+            "  hf:",
+            f"    name: {name}",
+            "    split_train: train",
+        ]
+        if hf.get("split_val") is not None:
+            lines.append(f"    split_val: {hf['split_val']}")
+        lines += [
+            "  # Required stub — not used by the HF loader (set format: coco to use it):",
+            "  train:",
+            "    annotations: data/train.json",
+            "    images: data/train/",
+        ]
+        return "\n".join(lines)
     train = data.get("train", {})
     ann = train.get("annotations", "data/train.json")
     imgs = train.get("images", "data/train/")
@@ -175,6 +179,8 @@ def _dataset_block(answers: dict[str, Any]) -> str:
 
 def _validation_block(answers: dict[str, Any]) -> str:
     data = answers.get("data", {})
+    hf = data.get("hf", {})
+    hf_explicit = data.get("format") == "hf" and hf.get("split_val") is not None
     explicit_active = auto_active = noval_active = False
     if data.get("val") is not None:
         explicit_active = True
@@ -183,13 +189,16 @@ def _validation_block(answers: dict[str, Any]) -> str:
     elif data.get("val_split") is not None:
         auto_active = True
         active = f"  val_split:\n    fraction: {data['val_split']['fraction']}\n    seed: null"
+    elif hf_explicit:
+        # Validation comes from data.hf.split_val (rendered in the dataset block).
+        active = "  # validation: HF split set via data.hf.split_val above is used as the val set."
     else:
         noval_active = True
         active = "  # no-val mode: neither val: nor val_split: is set."
     alts = []
     if not explicit_active:
         alts.append(
-            "  # Explicit-val alternative:\n"
+            "  # Explicit-val alternative (COCO):\n"
             "  # val:\n"
             "  #   annotations: data/val.json\n"
             "  #   images: data/val/"
@@ -199,7 +208,7 @@ def _validation_block(answers: dict[str, Any]) -> str:
             "  # Auto-split alternative:\n  # val_split:\n  #   fraction: 0.1\n  #   seed: null"
         )
     if not noval_active:
-        alts.append("  # No-val alternative: omit both val: and val_split:.")
+        alts.append("  # No-val alternative: omit val:, val_split:, and hf.split_val.")
     return "\n".join([active, *alts])
 
 
@@ -279,7 +288,15 @@ def _ask_validation(ctx: Ctx) -> dict[str, Any]:
             )
         return {}
     if mode == "auto-split":
-        frac = ask_text("Auto-split fraction (0<f<=0.5)?", default="0.1")
+
+        def _fraction(s: str) -> str | None:
+            try:
+                f = float(s)
+            except ValueError:
+                return "fraction must be a number"
+            return None if 0.0 < f <= 0.5 else "fraction must be in (0, 0.5]"
+
+        frac = ask_text("Auto-split fraction (0<f<=0.5)?", default="0.1", validate=_fraction)
         return {"data": {"val_split": {"fraction": float(frac)}}}
     if fmt == "hf":
         split = ask_text("HF validation split name?", default="validation")
