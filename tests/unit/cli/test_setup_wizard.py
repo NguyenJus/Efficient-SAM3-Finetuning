@@ -101,3 +101,49 @@ def test_infer_iscrowd_excluded(tmp_path: Path) -> None:
     p = tmp_path / "a.json"
     _write_coco(p, {1: 10, 2: 10}, iscrowd_extra=50)
     assert sw.infer_class_imbalance(str(p)) == "balanced"
+
+
+# ---------------------------------------------------------------------------
+# Task 12: STEPS registry + run_wizard
+# ---------------------------------------------------------------------------
+
+
+def _patch_prompts(monkeypatch, *, texts=None, choices=None, confirms=None):
+    """Feed scripted answers to the three primitives in call order."""
+    t = iter(texts or [])
+    c = iter(choices or [])
+    cf = iter(confirms or [])
+    monkeypatch.setattr(sw, "ask_text", lambda *a, **k: next(t))
+    monkeypatch.setattr(sw, "ask_choice", lambda *a, **k: next(c))
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: next(cf))
+
+
+def test_step_fragment_shapes_are_nested_dicts(monkeypatch) -> None:
+    _patch_prompts(
+        monkeypatch,
+        texts=["my-run", "ann.json", "imgs/", "5", ""],
+        choices=["train", "coco", "none", "natural", "medium", "lora"],
+    )
+    monkeypatch.setattr(sw, "infer_class_imbalance", lambda *a, **k: "balanced")
+    ctx = sw.Ctx(answers={}, cuda_available=False)
+    answers = sw.run_wizard(ctx)
+    assert answers["run"]["name"] == "my-run"
+    assert answers["data"]["format"] == "coco"
+    assert answers["data"]["train"]["annotations"] == "ann.json"
+    assert answers["peft"]["method"] == "lora"
+    assert answers["train"]["epochs"] == 5
+    assert answers["train"]["loss"]["class_imbalance"] == "balanced"
+    assert ctx.run_mode == "train"
+
+
+def test_when_gating_skips_class_imbalance_in_eval_mode() -> None:
+    step = next(s for s in sw.STEPS if s.id == "class_imbalance")
+    ctx = sw.Ctx(answers={"data": {"format": "coco"}}, cuda_available=False, run_mode="eval")
+    assert step.when(ctx) is False
+
+
+def test_when_gating_skips_vram_autosize_without_cuda(monkeypatch) -> None:
+    _patch_prompts(monkeypatch, choices=["lora"])
+    step = next(s for s in sw.STEPS if s.id == "peft_sizing")
+    ctx = sw.Ctx(answers={}, cuda_available=False)
+    assert step.ask(ctx) == {"peft": {"method": "lora"}}
