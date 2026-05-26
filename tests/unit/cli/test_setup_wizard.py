@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 import typer
+from typer.testing import CliRunner
 
 from custom_sam_peft.cli import setup_wizard as sw
+from custom_sam_peft.cli.main import app
 from custom_sam_peft.config.loader import load_config
 
 
@@ -371,3 +373,40 @@ def test_vram_autosize_runtime_error_falls_back_to_manual(monkeypatch) -> None:
     ctx = sw.Ctx(answers={}, cuda_available=True)
     frag = sw._ask_peft_sizing(ctx)
     assert frag == {"peft": {"method": "qlora"}}
+
+
+# ---------------------------------------------------------------------------
+# Task 16: --interactive/-i flag + TTY/output pre-flight
+# ---------------------------------------------------------------------------
+
+runner = CliRunner()
+
+
+def test_non_tty_hard_errors(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("custom_sam_peft.cli.init_cmd.sys.stdin.isatty", lambda: False)
+    called: list[int] = []
+    monkeypatch.setattr(
+        "custom_sam_peft.cli.setup_wizard.run_wizard",
+        lambda ctx: called.append(1) or {},
+    )
+    out = tmp_path / "c.yaml"
+    result = runner.invoke(app, ["init", "--interactive", "--output", str(out)])
+    assert result.exit_code != 0
+    assert "TTY" in result.output or "tty" in result.output.lower()
+    assert called == []
+    assert not out.exists()
+
+
+def test_output_exists_without_force_errors_before_prompting(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("custom_sam_peft.cli.init_cmd.sys.stdin.isatty", lambda: True)
+    called: list[int] = []
+    monkeypatch.setattr(
+        "custom_sam_peft.cli.setup_wizard.run_wizard",
+        lambda ctx: called.append(1) or {},
+    )
+    out = tmp_path / "c.yaml"
+    out.write_text("existing\n")
+    result = runner.invoke(app, ["init", "--interactive", "--output", str(out)])
+    assert result.exit_code != 0
+    assert called == []
+    assert out.read_text() == "existing\n"
