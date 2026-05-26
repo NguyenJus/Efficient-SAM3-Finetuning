@@ -38,12 +38,21 @@ def test_load_config_returns_validated_train_config(tmp_path: Path) -> None:
     assert cfg.peft.method == "lora"
 
 
-def test_paths_resolved_relative_to_config_file(tmp_path: Path) -> None:
-    cfg_file = _write_minimal_yaml(tmp_path / "c.yaml")
+def test_paths_resolved_relative_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Relative paths in config are resolved against the process CWD, not the config file's dir."""
+    # Config lives in a subdir; CWD is tmp_path (simulating project root)
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    cfg_file = _write_minimal_yaml(config_dir / "c.yaml")
+
+    monkeypatch.chdir(tmp_path)
     cfg = load_config(cfg_file)
+
     assert Path(cfg.data.train.annotations).is_absolute()
+    # Paths anchor at CWD (tmp_path), not at config's parent (config_dir)
     assert Path(cfg.data.train.annotations) == (tmp_path / "train.json").resolve()
     assert Path(cfg.data.val.images) == (tmp_path / "val").resolve()
+    assert "configs" not in str(cfg.data.train.annotations)
 
 
 def test_apply_overrides_modifies_nested_key() -> None:
@@ -106,3 +115,59 @@ def test_override_traversing_non_dict_raises() -> None:
     base: dict[str, object] = {"a": "string-not-dict"}
     with pytest.raises(ConfigError, match="non-dict"):
         apply_overrides(base, ["a.b.c=1"])
+
+
+def test_paths_resolved_relative_to_cwd_not_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Paths in config must resolve relative to CWD, not the config file's directory.
+
+    Regression test for the bug where running
+        train --config configs/foo.yaml
+    would resolve data/coco/... relative to configs/ instead of the project root.
+    """
+    # Simulate: project root is tmp_path/project, config lives in a subdir
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    config_subdir = project_root / "configs" / "examples"
+    config_subdir.mkdir(parents=True)
+
+    # Write a config with relative paths — these paths are relative to project_root (CWD),
+    # NOT relative to config_subdir
+    cfg_file = config_subdir / "my_config.yaml"
+    cfg_file.write_text(
+        """
+run:
+  name: subdir-test
+  output_dir: ./runs
+model:
+  name: facebook/sam3.1
+  local_dir: models/sam3.1
+data:
+  format: coco
+  train: { annotations: data/train.json, images: data/train/ }
+  val: { annotations: data/val.json, images: data/val/ }
+  prompt_mode: text
+peft:
+  method: lora
+train:
+  epochs: 1
+""".lstrip()
+    )
+
+    # CWD is the project root, NOT the config subdir
+    monkeypatch.chdir(project_root)
+
+    cfg = load_config(cfg_file)
+
+    # Paths should be absolute and anchored at project_root (CWD), not at config_subdir
+    assert Path(cfg.data.train.annotations).is_absolute()
+    assert Path(cfg.data.train.annotations) == (project_root / "data" / "train.json").resolve()
+    assert Path(cfg.data.train.images) == (project_root / "data" / "train").resolve()
+    assert Path(cfg.data.val.annotations) == (project_root / "data" / "val.json").resolve()
+    assert Path(cfg.data.val.images) == (project_root / "data" / "val").resolve()
+    assert Path(cfg.run.output_dir) == (project_root / "runs").resolve()
+
+    # Crucially: paths must NOT include the config subdir in their ancestry
+    assert "configs" not in str(cfg.data.train.annotations)
+    assert "configs" not in str(cfg.run.output_dir)
