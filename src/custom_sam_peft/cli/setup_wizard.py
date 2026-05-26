@@ -13,6 +13,11 @@ from typing import Any, Literal
 
 import typer
 
+from custom_sam_peft.config.schema import ClassImbalance
+
+IMBALANCE_MODERATE_RATIO = 3.0  # R < 3 → balanced
+IMBALANCE_SEVERE_RATIO = 10.0  # 3 <= R < 10 → moderate; R >= 10 → severe
+
 RunMode = Literal["train", "run", "eval"]
 
 
@@ -78,3 +83,39 @@ def ask_choice(prompt: str, choices: list[str], *, default: str | None = None) -
 
 def ask_confirm(prompt: str, *, default: bool = True) -> bool:
     return typer.confirm(prompt, default=default)
+
+
+def infer_class_imbalance(annotations: str) -> ClassImbalance:
+    """Detect a class-imbalance tier from per-category instance counts.
+
+    Mirrors data/subset.py per-class frequency; uses the pycocotools-backed
+    primitives in data/coco.py. On ANY failure (missing/unreadable file, zero
+    present categories) returns "balanced".
+    """
+    try:
+        from custom_sam_peft.data.coco import _build_category_remap, _load_coco_index
+
+        coco = _load_coco_index(annotations)
+        _sparse_ids, remap, _names = _build_category_remap(coco)
+        counts: dict[int, int] = {}
+        for img_id in coco.getImgIds():
+            anns = coco.loadAnns(coco.getAnnIds(imgIds=[img_id]))
+            for a in anns:
+                if int(a.get("iscrowd", 0)) != 0:
+                    continue
+                dense = remap.get(int(a["category_id"]))
+                if dense is None:
+                    continue
+                counts[dense] = counts.get(dense, 0) + 1
+        present = [c for c in counts.values() if c > 0]
+        if not present:
+            raise ValueError("no present categories")
+        ratio = max(present) / min(present)
+    except Exception:
+        return "balanced"
+
+    if ratio < IMBALANCE_MODERATE_RATIO:
+        return "balanced"
+    if ratio < IMBALANCE_SEVERE_RATIO:
+        return "moderate"
+    return "severe"
