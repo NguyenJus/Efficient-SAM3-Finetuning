@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from custom_sam_peft.cli import setup_wizard as sw
+from custom_sam_peft.config.loader import load_config
 
 
 def test_deep_merge_nested_dicts() -> None:
@@ -147,3 +148,74 @@ def test_when_gating_skips_vram_autosize_without_cuda(monkeypatch) -> None:
     step = next(s for s in sw.STEPS if s.id == "peft_sizing")
     ctx = sw.Ctx(answers={}, cuda_available=False)
     assert step.ask(ctx) == {"peft": {"method": "lora"}}
+
+
+# ---------------------------------------------------------------------------
+# Task 13: render
+# ---------------------------------------------------------------------------
+
+
+def test_render_coco_explicit_val_reloads(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "coco",
+            "train": {"annotations": "t.json", "images": "t/"},
+            "val": {"annotations": "v.json", "images": "v/"},
+            "augmentations": {"preset": "medical", "intensity": "medium"},
+        },
+        "peft": {"method": "lora"},
+        "train": {"epochs": 3, "loss": {"preset": "medical", "class_imbalance": "moderate"}},
+    }
+    rendered = sw.render(answers, run_mode="train")
+    assert "prompt_mode: text" in rendered
+    assert "format: coco" in rendered
+    assert "# hf:" in rendered
+    assert "# val_split:" in rendered
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.data.val is not None
+    assert cfg.peft.method == "lora"
+    assert cfg.train.epochs == 3
+
+
+def test_render_hf_autosplit_qlora_reloads(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "hf",
+            "hf": {"name": "org/ds"},
+            "val_split": {"fraction": 0.2},
+            "augmentations": {"preset": "natural", "intensity": "safe"},
+        },
+        "peft": {"method": "qlora"},
+        "train": {"epochs": 2, "loss": {"preset": "natural", "class_imbalance": "balanced"}},
+    }
+    rendered = sw.render(answers, run_mode="train")
+    assert "name: org/ds" in rendered
+    assert "quant_type: nf4" in rendered
+    assert "val_split:" in rendered
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.data.format == "hf"
+    assert cfg.peft.method == "qlora"
+
+
+def test_render_eval_mode_defaults_epochs_to_1(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "coco",
+            "train": {"annotations": "t.json", "images": "t/"},
+            "augmentations": {"preset": "natural", "intensity": "medium"},
+        },
+        "peft": {"method": "lora"},
+        "train": {"loss": {"preset": "natural", "class_imbalance": "balanced"}},  # no epochs
+    }
+    rendered = sw.render(answers, run_mode="eval")
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.train.epochs == 1

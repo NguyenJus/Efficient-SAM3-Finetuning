@@ -7,12 +7,15 @@ docs/superpowers/specs/2026-05-26-interactive-setup-wizard-design.md.
 
 from __future__ import annotations
 
+import string
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib.resources import files
 from typing import Any, Literal
 
 import typer
 
+from custom_sam_peft.cli.init_cmd import UNIFIED_TEMPLATE, _build_loss_overrides_block
 from custom_sam_peft.config.schema import ClassImbalance
 
 IMBALANCE_MODERATE_RATIO = 3.0  # R < 3 → balanced
@@ -119,6 +122,120 @@ def infer_class_imbalance(annotations: str) -> ClassImbalance:
     if ratio < IMBALANCE_SEVERE_RATIO:
         return "moderate"
     return "severe"
+
+
+# ---------------------------------------------------------------------------
+# render helpers
+# ---------------------------------------------------------------------------
+
+
+def _model_block(answers: dict[str, Any]) -> str:
+    m = answers.get("model", {})
+    local_dir = m.get("local_dir", "models/sam3.1")
+    ckpt = m.get("checkpoint_file", "sam3.1_multiplex.pt")
+    return f"  name: facebook/sam3.1\n  local_dir: {local_dir}\n  checkpoint_file: {ckpt}"
+
+
+def _dataset_block(answers: dict[str, Any]) -> str:
+    data = answers.get("data", {})
+    if data.get("format") == "hf":
+        name = data["hf"]["name"]
+        return (
+            "  format: hf\n"
+            "  train:\n"
+            "    annotations: data/train.json\n"
+            "    images: data/train/\n"
+            "  hf:\n"
+            f"    name: {name}\n"
+            "  # COCO alternative — set format: coco and uncomment:\n"
+            "  # train:\n"
+            "  #   annotations: data/train.json\n"
+            "  #   images: data/train/"
+        )
+    train = data.get("train", {})
+    ann = train.get("annotations", "data/train.json")
+    imgs = train.get("images", "data/train/")
+    return (
+        "  format: coco\n"
+        "  train:\n"
+        f"    annotations: {ann}\n"
+        f"    images: {imgs}\n"
+        "  # HuggingFace alternative — set format: hf and uncomment:\n"
+        "  # hf:\n"
+        "  #   name: org/dataset\n"
+        "  #   split_train: train\n"
+        "  #   split_val: validation"
+    )
+
+
+def _validation_block(answers: dict[str, Any]) -> str:
+    data = answers.get("data", {})
+    explicit_active = auto_active = noval_active = False
+    if data.get("val") is not None:
+        explicit_active = True
+        v = data["val"]
+        active = f"  val:\n    annotations: {v['annotations']}\n    images: {v['images']}"
+    elif data.get("val_split") is not None:
+        auto_active = True
+        active = f"  val_split:\n    fraction: {data['val_split']['fraction']}\n    seed: null"
+    else:
+        noval_active = True
+        active = "  # no-val mode: neither val: nor val_split: is set."
+    alts = []
+    if not explicit_active:
+        alts.append(
+            "  # Explicit-val alternative:\n"
+            "  # val:\n"
+            "  #   annotations: data/val.json\n"
+            "  #   images: data/val/"
+        )
+    if not auto_active:
+        alts.append(
+            "  # Auto-split alternative:\n  # val_split:\n  #   fraction: 0.1\n  #   seed: null"
+        )
+    if not noval_active:
+        alts.append("  # No-val alternative: omit both val: and val_split:.")
+    return "\n".join([active, *alts])
+
+
+def _qlora_block(answers: dict[str, Any]) -> str:
+    if answers.get("peft", {}).get("method") == "qlora":
+        return "  qlora:\n    quant_type: nf4\n    compute_dtype: bfloat16"
+    return ""
+
+
+def _aug_overrides_block() -> str:
+    return (
+        "# Override individual knobs here; unset keys inherit from (preset, intensity).\n"
+        "    # overrides:\n"
+        "    #   hflip: false\n"
+        "    #   color_jitter: 0.15"
+    )
+
+
+def render(answers: dict[str, Any], *, run_mode: RunMode) -> str:
+    """Render the YAML config string from collected answers."""
+    data = answers.get("data", {})
+    aug = data.get("augmentations", {})
+    loss = answers.get("train", {}).get("loss", {})
+    epochs = answers.get("train", {}).get("epochs", 1)  # eval defaults to 1
+    preset = aug.get("preset", "natural")
+    raw = (files("custom_sam_peft.cli.templates") / UNIFIED_TEMPLATE).read_text()
+    return string.Template(raw).substitute(
+        run_name=answers.get("run", {}).get("name", "my-run"),
+        peft_method=answers.get("peft", {}).get("method", "lora"),
+        epochs=epochs,
+        aug_preset=preset,
+        loss_preset=loss.get("preset", "natural"),
+        aug_intensity=aug.get("intensity", "medium"),
+        class_imbalance=loss.get("class_imbalance", "balanced"),
+        overrides_block=_aug_overrides_block(),
+        loss_overrides_block=_build_loss_overrides_block(preset),
+        model_block=_model_block(answers),
+        dataset_block=_dataset_block(answers),
+        validation_block=_validation_block(answers),
+        qlora_block=_qlora_block(answers),
+    )
 
 
 # ---------------------------------------------------------------------------
