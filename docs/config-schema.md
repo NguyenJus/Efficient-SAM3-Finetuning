@@ -79,7 +79,7 @@ Top-level data source and prompt configuration.
 | --- | --- | --- | --- | --- | --- |
 | `data.hf.name` | str (non-empty) | (required) | advanced | HuggingFace dataset identifier (e.g. `"rafaelpadilla/coco2017"`). | Audit §E: 0 non-test hits; only used when `data.format == "hf"`. |
 | `data.hf.split_train` | str | `"train"` | advanced | HF split name for the training partition. | Audit §E: 0 non-test hits; defaults match the standard HF split naming convention. |
-| `data.hf.split_val` | str | `"validation"` | advanced | HF split name for the validation partition. | Audit §E: 0 non-test hits; same as above. |
+| `data.hf.split_val` | str \| null | `null` | advanced | HF split name used as the validation set. When set (and `data.val_split` is unset), validation runs against this split (mode='explicit'). Null → no HF-driven validation. | Audit §E: explicit HF val opt-in (spec §12). |
 | `data.hf.field_map.image` | str | `"image"` | advanced | HF feature key containing the PIL image. | Audit §E: 0 non-test hits; only needed when the dataset uses non-standard field names. |
 | `data.hf.field_map.bbox` | str | `"objects.bbox"` | advanced | Dotted key path to the bounding-box list within each example. | Audit §E: 0 non-test hits; same rationale as `field_map.image`. |
 | `data.hf.field_map.category` | str | `"objects.category"` | advanced | Dotted key path to the category-id list within each example. | Audit §E: 0 non-test hits; same rationale. |
