@@ -4,7 +4,7 @@ Responsibilities:
   - Load YAML.
   - Apply `--override key.subkey=value` flags onto the dict.
   - Env-var interpolation (preserved — no env-var interpolation in v0.x baseline).
-  - Resolve every path in DataConfig relative to the config file's directory.
+  - Resolve every path in DataConfig relative to the process CWD (where the CLI was invoked).
   - Validate via pydantic; surface errors as ConfigError.
 """
 
@@ -71,7 +71,7 @@ def load_config(
     if overrides:
         apply_overrides(raw, overrides)
 
-    _resolve_paths(raw, base_dir=p.parent.resolve())
+    _resolve_paths(raw, base_dir=Path.cwd())
 
     try:
         return TrainConfig.model_validate(raw)
