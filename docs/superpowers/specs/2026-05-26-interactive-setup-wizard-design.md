@@ -165,7 +165,7 @@ Schema fields with no default (must be collected or otherwise satisfied): `run.n
 | 1 | `run_mode` | Run mode: `train` / `run` / `eval`. Drives the printed launch command and whether validation is needed. **Not persisted to YAML** — `run`/`train`/`eval` are CLI subcommands, not config fields. Stored in `ctx` (see note). | (none — CLI selector) | Always asked |
 | 2 | `run_name` | `run.name`? | `run.name` | **Required** |
 | 3 | `dataset_source` | Local COCO or HuggingFace? Then path(s). | COCO → `data.format="coco"`, `data.train.annotations`, `data.train.images`; HF → `data.format="hf"`, `data.hf.name` | **Required** |
-| 4 | `validation` | Explicit val / auto-split fraction / none. | explicit → `data.val.annotations` + `data.val.images` (COCO) or `data.hf.split_val` (HF); auto-split → `data.val_split.fraction`; none → (omit both) | Defaulted (auto-split 0.1 offered as default) |
+| 4 | `validation` | Explicit val / auto-split fraction / none. | explicit → `data.val.annotations` + `data.val.images` (COCO) or `data.hf.split_val` (HF — **now wired end-to-end; see §12**); auto-split → `data.val_split.fraction`; none → (omit both) | Defaulted (auto-split 0.1 offered as default) |
 | 5 | `domain` | Domain: natural / medical / satellite / microscopy / none. Then intensity: safe / medium / aggressive. | `data.augmentations.preset` **and** `train.loss.preset` (same value); `data.augmentations.intensity` | Defaulted (natural / medium) |
 | 6 | `class_imbalance` | Auto-detected tier (accept/override). See §6.2. | `train.loss.class_imbalance` | Defaulted (auto-calculated; never a raw prompt) |
 | 7 | `peft_sizing` | If CUDA: offer VRAM auto-size (see §6.1). Else / declined: `peft.method` (lora/qlora), accept default `r=16`. | auto-size → `peft.method`, `peft.r`, `train.batch_size`, `train.grad_accum_steps`, `model.dtype`; manual → `peft.method` | **Required** (`peft.method` always set; rest defaulted) |
@@ -219,7 +219,7 @@ train:
 - Scalar placeholders take answers values or schema defaults (e.g. `$run_name`, `$peft_method`, `$epochs`, `$aug_preset`, `$loss_preset`, `$aug_intensity`, `$class_imbalance`).
 - **Block placeholders** are computed for the two branching dimensions so the chosen branch is active YAML and the alternatives are present-but-commented:
   - **Dataset format:** the chosen format (`coco` or `hf`) renders as live `data:` keys; the other format renders as a commented-out block, so the file documents both shapes.
-  - **Validation mode:** the chosen mode renders live (explicit `val:` / `val_split:` / no-val) and the other two render commented-out, so a user can switch validation strategy by editing comments.
+  - **Validation mode:** the chosen mode renders live (explicit `val:` / `val_split:` / no-val) and the other two render commented-out, so a user can switch validation strategy by editing comments. **For an HF dataset, the "explicit" mode renders `hf.split_val: <name>` (not a `val:` block) and that mode is now honored at runtime — see §12. The HF "explicit" render previously dropped `split_val` and the validation system ignored it; §12 fixes both.**
 - `prompt_mode: text` is hardcoded in the template body (not a placeholder, not an answer) per #126's text-primary invariant.
 - Advanced knobs the wizard never prompts render as commented scaffolds carrying their schema defaults, so the output is comprehensive (§2 "Comprehensive-output rationale").
 
@@ -492,3 +492,125 @@ The wizard's VRAM step depends only on the public `decide_preset(image_size) -> 
 ### Rollback
 
 Revert the PR. Workstream 1 adds the wizard (`setup_wizard.py` + the `--interactive` branch) and consolidates templates (deletes `coco_text_lora.yaml` / `coco_text_qlora.yaml`, adds `config_full.yaml`, repoints `run_init` at it). Reverting restores the two legacy template files and the old per-template `run_init` output alongside removing the wizard. Workstream 2's GC removal revert restores the schema field, the presets ckpt dimension, the sam3 no-op block, and the OOM GC rung; it touches no template (the GC-free state lived in the unified template, which the WS1 revert handles). The two workstreams are one logical change and must revert as a unit to keep the schema, presets, and templates consistent.
+
+---
+
+## §12 Amendment: HF explicit-validation wiring (post-review)
+
+**Status:** post-Checkpoint-B amendment. Closes a design defect surfaced in review. **Resolution chosen: "wire `hf.split_val` for real"** — extend the validation system so an HF config that names `hf.split_val` actually runs validation against that HF split (`mode='explicit'`), and have the wizard render it. Same pre-1.0, no-shim stance as §11.
+
+### 12.1 The defect
+
+The §4-row-4 / §5.2 promise that an HF dataset can pick **explicit** validation was a no-op end-to-end:
+
+- `data/val_source.py::resolve_val_source` — the authority on validation mode — chose the mode ONLY from `cfg.data.val_split` (→ `auto_split`) or `cfg.data.val` (→ `explicit`), else `none`. It never consulted `cfg.data.hf.split_val`. So an HF + "explicit" config silently resolved to **`none`** and never validated during training.
+- `eval/runner.py` rejected `--split val` for an HF config (`raise ValueError("--split val requires data.val or data.val_split …")`), so `eval --split val` on an HF + split_val config **errored**.
+- The wizard's `render._dataset_block` HF branch **dropped** the collected `split_val` entirely (it never emitted `split_val:`), and additionally emitted a spurious COCO-shaped `train:` block under `data:` for HF datasets.
+
+`_ask_validation` already collected the HF val split correctly (`{"data": {"hf": {"split_val": split}}}`); the failure was downstream (schema gating + render + resolver + eval gate).
+
+### 12.2 The opt-in problem and chosen signal
+
+`HFDatasetConfig.split_val` defaulted to `"validation"` — a non-empty string ALWAYS present. Gating "split_val present → explicit val" naively would make EVERY HF config validate, breaking the "none" option. An opt-in signal is required.
+
+**Chosen opt-in:** change `HFDatasetConfig.split_val: str = "validation"` → `str | None = None`. Rationale:
+
+- The old default `"validation"` was **inert for gating** (the resolver ignored `split_val` entirely), so flipping the default to `None` changes **no current runtime behavior**: an HF config with no `val`/`val_split` resolved to `none` before AND after.
+- With the new gating, **`split_val is not None`** is the explicit opt-in. The wizard's HF-explicit path sets it; HF-none leaves it `None`; HF-auto-split uses `data.val_split` (unchanged, and carves val out of `split_train`).
+- The HF builder's `else` branch (`data/hf.py` ~line 414) reads `hf_cfg["split_val"]` only on the explicit eval path (no `_resolved_image_ids`, no COCO `val`). Under the new gating that path is reached **only when `split_val is not None`**, so the builder never reads `None`. This invariant holds for both train-time val building (`train/runner.py` builds the eval dataset only when `vs.mode != "none"`) and `eval --split val` (only reached past the relaxed gate, which requires `split_val is not None`). No builder change is needed.
+- Pre-1.0 breaking change, no shim, consistent with §11. Existing code relying on the `"validation"` default is updated (see §12.7).
+
+### 12.3 Schema (`config/schema.py`)
+
+- `HFDatasetConfig.split_val: str = "validation"` → `split_val: str | None = None`.
+- **Retarget the existing `_check_hf_split_val_compat` validator** from the `"validation"` sentinel to the new `None` sentinel. It currently rejects `val_split` + a *customized* `split_val` via `self.hf.split_val != "validation"`; change that condition to `self.hf.split_val is not None`. The error message stays accurate ("data.hf.split_val cannot be customized when data.val_split is set; auto-split carves the val set from data.hf.split_train. Remove split_val or remove val_split.").
+- `_check_val_modes` (the `val` ⊻ `val_split` mutual-exclusivity rule) is unchanged.
+
+**Mutual-exclusivity rules (recommended, enforced in `DataConfig` after-validators):**
+
+| Pair | Rule | Where |
+|------|------|-------|
+| `val` & `val_split` | mutually exclusive (existing) | `_check_val_modes` (unchanged) |
+| `val_split` & `hf.split_val` (set) | mutually exclusive — auto-split owns the val set; a named HF val split would contradict it | `_check_hf_split_val_compat` (retargeted to `is not None`) |
+| `val` & `hf.split_val` | **NOT guarded.** `data.val` is COCO-only and `hf.split_val` is HF-only; `data.format` selects exactly one builder, so the unused one is dead config. Adding a guard is YAGNI; leave it. (The wizard never emits both.) |
+
+### 12.4 `resolve_val_source` (`data/val_source.py`) — new dispatch priority
+
+Insert an HF-explicit branch into the existing 1-2-3-4 dispatch. New ordering:
+
+1. `run_dir/val_source.json` exists → resume (unchanged).
+2. `cfg.data.val_split is not None` → `auto_split` (unchanged). *(Takes priority over split_val; the schema validator already forbids `val_split` + a set `split_val`, so this branch and #4 are mutually exclusive by construction.)*
+3. `cfg.data.val is not None` → `explicit` (COCO, unchanged).
+4. **NEW:** `cfg.data.format == "hf" and cfg.data.hf is not None and cfg.data.hf.split_val is not None` → `explicit`.
+5. else → `none`.
+
+The new HF-explicit branch yields **the same `ValSource(mode="explicit", …)`** the COCO `val` branch yields: `train_ids=None`, `val_ids=None` (full-split, no id filtering — the builder reads the whole `split_val`), and all the auto-split-only fields `None`. The two explicit sources share `mode='explicit'`; downstream consumers (`train/runner.py` builds val whenever `vs.mode != "none"`, `_log_val_source` logs "explicit") need no special-casing. (Optional polish: `_log_val_source`'s `mode=="explicit"` line currently logs "explicit (cfg.data.val)"; broaden to "explicit (cfg.data.val or data.hf.split_val)" so the HF case isn't mislabeled — cosmetic, log-only.)
+
+### 12.5 `eval/runner.py` — relax the `--split val` gate
+
+The gate at ~line 104 currently reads:
+
+```python
+if split == "val" and cfg.data.val is None and cfg.data.val_split is None:
+    raise ValueError("--split val requires data.val or data.val_split in config; got neither.")
+```
+
+Relax it to also accept HF + `split_val`:
+
+```python
+_hf_val = cfg.data.format == "hf" and cfg.data.hf is not None and cfg.data.hf.split_val is not None
+if split == "val" and cfg.data.val is None and cfg.data.val_split is None and not _hf_val:
+    raise ValueError(
+        "--split val requires data.val, data.val_split, or data.hf.split_val in config; got none."
+    )
+```
+
+The existing `val_dataset is None` build path (lines ~109-118) needs no change: for HF-explicit there is no `_resolved_image_ids` and no `val`, so the HF builder's `else` branch reads `split_val` for `pipeline="eval"` — exactly the intended split.
+
+### 12.6 No change needed downstream
+
+- **`train/runner.py`** — already builds the eval dataset whenever `vs.mode != "none"` (~line 106). The new HF-explicit `mode='explicit'` is picked up automatically. No edit.
+- **`data/hf.py`** — the `else` branch already reads `split_val` on the explicit eval path. Under the new gating it is reached only when `split_val is not None`, so it never reads `None`. No edit, no guard.
+
+### 12.7 Existing code/tests that rely on the old `"validation"` default
+
+| Location | Reliance | Required update |
+|----------|----------|-----------------|
+| `src/custom_sam_peft/config/schema.py:475` | `_check_hf_split_val_compat` uses `self.hf.split_val != "validation"` as the "customized" check | retarget to `self.hf.split_val is not None` (§12.3) |
+| `tests/unit/test_data_schema_extensions.py:85` | `assert cfg.split_val == "validation"` (default-value assertion) | change to `assert cfg.split_val is None` |
+| `tests/unit/test_config_schema.py:310` (`test_hf_split_val_default_with_val_split_validates`) | builds `hf={"name": …}` (relying on default `split_val="validation"`) + `val_split`, expects VALIDATE | still valid under `None` default (None + val_split passes the retargeted validator); keep the test, update its comment from `# default split_val="validation"` to `# default split_val=None` |
+| `tests/unit/test_config_schema.py:296` (`test_hf_split_val_custom_with_val_split_rejected`) | `split_val="custom_val"` + `val_split`, expects rejection | unchanged — `"custom_val"` is not None, still rejected |
+
+No source consumer outside the schema validator and the HF builder reads `split_val`. The init template comment string (`init_cmd.py:70`) and the wizard's COCO-branch comment scaffold are literal documentation text, not gating — they keep showing `split_val: validation` as an illustrative example in the commented HF-alternative block.
+
+### 12.8 Wizard render fix (`cli/setup_wizard.py`)
+
+`render`'s `_dataset_block` HF branch must (a) stop emitting the spurious COCO `train:` block under `data:`, and (b) render `split_val: <name>` under `hf:` when the answers carry it. `_ask_validation` is unchanged (its HF-explicit return `{"data": {"hf": {"split_val": split}}}` is already correct). The validation step keeps offering all three modes for HF.
+
+Exact rendered shapes (2-space indent under `data:`):
+
+- **HF + explicit** (`data.hf.split_val` set, no `val`, no `val_split`): `_dataset_block` emits `format: hf`, `hf:` with `name:` AND `split_val: <name>`; `_validation_block` must NOT render a contradictory active "no-val" line. Since HF-explicit sets neither `data.val` nor `data.val_split`, `_validation_block`'s current dispatch would fall to the `noval_active` branch and emit `# no-val mode: …` as the ACTIVE line — wrong. Fix `_validation_block` to detect HF-explicit (format == "hf" and `hf.split_val` present) and render an active note pointing at `split_val` instead, e.g. `# validation: HF split 'data.hf.split_val' (set above) is used as the val set.` The split name lives in the dataset block; the validation block just must not claim no-val.
+- **HF + auto-split** (`data.val_split` set): `_dataset_block` emits `format: hf` + `hf: name:` (no `split_val`); `_validation_block` renders the active `val_split:` block. Unchanged behavior.
+- **HF + none** (neither set): `_dataset_block` emits `format: hf` + `hf: name:` (no `split_val`); `_validation_block` renders the active no-val note. Unchanged behavior.
+
+The commented HF-alternative scaffold in the COCO `_dataset_block` branch may keep showing `# split_val: validation` as illustrative example text.
+
+### 12.9 Tests (CPU only)
+
+All new coverage is CPU-testable at the config / dataclass / resolver level — **do not load a real HF dataset.** Test the mode decision and gate logic, not data loading.
+
+- **Schema default** (`tests/unit/test_data_schema_extensions.py`): update line 85 to `assert cfg.split_val is None`.
+- **Schema validator** (`tests/unit/test_config_schema.py`): keep the two existing `val_split` + `split_val` tests (comment tweak per §12.7); add a test that HF + `split_val` set + NO `val_split`/`val` validates cleanly.
+- **`resolve_val_source`** (`tests/unit/` — new or in the val-source test module): HF config with `hf.split_val="myval"`, no `val`/`val_split` → `resolve_val_source(cfg).mode == "explicit"` and `train_ids is None and val_ids is None`; HF config with `split_val=None` → `mode == "none"`.
+- **`eval/runner` gate** (`tests/unit/`): HF + `split_val` set + `--split val` no longer raises the "requires data.val or data.val_split" `ValueError` (assert the gate passes — exercise just the gate, monkeypatching/short-circuiting the build+load so no model or dataset is loaded); HF + `split_val=None` + `--split val` still raises.
+- **Wizard `render`** (`tests/unit/cli/test_setup_wizard.py`): HF + explicit answers (`{"data": {"format": "hf", "hf": {"name": "org/ds", "split_val": "myval"}}, …}`) → rendered output contains `split_val: myval`, contains no active no-val line, and **re-loads via `load_config` with `cfg.data.hf.split_val == "myval"`** (and, by §12.4, would resolve to explicit mode); add/keep an HF-none render test asserting no `split_val:` line is emitted.
+
+### 12.10 Docs (`docs/config-schema.md`)
+
+Update the `data.hf.split_val` row: default `null` (was `"validation"`), and describe the explicit-HF-val behavior — "HF split name used as the validation set; when set (and `data.val_split` is unset), validation runs against this split (mode='explicit'). Null → no HF-driven validation."
+
+### 12.11 Risks / edge-cases for the implementer
+
+- **`val_split` vs `split_val` mutual exclusivity** is enforced by the retargeted `_check_hf_split_val_compat` (`split_val is not None` while `val_split` set → reject). This is the load-bearing rule; the resolver's branch-2-before-branch-4 ordering relies on it so the two never both fire. Verify the validator retarget keeps `test_hf_split_val_custom_with_val_split_rejected` green and `test_hf_split_val_default_with_val_split_validates` green.
+- **`model_dump()` carries `split_val: None`** into `data_cfg_dict` for HF none/auto-split runs. Confirm the HF builder never indexes `hf_cfg["split_val"]` on those paths (it does not: none → eval dataset not built; auto-split → `_resolved_image_ids` set → `split_train` branch).
+- **`_minimal_dict()` HF fixtures** in `test_config_schema.py` that omit `split_val` now get `None` instead of `"validation"`; confirm none assert the old default.

@@ -2264,6 +2264,499 @@ git commit -m "chore: lint/format/type fixups for wizard + GC removal"
 
 ---
 
+## Phase 9 — Amendment: HF explicit-validation wiring (post-review, spec §12)
+
+> **Why this exists:** Checkpoint-B review found that the wizard's HF + "explicit" validation
+> mode is a no-op end-to-end — `resolve_val_source` ignores `hf.split_val`, `eval/runner`
+> rejects it, and the wizard `render` drops it. Resolution: wire `hf.split_val` for real
+> (spec §12). Sequence: schema (opt-in signal + validator retarget) → resolver + eval gate
+> (the runtime wiring) → wizard render → docs. Tasks 19→20→21 are serialized (19 establishes
+> the `None` opt-in the rest depend on); Task 22 (docs) is independent. All CPU-testable — no
+> real HF dataset is loaded; tests assert the mode decision and gate logic only.
+
+### Task 19: Schema — `split_val` Optional opt-in + validator retarget
+
+**Files:**
+
+- Modify: `src/custom_sam_peft/config/schema.py` (`HFDatasetConfig.split_val` ~line 322; `_check_hf_split_val_compat` ~lines 470-482)
+- Test: `tests/unit/test_data_schema_extensions.py`, `tests/unit/test_config_schema.py`
+
+- [ ] **Step 1: Update the failing tests for the `None` default + new opt-in semantics**
+
+In `tests/unit/test_data_schema_extensions.py`, change the default assertion (line ~85):
+
+```python
+def test_hf_dataset_config_defaults() -> None:
+    cfg = HFDatasetConfig(name="my-org/my-ds")
+    assert cfg.name == "my-org/my-ds"
+    assert cfg.split_train == "train"
+    assert cfg.split_val is None
+    assert cfg.field_map.bbox == "objects.bbox"
+```
+
+In `tests/unit/test_config_schema.py`, update the comment in `test_hf_split_val_default_with_val_split_validates` (line ~313) and add a new test that HF + `split_val` set (no `val`/`val_split`) validates:
+
+```python
+def test_hf_split_val_default_with_val_split_validates() -> None:
+    d = _minimal_dict()
+    d["data"]["format"] = "hf"  # type: ignore[index]
+    d["data"]["hf"] = {"name": "tiny/dataset"}  # default split_val=None
+    d["data"]["val"] = None  # type: ignore[index]
+    d["data"]["val_split"] = {"fraction": 0.1, "seed": 7}  # type: ignore[index]
+    cfg = TrainConfig.model_validate(d)
+    assert cfg.data.val_split is not None
+    assert cfg.data.val_split.fraction == 0.1
+    assert cfg.data.val_split.seed == 7
+
+
+def test_hf_split_val_set_without_val_split_validates() -> None:
+    """spec §12.3: HF + named split_val (no val/val_split) is the explicit opt-in."""
+    d = _minimal_dict()
+    d["data"]["format"] = "hf"  # type: ignore[index]
+    d["data"]["hf"] = {"name": "tiny/dataset", "split_val": "myval"}  # type: ignore[index]
+    d["data"]["val"] = None  # type: ignore[index]
+    cfg = TrainConfig.model_validate(d)
+    assert cfg.data.val_split is None
+    assert cfg.data.hf is not None
+    assert cfg.data.hf.split_val == "myval"
+```
+
+(`test_hf_split_val_custom_with_val_split_rejected` is unchanged — `"custom_val"` is not None, still rejected.)
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/unit/test_data_schema_extensions.py::test_hf_dataset_config_defaults tests/unit/test_config_schema.py -k "split_val or neither_val" -v`
+Expected: FAIL — `split_val` still defaults to `"validation"` so `assert cfg.split_val is None` fails; the new opt-in test passes already (default is harmless), but the default-value test is red.
+
+- [ ] **Step 3: Make `split_val` Optional and retarget the validator**
+
+In `src/custom_sam_peft/config/schema.py`, change the `HFDatasetConfig.split_val` field (line ~322):
+
+```python
+class HFDatasetConfig(_Strict):
+    """HuggingFace dataset specification (used when DataConfig.format == 'hf')."""
+
+    name: str = Field(min_length=1)
+    split_train: str = "train"
+    split_val: str | None = None
+    field_map: HFFieldMap = Field(default_factory=HFFieldMap)
+```
+
+Retarget `_check_hf_split_val_compat` (lines ~470-482) from the `"validation"` sentinel to the `None` sentinel:
+
+```python
+    @model_validator(mode="after")
+    def _check_hf_split_val_compat(self) -> DataConfig:
+        if (
+            self.format == "hf"
+            and self.val_split is not None
+            and self.hf is not None
+            and self.hf.split_val is not None
+        ):
+            raise ValueError(
+                "data.hf.split_val cannot be customized when data.val_split is set; "
+                "auto-split carves the val set from data.hf.split_train. "
+                "Remove split_val or remove val_split."
+            )
+        return self
+```
+
+(`_check_val_modes` is unchanged. No guard is added for `val` + `hf.split_val` — they are format-disjoint, per spec §12.3.)
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/unit/test_data_schema_extensions.py tests/unit/test_config_schema.py -v`
+Expected: PASS — default is `None`; HF + `split_val` (no val_split) validates; HF + `split_val` + `val_split` still rejected; HF default + `val_split` still validates.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/custom_sam_peft/config/schema.py tests/unit/test_data_schema_extensions.py tests/unit/test_config_schema.py
+git commit -m "feat(schema)!: make hf.split_val Optional as explicit-val opt-in (spec §12)"
+```
+
+### Task 20: Resolver + eval gate — honor `hf.split_val` (mode='explicit')
+
+**Files:**
+
+- Modify: `src/custom_sam_peft/data/val_source.py` (`resolve_val_source` ~lines 41-92; optional `_log_val_source` ~line 149)
+- Modify: `src/custom_sam_peft/eval/runner.py` (the `--split val` gate ~line 104)
+- Test: `tests/unit/test_val_source.py` (existing val-source unit tests; add cases), `tests/unit/test_eval_runner_gate.py` (new, gate-only)
+
+- [ ] **Step 1: Write the failing resolver + gate tests**
+
+Add to `tests/unit/test_val_source.py` (find the module that imports `resolve_val_source`; if it does not exist, create `tests/unit/test_val_source.py` with the import). Use a minimal valid HF `TrainConfig` built via `TrainConfig.model_validate` so no dataset is loaded:
+
+```python
+from custom_sam_peft.data.val_source import resolve_val_source
+
+
+def _hf_cfg(split_val: str | None) -> "TrainConfig":
+    from custom_sam_peft.config.schema import TrainConfig
+
+    hf: dict[str, object] = {"name": "tiny/ds"}
+    if split_val is not None:
+        hf["split_val"] = split_val
+    return TrainConfig.model_validate(
+        {
+            "run": {"name": "r"},
+            "model": {},
+            "data": {
+                "format": "hf",
+                "train": {"annotations": "unused", "images": "unused"},
+                "val": None,
+                "prompt_mode": "text",
+                "hf": hf,
+            },
+            "peft": {"method": "lora"},
+            "train": {"epochs": 1},
+        }
+    )
+
+
+def test_resolve_hf_split_val_is_explicit() -> None:
+    vs = resolve_val_source(_hf_cfg("myval"), run_dir=None)
+    assert vs.mode == "explicit"
+    assert vs.train_ids is None
+    assert vs.val_ids is None
+
+
+def test_resolve_hf_no_split_val_is_none() -> None:
+    vs = resolve_val_source(_hf_cfg(None), run_dir=None)
+    assert vs.mode == "none"
+```
+
+Create `tests/unit/test_eval_runner_gate.py` to exercise ONLY the gate (short-circuit the build/load so nothing real is loaded):
+
+```python
+"""The eval-runner --split val gate accepts HF + hf.split_val (spec §12.5)."""
+
+from __future__ import annotations
+
+import pytest
+
+from custom_sam_peft.config.schema import TrainConfig
+
+
+def _hf_cfg(split_val: str | None) -> TrainConfig:
+    hf: dict[str, object] = {"name": "tiny/ds"}
+    if split_val is not None:
+        hf["split_val"] = split_val
+    return TrainConfig.model_validate(
+        {
+            "run": {"name": "r"},
+            "model": {},
+            "data": {
+                "format": "hf",
+                "train": {"annotations": "unused", "images": "unused"},
+                "val": None,
+                "prompt_mode": "text",
+                "hf": hf,
+            },
+            "peft": {"method": "lora"},
+            "train": {"epochs": 1},
+        }
+    )
+
+
+def _gate_only(cfg: TrainConfig, split: str) -> None:
+    """Replicate eval/runner's --split val gate in isolation (no model/data load)."""
+    _hf_val = cfg.data.format == "hf" and cfg.data.hf is not None and cfg.data.hf.split_val is not None
+    if split == "val" and cfg.data.val is None and cfg.data.val_split is None and not _hf_val:
+        raise ValueError(
+            "--split val requires data.val, data.val_split, or data.hf.split_val in config; got none."
+        )
+
+
+def test_gate_accepts_hf_split_val() -> None:
+    _gate_only(_hf_cfg("myval"), "val")  # must not raise
+
+
+def test_gate_rejects_hf_without_split_val() -> None:
+    with pytest.raises(ValueError, match="data.hf.split_val"):
+        _gate_only(_hf_cfg(None), "val")
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/unit/test_val_source.py -k "hf_split_val or hf_no_split" tests/unit/test_eval_runner_gate.py -v`
+Expected: FAIL — `resolve_val_source` returns `mode='none'` for HF + split_val (no HF branch yet); the gate test file's `_gate_only` mirrors the NEW condition, so its tests pass only once the runner matches; the resolver tests fail.
+
+- [ ] **Step 3: Add the HF-explicit branch to `resolve_val_source`**
+
+In `src/custom_sam_peft/data/val_source.py`, insert the new branch between the COCO `val` branch and the final `none` return (after line ~81):
+
+```python
+    if cfg.data.val is not None:
+        return ValSource(
+            mode="explicit",
+            train_ids=None,
+            val_ids=None,
+            realized_fraction=None,
+            per_class_counts=None,
+            missing_in_val=None,
+            fraction_requested=None,
+            seed_used=None,
+        )
+
+    if (
+        cfg.data.format == "hf"
+        and cfg.data.hf is not None
+        and cfg.data.hf.split_val is not None
+    ):
+        return ValSource(
+            mode="explicit",
+            train_ids=None,
+            val_ids=None,
+            realized_fraction=None,
+            per_class_counts=None,
+            missing_in_val=None,
+            fraction_requested=None,
+            seed_used=None,
+        )
+
+    return ValSource(
+        mode="none",
+        ...
+    )
+```
+
+Update the dispatch docstring (lines ~44-48) to add the HF-explicit step:
+
+```python
+    """Resolve which validation source to use for this run.
+
+    Dispatch (spec §5.2 + §12.4):
+      1. run_dir/val_source.json exists → load_val_source(run_dir) (resume).
+      2. cfg.data.val_split is not None → enumerate + stratify (auto_split).
+      3. cfg.data.val is not None → mode='explicit' (COCO).
+      4. cfg.data.format=='hf' and cfg.data.hf.split_val is not None → mode='explicit' (HF).
+      5. else → mode='none'.
+    """
+```
+
+Optionally broaden the `_log_val_source` explicit line (line ~150) to `"val source: explicit (cfg.data.val or data.hf.split_val)"` (cosmetic, log-only).
+
+- [ ] **Step 4: Relax the `eval/runner.py` gate**
+
+In `src/custom_sam_peft/eval/runner.py`, replace the gate at ~line 104:
+
+```python
+    _hf_val = (
+        cfg.data.format == "hf" and cfg.data.hf is not None and cfg.data.hf.split_val is not None
+    )
+    if split == "val" and cfg.data.val is None and cfg.data.val_split is None and not _hf_val:
+        raise ValueError(
+            "--split val requires data.val, data.val_split, or data.hf.split_val in config; "
+            "got none."
+        )
+```
+
+(The `val_dataset is None` build path below is unchanged: HF-explicit has no `_resolved_image_ids` and no `val`, so the HF builder's `else` branch reads `split_val` for `pipeline="eval"`. `data/hf.py` and `train/runner.py` need no edits — spec §12.6.)
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/unit/test_val_source.py tests/unit/test_eval_runner_gate.py -v`
+Expected: PASS — HF + split_val resolves to `explicit` with `train_ids/val_ids` None; HF without split_val resolves to `none`; gate accepts HF + split_val, rejects HF without it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/custom_sam_peft/data/val_source.py src/custom_sam_peft/eval/runner.py tests/unit/test_val_source.py tests/unit/test_eval_runner_gate.py
+git commit -m "feat(val): resolve+eval honor hf.split_val as explicit validation (spec §12)"
+```
+
+### Task 21: Wizard render — emit `split_val:` for HF-explicit; no contradictory no-val line
+
+**Files:**
+
+- Modify: `src/custom_sam_peft/cli/setup_wizard.py` (`_dataset_block` ~lines 144-173; `_validation_block` ~lines 176-203)
+- Test: `tests/unit/cli/test_setup_wizard.py`
+
+- [ ] **Step 1: Write failing render tests**
+
+Add to `tests/unit/cli/test_setup_wizard.py`:
+
+```python
+def test_render_hf_explicit_emits_split_val(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "hf",
+            "hf": {"name": "org/ds", "split_val": "myval"},
+            "augmentations": {"preset": "natural", "intensity": "medium"},
+        },
+        "peft": {"method": "lora"},
+        "train": {"epochs": 2, "loss": {"preset": "natural", "class_imbalance": "balanced"}},
+    }
+    rendered = sw.render(answers, run_mode="train")
+    assert "split_val: myval" in rendered
+    # No spurious COCO train: block, and no active no-val claim:
+    assert "  # no-val mode:" not in rendered  # the active no-val line must not appear
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.data.format == "hf"
+    assert cfg.data.hf is not None
+    assert cfg.data.hf.split_val == "myval"
+
+
+def test_render_hf_none_emits_no_split_val(tmp_path) -> None:
+    answers = {
+        "run": {"name": "r"},
+        "data": {
+            "format": "hf",
+            "hf": {"name": "org/ds"},
+            "augmentations": {"preset": "natural", "intensity": "medium"},
+        },
+        "peft": {"method": "lora"},
+        "train": {"epochs": 1, "loss": {"preset": "natural", "class_imbalance": "balanced"}},
+    }
+    rendered = sw.render(answers, run_mode="train")
+    assert "split_val:" not in rendered.replace("#   split_val", "")  # no ACTIVE split_val line
+    out = tmp_path / "c.yaml"
+    out.write_text(rendered)
+    cfg = load_config(out)
+    assert cfg.data.hf is not None
+    assert cfg.data.hf.split_val is None
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/unit/cli/test_setup_wizard.py -k "hf_explicit_emits or hf_none_emits" -v`
+Expected: FAIL — current `_dataset_block` HF branch drops `split_val` (no `split_val: myval`) and emits a spurious `train:` block; `_validation_block` emits an active no-val line for HF-explicit.
+
+- [ ] **Step 3: Fix `_dataset_block` (drop spurious COCO train; render split_val)**
+
+In `src/custom_sam_peft/cli/setup_wizard.py`, rewrite the HF branch of `_dataset_block`:
+
+```python
+def _dataset_block(answers: dict[str, Any]) -> str:
+    data = answers.get("data", {})
+    if data.get("format") == "hf":
+        hf = data.get("hf", {})
+        name = hf["name"]
+        lines = [
+            "  format: hf",
+            "  hf:",
+            f"    name: {name}",
+            "    split_train: train",
+        ]
+        if hf.get("split_val") is not None:
+            lines.append(f"    split_val: {hf['split_val']}")
+        lines += [
+            "  # COCO alternative — set format: coco and uncomment:",
+            "  # train:",
+            "  #   annotations: data/train.json",
+            "  #   images: data/train/",
+        ]
+        return "\n".join(lines)
+    train = data.get("train", {})
+    ann = train.get("annotations", "data/train.json")
+    imgs = train.get("images", "data/train/")
+    return (
+        "  format: coco\n"
+        "  train:\n"
+        f"    annotations: {ann}\n"
+        f"    images: {imgs}\n"
+        "  # HuggingFace alternative — set format: hf and uncomment:\n"
+        "  # hf:\n"
+        "  #   name: org/dataset\n"
+        "  #   split_train: train\n"
+        "  #   split_val: validation"
+    )
+```
+
+- [ ] **Step 4: Fix `_validation_block` (HF-explicit must not claim no-val)**
+
+In `_validation_block`, detect HF-explicit (format == "hf" with `hf.split_val` set) and render an active note that points at the dataset block's `split_val`, instead of the no-val line:
+
+```python
+def _validation_block(answers: dict[str, Any]) -> str:
+    data = answers.get("data", {})
+    hf = data.get("hf", {})
+    hf_explicit = data.get("format") == "hf" and hf.get("split_val") is not None
+    explicit_active = auto_active = noval_active = False
+    if data.get("val") is not None:
+        explicit_active = True
+        v = data["val"]
+        active = f"  val:\n    annotations: {v['annotations']}\n    images: {v['images']}"
+    elif data.get("val_split") is not None:
+        auto_active = True
+        active = f"  val_split:\n    fraction: {data['val_split']['fraction']}\n    seed: null"
+    elif hf_explicit:
+        # Validation comes from data.hf.split_val (rendered in the dataset block).
+        active = "  # validation: HF split set via data.hf.split_val above is used as the val set."
+    else:
+        noval_active = True
+        active = "  # no-val mode: neither val: nor val_split: is set."
+    alts = []
+    if not explicit_active:
+        alts.append(
+            "  # Explicit-val alternative (COCO):\n"
+            "  # val:\n"
+            "  #   annotations: data/val.json\n"
+            "  #   images: data/val/"
+        )
+    if not auto_active:
+        alts.append(
+            "  # Auto-split alternative:\n  # val_split:\n  #   fraction: 0.1\n  #   seed: null"
+        )
+    if not noval_active:
+        alts.append("  # No-val alternative: omit val:, val_split:, and hf.split_val.")
+    return "\n".join([active, *alts])
+```
+
+(The COCO-branch comment scaffold may keep the illustrative `# split_val: validation` in its commented HF-alternative — it is documentation text, not gating.)
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `uv run pytest tests/unit/cli/test_setup_wizard.py -k "hf_explicit_emits or hf_none_emits or render" -v`
+Expected: PASS — HF-explicit renders `split_val: myval`, no active no-val line, reloads with `cfg.data.hf.split_val == "myval"`; HF-none emits no active `split_val:` and reloads with `split_val is None`; existing render tests still green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/custom_sam_peft/cli/setup_wizard.py tests/unit/cli/test_setup_wizard.py
+git commit -m "fix(wizard): render hf.split_val for HF explicit validation (spec §12)"
+```
+
+### Task 22: Docs — update the `data.hf.split_val` schema row
+
+**Files:**
+
+- Modify: `docs/config-schema.md` (the `data.hf.split_val` row ~line 82)
+
+- [ ] **Step 1: Update the row**
+
+Change the `data.hf.split_val` row to reflect the `null` default and explicit-HF-val behavior:
+
+```markdown
+| `data.hf.split_val` | str \| null | `null` | advanced | HF split name used as the validation set. When set (and `data.val_split` is unset), validation runs against this split (mode='explicit'). Null → no HF-driven validation. | Audit §E: explicit HF val opt-in (spec §12). |
+```
+
+- [ ] **Step 2: Markdown-lint the touched doc**
+
+Run: `npx --yes markdownlint-cli2 --config .config/markdownlint-cli2.jsonc docs/config-schema.md`
+Expected: no findings (fix any before committing).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/config-schema.md
+git commit -m "docs: hf.split_val default null + explicit-HF-val behavior (spec §12)"
+```
+
+### REVIEW CHECKPOINT C — amendment complete
+
+- [ ] Run: `uv run pytest tests/unit/test_data_schema_extensions.py tests/unit/test_config_schema.py tests/unit/test_val_source.py tests/unit/test_eval_runner_gate.py tests/unit/cli/test_setup_wizard.py -q`
+      Expected: all PASS.
+- [ ] Run the FULL suite for the coverage gate: `uv run pytest` → all PASS, `--cov-fail-under=80` satisfied.
+- [ ] Run: `uv run ruff check && uv run ruff format --check && uv run mypy src/custom_sam_peft` → clean.
+- [ ] Dispatch a code-review subagent (min sonnet/high) over the §12 diff: confirm (a) `split_val is not None` is the single opt-in signal across schema/resolver/eval-gate, (b) the resolver's branch ordering (val_split before hf.split_val) plus the retargeted validator guarantees the two never both fire, (c) the HF builder reads `split_val` only when not None, (d) the wizard render emits `split_val:` for HF-explicit and never an active no-val line, (e) no consumer still relies on the `"validation"` default.
+
+---
+
 ## Self-review (against the spec, after writing the plan)
 
 - **§1 in-scope files — all represented:** `setup_wizard.py` (Tasks 10–15), `config_full.yaml` (Task 7), legacy templates deleted (Task 9), `init_cmd.py` (Tasks 8, 16), `schema.py` (Task 1), `presets.py` (Task 2), `models/sam3.py` (Task 3), `train/loop.py` (Task 4), `train/types.py` (Task 4), `runs/bundle.py` (Task 5), `docs/config-schema.md` (Task 6). **Plus** `configs/examples/*.yaml` (Task 6) — not in the spec's §1 table but a required consequence of the schema break (else `test_config_examples.py` fails to load all 7 examples). Flagged explicitly as a breaking-change consequence, handled to keep the repo's own configs loadable.
