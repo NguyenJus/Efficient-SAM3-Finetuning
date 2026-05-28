@@ -136,7 +136,7 @@ def predict(
         top_k=top_k,
         save_masks=cast(Literal["rle", "png", "none"], save_masks),
         visualize=visualize,
-        device=cast(Literal["auto", "cuda", "cpu"], device),
+        device=cast(Literal["auto", "cuda"], device),
         dtype=cast(Literal["auto", "bfloat16", "float32"], dtype),
         batch_size=cast("int | Literal['auto']", batch_size),
         seed=seed,
