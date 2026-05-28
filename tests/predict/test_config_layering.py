@@ -198,8 +198,14 @@ def test_adapter_pin_no_conflict_no_warn(tmp_path: Path, caplog: pytest.LogCaptu
 
 
 def test_image_size_always_1008_with_config(tmp_path: Path) -> None:
-    """image_size is always SAM3_IMAGE_SIZE=1008; data.image_size in config is silently ignored."""
-    cfg_path = _make_config_yaml(tmp_path, _BUILTIN_DEFAULT)
+    """data.image_size in a predict YAML is silently ignored; image_size is always 1008."""
+    # Write a YAML that explicitly sets data.image_size to a non-default value so we
+    # actually exercise the "key present but ignored" code path.
+    cfg_path = tmp_path / "predict_cfg.yaml"
+    cfg_path.write_text(
+        f"model:\n  name: {_BUILTIN_DEFAULT!r}\ndata:\n  image_size: 512\n",
+        encoding="utf-8",
+    )
     opts = _make_opts(tmp_path, config=cfg_path)
     resolved = _resolve_config(opts)
 

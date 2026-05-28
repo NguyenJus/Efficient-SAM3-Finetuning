@@ -240,6 +240,16 @@ def test_preset_decision_to_json_round_trip() -> None:
     assert d == d2
 
 
+def test_from_json_drops_stale_image_size_key() -> None:
+    """from_json silently drops unknown keys (e.g. image_size from pre-removal sidecars)."""
+    d = _make_decision()
+    raw = json.loads(d.to_json())
+    raw["image_size"] = 1008  # simulate a sidecar written before image_size was removed
+    stale_json = json.dumps(raw)
+    d2 = PresetDecision.from_json(stale_json)
+    assert d == d2
+
+
 def test_preset_decision_config_patch_3_sections() -> None:
     patch = _make_decision().config_patch
     assert set(patch.keys()) == {"model", "peft", "train"}

@@ -100,6 +100,14 @@ def test_unknown_top_level_key_rejected() -> None:
         TrainConfig.model_validate(d)
 
 
+def test_data_image_size_key_rejected() -> None:
+    """data.image_size must be rejected — removed field; guard against silent re-introduction."""
+    d = _minimal_dict()
+    d["data"]["image_size"] = 1008  # type: ignore[index]
+    with pytest.raises(ValidationError):
+        TrainConfig.model_validate(d)
+
+
 def test_qlora_subconfig_defaults() -> None:
     d = _minimal_dict()
     d["peft"]["method"] = "qlora"  # type: ignore[index]

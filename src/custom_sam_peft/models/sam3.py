@@ -384,8 +384,8 @@ class _Sam3ImageAdapter(nn.Module):
     every entry is ``None`` (or the kwarg itself is ``None``), the builder
     returns ``None`` and we substitute Meta's zero-length-seq dummy.
 
-    ``image_size`` must match the wrapper's image_size; ``load_sam31`` plumbs
-    it through the constructor.
+    ``image_size`` is fixed to ``SAM3_IMAGE_SIZE``; SAM 3.1 always rescales
+    inputs internally and does not expose a configurable resolution.
     """
 
     def __init__(

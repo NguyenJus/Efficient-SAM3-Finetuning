@@ -8,6 +8,7 @@ Spec: docs/superpowers/specs/2026-05-22-algo-vram-preset-design.md.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -124,6 +125,9 @@ class PresetDecision:
         d = json.loads(s)
         d["cache_path"] = None if d["cache_path"] is None else Path(d["cache_path"])
         # calibrated_at is str | None — pass through as-is
+        # Drop fields that may exist in old sidecars but no longer in the dataclass.
+        known = {f.name for f in dataclasses.fields(cls)}
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)
 
 
