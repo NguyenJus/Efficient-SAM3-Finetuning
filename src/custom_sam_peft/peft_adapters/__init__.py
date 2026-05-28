@@ -161,6 +161,20 @@ def method_pretty_name(method: str) -> str:
     raise ValueError(f"Unknown peft.method {method!r}; expected 'lora' or 'qlora'.")
 
 
+def discover_method_from_checkpoint(adapter_dir: Path) -> str:
+    """Discover the PEFT method of an unknown checkpoint dir from the sentinel file.
+
+    Convention: custom_sam_peft_qlora.json present → 'qlora', else 'lora'.
+    This is DISCOVERY (no prior expectation). Contrast detect_method_from_checkpoint
+    (an INSTANCE method on LoraAdapter/QloraAdapter) which VERIFIES a *known* method
+    and raises CheckpointError on contradiction.
+
+    Returns 'lora' or 'qlora'. Does not validate adapter_config.json presence —
+    callers that need that check do it separately (e.g. predict's detect_adapter_kind).
+    """
+    return "qlora" if (adapter_dir / _QLORA_META_FILENAME).is_file() else "lora"
+
+
 def make_peft_method(method: str) -> PEFTMethod:
     """Return the PEFTMethod instance for the given peft.method string.
 

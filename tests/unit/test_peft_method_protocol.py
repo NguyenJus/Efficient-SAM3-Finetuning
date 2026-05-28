@@ -234,3 +234,26 @@ def test_eval_runner_does_not_branch_on_method_name() -> None:
         "eval/runner.py must not branch on cfg.peft.method; "
         "use peft_method_instance.load_from_disk() instead."
     )
+
+
+def test_discover_method_lora(tmp_path: Path) -> None:
+    from custom_sam_peft.peft_adapters import discover_method_from_checkpoint
+
+    (tmp_path / "adapter_config.json").write_text("{}")
+    assert discover_method_from_checkpoint(tmp_path) == "lora"
+
+
+def test_discover_method_qlora(tmp_path: Path) -> None:
+    from custom_sam_peft.peft_adapters import discover_method_from_checkpoint
+
+    (tmp_path / "custom_sam_peft_qlora.json").write_text("{}")
+    assert discover_method_from_checkpoint(tmp_path) == "qlora"
+
+
+def test_discover_does_not_validate_adapter_config(tmp_path: Path) -> None:
+    """Discovery only checks the qlora sentinel; it does NOT require adapter_config.json."""
+    from custom_sam_peft.peft_adapters import discover_method_from_checkpoint
+
+    (tmp_path / "custom_sam_peft_qlora.json").write_text("{}")
+    # no adapter_config.json present
+    assert discover_method_from_checkpoint(tmp_path) == "qlora"
