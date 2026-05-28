@@ -60,7 +60,7 @@ def evaluate(
     try:
         with progress_session(
             kind=ProgressKind.EVAL,
-            total_batches_per_epoch=0,  # Evaluator updates via P.advance_inner
+            total_batches_per_epoch=0,  # Evaluator owns its progress via push_subtask
             mode=mode,
             # total_epochs intentionally omitted — no outer epoch bar for eval (planner decision)
         ):
