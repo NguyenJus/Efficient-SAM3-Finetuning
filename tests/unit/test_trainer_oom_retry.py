@@ -156,6 +156,17 @@ def test_oom_gradient_magnitude_preserved_across_ladder() -> None:
     )
 
 
+def test_oom_event_supports_multiplex_halved_action() -> None:
+    ev = OomEvent(step=5, action="multiplex_halved", new_micro_batch_size=1, effective_K=8)
+    assert ev.action == "multiplex_halved"
+    assert ev.effective_K == 8
+
+
+def test_oom_event_microbatch_action_defaults_effective_k_none() -> None:
+    ev = OomEvent(step=1, action="microbatch_halved", new_micro_batch_size=4)
+    assert ev.effective_K is None
+
+
 def test_oom_events_serialise_into_bundle_edge_cases() -> None:
     """An end-to-end sanity check that events flowed into the bundler renders.
 
