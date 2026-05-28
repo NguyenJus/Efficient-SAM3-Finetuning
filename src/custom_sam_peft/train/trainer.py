@@ -121,6 +121,37 @@ def _maybe_use_file_system_sharing(num_workers: int) -> str | None:
     return "file_system"
 
 
+def resolve_schedule_steps(
+    *,
+    save_every: int | None,
+    eval_every: int | None,
+    decay_steps: int | None,
+    epochs: int,
+    steps_per_epoch: int,
+) -> tuple[int, int, int]:
+    """Resolve None schedule fields to epoch-relative defaults.
+
+    Called once ``steps_per_epoch = max(len(train_loader), 1)`` is known.
+    Explicit (non-None) values are passed through unchanged for full
+    backward compatibility.
+
+    Resolution rules:
+    - ``save_every``  → ``steps_per_epoch``
+    - ``eval_every``  → ``steps_per_epoch``
+    - ``decay_steps`` → ``max(1, round(0.75 * epochs * steps_per_epoch))``
+      (box-hint decays over first 75% of the run; final 25% trains at p=0)
+
+    Returns:
+        (save_every, eval_every, decay_steps) as resolved positive ints.
+    """
+    resolved_save = save_every if save_every is not None else steps_per_epoch
+    resolved_eval = eval_every if eval_every is not None else steps_per_epoch
+    resolved_decay = (
+        decay_steps if decay_steps is not None else max(1, round(0.75 * epochs * steps_per_epoch))
+    )
+    return resolved_save, resolved_eval, resolved_decay
+
+
 class Trainer:
     def __init__(
         self,
@@ -150,6 +181,9 @@ class Trainer:
                 "training without validation set; eval_every is a no-op, "
                 "end-of-run eval and bundle samples are skipped."
             )
+        # Best-model tracking state.
+        self._best_metric_value: float = float("-inf")
+        self._best_metric_key: str = "mAP"
         # Runtime injection (§2 seam discipline). If none provided, synthesize
         # one from cfg. Callers that pass runtime= get strict device isolation;
         # callers that don't pass it get a sensible default inferred from model
@@ -180,7 +214,11 @@ class Trainer:
     # ------------------------------------------------------------------
 
     def _setup_run_dir(self, run_dir: Path | None) -> Path:
-        """Create and initialise the run directory, write config snapshot."""
+        """Create and initialise the run directory.
+
+        config.yaml is written later in ``fit()``, after the epoch-relative
+        schedule fields are resolved against the dataloader length.
+        """
         cfg = self.cfg
         if run_dir is None:
             from datetime import UTC, datetime
@@ -189,7 +227,6 @@ class Trainer:
             run_dir = Path(cfg.run.output_dir) / f"{cfg.run.name}-{stamp}"
 
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-        (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
         from custom_sam_peft.data.aug_presets import dump_augmentation_pipeline
 
         (run_dir / "augmentation_pipeline.json").write_text(
@@ -256,7 +293,7 @@ class Trainer:
             return min(bs, cap)
         return bs
 
-    def _eval_epoch(self, step: int, oom_state: OomState | None = None) -> None:
+    def _eval_epoch(self, step: int, run_dir: Path, oom_state: OomState | None = None) -> None:
         """Run a periodic lite evaluation and log scalars to the tracker."""
         if self.val_ds is None:
             return
@@ -272,8 +309,13 @@ class Trainer:
                     bs = self._cap_eval_batch_size(bs, oom_state.micro_batch_size)
                 update["batch_size"] = bs
             lite_cfg = cfg.eval.model_copy(update=update)
+            # Return training's freed-but-reserved activation pool to the CUDA
+            # driver so the eval forward can allocate a contiguous block (#176).
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             report = Evaluator(lite_cfg).evaluate(self.model, self.val_ds)
             self.tracker.log_scalars(step, report.overall)
+            self._maybe_save_best(report, step, run_dir)
         except RuntimeError as exc:
             if str(exc).startswith("eval OOM"):
                 _LOG.error(
@@ -286,6 +328,41 @@ class Trainer:
                 _LOG.warning("lite eval failed at step %d; skipping.", step, exc_info=True)
         except Exception:
             _LOG.warning("lite eval failed at step %d; skipping.", step, exc_info=True)
+
+    def _maybe_save_best(self, report: Any, step: int, run_dir: Path) -> None:
+        """Save the adapter to run_dir/best/ when a new best mAP is observed.
+
+        Failures are logged as warnings and swallowed so they never crash training.
+        """
+        try:
+            metric = report.overall.get(self._best_metric_key)
+            if metric is None:
+                return
+            if metric > self._best_metric_value:
+                best_dir = run_dir / "best"
+                adapter_dir = best_dir / "adapter"
+                best_dir.mkdir(parents=True, exist_ok=True)
+                save_adapter(self.model, adapter_dir)
+                (best_dir / "best.json").write_text(
+                    json.dumps(
+                        {
+                            "metric": self._best_metric_key,
+                            "value": metric,
+                            "global_step": step,
+                        },
+                        indent=2,
+                    )
+                )
+                self._best_metric_value = metric
+                _LOG.info(
+                    "new best %s=%.4f at step %d; saved to %s",
+                    self._best_metric_key,
+                    metric,
+                    step,
+                    adapter_dir,
+                )
+        except Exception:
+            _LOG.warning("failed to save best model at step %d; skipping.", step, exc_info=True)
 
     def _maybe_checkpoint(
         self,
@@ -329,18 +406,6 @@ class Trainer:
         _seed_everything(cfg.run.seed)
 
         run_dir = self._setup_run_dir(run_dir)
-        cfg_dict = cfg.model_dump(mode="json")
-        vs_path = run_dir / "val_source.json"
-        if vs_path.exists():
-            saved = json.loads(vs_path.read_text())
-            cfg_dict["val_source"] = {
-                "mode": saved["mode"],
-                "fraction_requested": saved.get("fraction_requested"),
-                "realized_fraction": saved.get("realized_fraction"),
-                "n_train": saved.get("n_train"),
-                "n_val": saved.get("n_val"),
-            }
-        self.tracker.start_run(run_dir, cfg_dict, resume_from)
 
         new_strategy = _maybe_use_file_system_sharing(cfg.train.num_workers)
         if new_strategy is not None:
@@ -363,8 +428,53 @@ class Trainer:
             [] if self.val_ds is None else [self.val_ds[i] for i in range(min(4, len(self.val_ds)))]
         )
 
+        # Resolve epoch-relative schedule defaults now that steps_per_epoch is known.
+        steps_per_epoch = max(len(train_loader), 1)
+        resolved_save, resolved_eval, resolved_decay = resolve_schedule_steps(
+            save_every=cfg.train.save_every,
+            eval_every=cfg.train.eval_every,
+            decay_steps=cfg.train.box_hint.decay_steps,
+            epochs=cfg.train.epochs,
+            steps_per_epoch=steps_per_epoch,
+        )
+        _LOG.info(
+            "schedule resolved: save_every=%d eval_every=%d decay_steps=%d (steps_per_epoch=%d)",
+            resolved_save,
+            resolved_eval,
+            resolved_decay,
+            steps_per_epoch,
+        )
+        resolved_box_hint = cfg.train.box_hint.model_copy(update={"decay_steps": resolved_decay})
+        resolved_train = cfg.train.model_copy(
+            update={
+                "save_every": resolved_save,
+                "eval_every": resolved_eval,
+                "box_hint": resolved_box_hint,
+            }
+        )
+        cfg = cfg.model_copy(update={"train": resolved_train})
+        # Update self.cfg so that _train_epoch (which passes self.cfg to run_epoch)
+        # always sees the resolved integer values — never None.
+        self.cfg = cfg
+
+        # Write config.yaml with resolved values so logs + artifacts reflect what
+        # actually ran (must happen AFTER resolution so None fields are replaced).
+        cfg_dict = cfg.model_dump(mode="json")
+        vs_path = run_dir / "val_source.json"
+        if vs_path.exists():
+            saved = json.loads(vs_path.read_text())
+            cfg_dict["val_source"] = {
+                "mode": saved["mode"],
+                "fraction_requested": saved.get("fraction_requested"),
+                "realized_fraction": saved.get("realized_fraction"),
+                "n_train": saved.get("n_train"),
+                "n_val": saved.get("n_val"),
+            }
+        (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg_dict))
+        self.tracker.start_run(run_dir, cfg_dict, resume_from)
+
         optimizer = self._build_optimizer()
-        total_steps = cfg.train.epochs * max(len(train_loader), 1)
+        total_steps = cfg.train.epochs * steps_per_epoch
         scheduler = _build_scheduler(optimizer, cfg, total_steps)
 
         rs = ResumeState(
@@ -388,7 +498,7 @@ class Trainer:
             )
 
         def on_eval(step: int) -> None:
-            self._eval_epoch(step, oom_state)
+            self._eval_epoch(step, run_dir, oom_state)
 
         merged_path: Path | None = None
         full_report: MetricsReport | None = None

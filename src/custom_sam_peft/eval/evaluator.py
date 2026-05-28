@@ -59,11 +59,14 @@ def _eval_forward_with_oom_ladder(
     No grad-checkpoint rung (eval is under no_grad). On OOM with state["batch_size"]>1,
     halves state["batch_size"], emits at most one _LOG.warning("eval OOM ..."), and
     RAISES (the outer chunking loop re-issues at the smaller size).
-    On OOM at state["batch_size"]==1, raises RuntimeError("eval OOM at batch_size=1; ...").
+    On OOM at state["batch_size"]==1, empty_cache() is called to return training's
+    freed-but-reserved activation pool to the driver, then the forward is retried
+    exactly once.  Only if that retry also raises OutOfMemoryError is a RuntimeError
+    raised (see #176).
     """
     try:
         return cast("dict[str, torch.Tensor]", model(images, prompts, support=None))
-    except torch.cuda.OutOfMemoryError as oom_err:
+    except torch.cuda.OutOfMemoryError:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         if state["batch_size"] > 1:
@@ -72,7 +75,12 @@ def _eval_forward_with_oom_ladder(
                 _LOG.warning("eval OOM — halving batch_size to %d", state["batch_size"])
                 state["warned"] = True
             raise
-        raise RuntimeError("eval OOM at batch_size=1; use a larger GPU.") from oom_err
+        # bs == 1 floor: empty_cache() above returned the (training) reserved
+        # pool to the driver; retry the forward once before giving up (#176).
+        try:
+            return cast("dict[str, torch.Tensor]", model(images, prompts, support=None))
+        except torch.cuda.OutOfMemoryError as retry_err:
+            raise RuntimeError("eval OOM at batch_size=1; use a larger GPU.") from retry_err
 
 
 def _int_image_id(image_id: str) -> int:
