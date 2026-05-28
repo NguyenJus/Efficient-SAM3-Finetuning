@@ -358,9 +358,7 @@ class _ProgressProxy:
         _state.handle.update_postfix(**kwargs)
 
     @contextmanager
-    def push_subtask(
-        self, label: str, total: int
-    ) -> Generator[_NoOpSubTaskHandle | _RichSubTaskHandle | _PlainSubTaskHandle, None, None]:
+    def push_subtask(self, label: str, total: int) -> Generator[SubTaskHandle, None, None]:
         with _state.handle.push_subtask(label, total) as sub:
             yield sub
 
