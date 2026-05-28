@@ -211,7 +211,11 @@ class Trainer:
     # ------------------------------------------------------------------
 
     def _setup_run_dir(self, run_dir: Path | None) -> Path:
-        """Create and initialise the run directory, write config snapshot."""
+        """Create and initialise the run directory.
+
+        config.yaml is written later in ``fit()``, after the epoch-relative
+        schedule fields are resolved against the dataloader length.
+        """
         cfg = self.cfg
         if run_dir is None:
             from datetime import UTC, datetime
@@ -220,7 +224,6 @@ class Trainer:
             run_dir = Path(cfg.run.output_dir) / f"{cfg.run.name}-{stamp}"
 
         (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-        (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg.model_dump(mode="json")))
         from custom_sam_peft.data.aug_presets import dump_augmentation_pipeline
 
         (run_dir / "augmentation_pipeline.json").write_text(
