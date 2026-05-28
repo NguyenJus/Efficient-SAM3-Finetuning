@@ -337,6 +337,7 @@ def test_run_eval_resolves_auto_via_decide_eval_batch_size(
 
     cfg = _make_cfg(format_="coco", peft_method="lora")
     cfg.data.image_size = 1008
+    cfg.train.batch_size = 8  # higher than decide's return (3) so the cap never fires
 
     from custom_sam_peft.config.schema import EvalConfig
 
@@ -383,6 +384,7 @@ def test_run_eval_cpu_fallback_logs_info(
 
     cfg = _make_cfg(format_="coco", peft_method="lora")
     cfg.data.image_size = 1008
+    cfg.train.batch_size = 8  # higher than CPU decide's return (1) so the cap never fires
 
     from custom_sam_peft.config.schema import EvalConfig
 

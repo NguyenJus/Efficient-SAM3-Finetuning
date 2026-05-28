@@ -8,6 +8,7 @@ it can re-use a single dataset+wrapper across the eval and bundle phases.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Literal, cast, overload
 
@@ -21,6 +22,8 @@ from custom_sam_peft.eval.metrics import MetricsReport
 from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, load_sam31
 from custom_sam_peft.peft_adapters import make_peft_method
 from custom_sam_peft.train.checkpoint import _load_channel_adapter
+
+_LOG = logging.getLogger(__name__)
 
 
 @overload
@@ -142,6 +145,15 @@ def run_eval(
         from custom_sam_peft.presets import decide_eval_batch_size
 
         bs, _, _ = decide_eval_batch_size(cfg.data.image_size, classes_per_forward=MULTIPLEX_CAP)
+        # Cap by the configured train batch size to avoid eval OOM.
+        train_cap = cfg.train.batch_size
+        if bs > train_cap:
+            _LOG.info(
+                "eval auto-batch capped at train batch (%d) — predictor picked %d",
+                train_cap,
+                bs,
+            )
+            bs = min(bs, train_cap)
         eval_cfg = eval_cfg.model_copy(update={"batch_size": bs})
 
     evaluator = Evaluator(eval_cfg)
