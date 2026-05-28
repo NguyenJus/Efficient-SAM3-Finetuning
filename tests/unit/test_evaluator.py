@@ -443,3 +443,41 @@ def test_row_outputs_skips_non_tensor_values() -> None:
     # Non-tensor entries are absent
     assert "prev_encoder_out" not in row
     assert "encoder_hidden_states" not in row
+
+
+# ---------------------------------------------------------------------------
+# Regression: eval inside a training progress session must not mutate the
+# shared inner-task total (bug #153).
+# ---------------------------------------------------------------------------
+
+
+def test_eval_inside_progress_session_does_not_clobber_inner_total(
+    stub_model, tiny_text_dataset
+) -> None:
+    """Evaluator.evaluate() inside a training progress_session leaves the inner
+    task total unchanged (regression for #153: evaluator was calling
+    P.reset_inner(total=len(examples)) which overwrote the shared train bar).
+    """
+    from custom_sam_peft.cli._progress import (
+        ProgressKind,
+        ProgressMode,
+        _state,
+        progress_session,
+    )
+
+    TRAIN_TOTAL = 100  # deliberately different from dataset size (2)
+
+    with progress_session(
+        kind=ProgressKind.TRAIN,
+        total_batches_per_epoch=TRAIN_TOTAL,
+        mode=ProgressMode.PLAIN,
+    ):
+        cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
+        Evaluator(cfg).evaluate(stub_model, tiny_text_dataset)
+
+        # The plain handle's _total_batches must still equal what the session opened with.
+        handle = _state.handle
+        assert handle._total_batches == TRAIN_TOTAL, (
+            f"Evaluator clobbered the shared inner total: "
+            f"expected {TRAIN_TOTAL}, got {handle._total_batches}"
+        )
