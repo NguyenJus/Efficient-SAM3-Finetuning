@@ -166,7 +166,7 @@ def save_full_state(
             "python": random.getstate(),
             "numpy": np.random.get_state(),
             "torch_cpu": torch.get_rng_state(),
-            "torch_cuda": (torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None),
+            "torch_cuda": torch.cuda.get_rng_state_all(),
         },
         "box_hint_p": float(box_hint_p),
         "nan_streak": int(nan_streak),
@@ -226,7 +226,7 @@ def load_full_state(
     random.setstate(rng["python"])
     np.random.set_state(rng["numpy"])
     torch.set_rng_state(cast(torch.ByteTensor, rng["torch_cpu"]))
-    if rng["torch_cuda"] is not None and torch.cuda.is_available():
+    if rng["torch_cuda"] is not None:
         torch.cuda.set_rng_state_all(rng["torch_cuda"])
 
     if state["cfg_hash"] != _hash_cfg(cfg):

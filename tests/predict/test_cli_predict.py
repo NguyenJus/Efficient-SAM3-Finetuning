@@ -117,7 +117,7 @@ def test_predict_argv_round_trip_to_options(tmp_path: Path) -> None:
                 "--save-masks",
                 "png",
                 "--device",
-                "cpu",
+                "cuda",
                 "--dtype",
                 "float32",
             ],
@@ -136,7 +136,7 @@ def test_predict_argv_round_trip_to_options(tmp_path: Path) -> None:
         assert opts.seed == 42
         assert opts.merge_adapter is False
         assert opts.save_masks == "png"
-        assert opts.device == "cpu"
+        assert opts.device == "cuda"
         assert opts.dtype == "float32"
         assert opts.prompts == "cat,dog"
 

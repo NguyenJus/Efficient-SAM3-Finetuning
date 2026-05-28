@@ -64,8 +64,7 @@ def _eval_forward_with_oom_ladder(
     try:
         return cast("dict[str, torch.Tensor]", model(images, prompts, box_hints=None))
     except torch.cuda.OutOfMemoryError as oom_err:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         if state["batch_size"] > 1:
             state["batch_size"] //= 2
             if not state["warned"]:
@@ -181,7 +180,7 @@ class Evaluator:
         try:
             param_device = next(model.parameters()).device
         except (StopIteration, AttributeError):
-            param_device = torch.device("cpu")
+            param_device = torch.device("cuda")
         eval_runtime = Runtime(device=param_device, dtype=torch.float32)
 
         # cfg.batch_size is already resolved by run_eval (T10) — int here.

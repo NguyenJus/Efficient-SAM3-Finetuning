@@ -104,8 +104,7 @@ def _train_step_with_oom_ladder(
                 last_loss = loss.detach()
             return last_loss if last_loss is not None else torch.tensor(0.0)
         except torch.cuda.OutOfMemoryError as oom_err:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
             if state.micro_batch_size > 1:
                 state.micro_batch_size //= 2
                 state.pending_oom_events.append(

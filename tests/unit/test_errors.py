@@ -90,12 +90,12 @@ def test_environment_error_carries_all_new_fields():
         precondition="cuda_available",
         expected="CUDA-capable GPU",
         found="no GPU detected",
-        fix="run on a machine with a GPU or use --device cpu",
+        fix="run on a machine with a CUDA-capable GPU",
     )
     assert err.precondition == "cuda_available"
     assert err.expected == "CUDA-capable GPU"
     assert err.found == "no GPU detected"
-    assert err.fix == "run on a machine with a GPU or use --device cpu"
+    assert err.fix == "run on a machine with a CUDA-capable GPU"
 
 
 def test_environment_error_new_fields_default_to_none():

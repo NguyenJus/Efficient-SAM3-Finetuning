@@ -224,8 +224,8 @@ def test_evaluate_moves_image_to_model_device(tiny_text_dataset) -> None:
     )
 
 
-def test_evaluate_falls_back_to_cpu_for_parameterless_model(tiny_text_dataset) -> None:
-    """A model with no parameters defaults to CPU device (no StopIteration)."""
+def test_evaluate_falls_back_to_cuda_for_parameterless_model(tiny_text_dataset) -> None:
+    """A model with no parameters defaults to cuda device (no StopIteration)."""
 
     class _Parameterless(torch.nn.Module):
         def __init__(self) -> None:
@@ -247,7 +247,7 @@ def test_evaluate_falls_back_to_cpu_for_parameterless_model(tiny_text_dataset) -
     stub = _Parameterless()
     cfg = EvalConfig(mode="lite", lite_max_images=1, iou_thresholds=[0.5], batch_size=1)
     Evaluator(cfg).evaluate(stub, tiny_text_dataset)
-    assert stub.seen and all(d.type == "cpu" for d in stub.seen)
+    assert stub.seen and all(d.type == "cuda" for d in stub.seen)
 
 
 # ---------------------------------------------------------------------------

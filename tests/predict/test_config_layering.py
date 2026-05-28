@@ -155,12 +155,11 @@ def test_no_checkpoint_no_config_uses_builtin_default(tmp_path: Path) -> None:
 
 
 def test_cli_flag_beats_config(tmp_path: Path) -> None:
-    """CLI --device and --dtype override any config-file setting."""
-    # Config says bfloat16 / cuda (if it had those fields); CLI says cpu / float32.
+    """CLI --device and --dtype flags are passed through without override."""
     opts = _make_opts(tmp_path, device="cpu", dtype="float32", config=None)
     resolved = _resolve_config(opts)
 
-    # After resolution: "cpu" stays "cpu" (no auto-resolution since it's explicit)
+    # "cpu" is passed through as-is (only "auto" gets resolved to "cuda")
     assert resolved.device == "cpu"
     assert resolved.dtype_str == "float32"
 
@@ -241,21 +240,16 @@ def test_invalid_config_yaml_logs_warning_and_falls_back(
 # ---------------------------------------------------------------------------
 
 
-def test_auto_device_and_dtype_resolve_on_cpu(tmp_path: Path) -> None:
-    """device='auto' / dtype='auto' resolve through torch.cuda.is_available() branch.
+def test_auto_device_and_dtype_resolve_to_cuda(tmp_path: Path) -> None:
+    """device='auto' / dtype='auto' always resolve to ('cuda', 'bfloat16').
 
-    On this CPU sandbox they collapse to ('cpu', 'float32'); on a cuda host they
-    would collapse to ('cuda', 'bfloat16'). Either way the auto-branch is exercised.
+    GPU is required; auto device always resolves to cuda.
     """
-    import torch
-
     opts = _make_opts(tmp_path, device="auto", dtype="auto", config=None)
     resolved = _resolve_config(opts)
 
-    expected_device = "cuda" if torch.cuda.is_available() else "cpu"
-    expected_dtype = "bfloat16" if expected_device == "cuda" else "float32"
-    assert resolved.device == expected_device
-    assert resolved.dtype_str == expected_dtype
+    assert resolved.device == "cuda"
+    assert resolved.dtype_str == "bfloat16"
 
 
 # ---------------------------------------------------------------------------

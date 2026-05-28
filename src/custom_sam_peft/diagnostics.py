@@ -207,7 +207,7 @@ def run_doctor(
 
     cuda_available = torch.cuda.is_available()
     if not cuda_available:
-        issues.append("CUDA not available; training will run on CPU")
+        issues.append("CUDA not available; a CUDA GPU is required to run")
 
     optional = {name: _version_or_none(name) for name in _OPTIONAL}
     core = {name: _required_version(name) for name in _CORE}

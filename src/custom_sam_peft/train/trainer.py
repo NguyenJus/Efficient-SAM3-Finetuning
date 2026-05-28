@@ -170,16 +170,13 @@ class Trainer:
                     raise TypeError("not a torch.device")
                 inferred_device = str(param_device)
             except Exception:
-                inferred_device = "cpu"
+                inferred_device = "cuda"
             try:
                 raw_dtype = cfg.model.dtype
                 dtype_str = str(raw_dtype) if isinstance(raw_dtype, str) else "float32"
             except Exception:
                 dtype_str = "float32"
-            try:
-                self.runtime = Runtime.from_config(device=inferred_device, dtype=dtype_str)
-            except Exception:
-                self.runtime = Runtime.from_config(device="cpu", dtype="float32")
+            self.runtime = Runtime.from_config(device=inferred_device, dtype=dtype_str)
 
     # ------------------------------------------------------------------
     # Private helpers — decomposed from fit()
@@ -468,7 +465,7 @@ class Trainer:
             try:
                 model_dev = next(self.model.parameters()).device
             except (StopIteration, AttributeError):
-                model_dev = torch.device("cpu")
+                model_dev = torch.device("cuda")
             with torch.no_grad():
                 panels: list[np.ndarray[Any, Any]] = []
                 for ex in val_examples:

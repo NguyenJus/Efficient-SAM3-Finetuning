@@ -96,8 +96,8 @@ def predict(
     device: str = typer.Option(
         "auto",
         "--device",
-        click_type=click.Choice(["auto", "cuda", "cpu"]),
-        help="Compute device: auto | cuda | cpu.",
+        click_type=click.Choice(["auto", "cuda"]),
+        help="Compute device: auto | cuda.",
     ),
     dtype: str = typer.Option(
         "auto",

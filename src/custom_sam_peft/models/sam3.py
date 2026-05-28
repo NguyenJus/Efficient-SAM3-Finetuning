@@ -603,7 +603,7 @@ def _construct_raw_model(cfg: ModelConfig) -> nn.Module:
     ``RuntimeError`` loudly so checkpoint regressions don't slip through silently.
     """
     ckpt_path = _locate_weights(cfg)
-    device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = cfg.device or "cuda"
 
     _captured_stdout = io.StringIO()
     with contextlib.redirect_stdout(_captured_stdout):
@@ -706,7 +706,7 @@ def _apply_patches(model: nn.Module) -> None:
         _dtype_str = _dtype_map_inv.get(target_dtype, "float32")
     except StopIteration:
         pass
-    runtime = Runtime.from_config(device="cpu", dtype=_dtype_str)
+    runtime = Runtime.from_config(device="cuda", dtype=_dtype_str)
     Sam3Patches.apply(model, runtime)
 
 

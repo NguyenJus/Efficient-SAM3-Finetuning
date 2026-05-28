@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from custom_sam_peft.runtime import Runtime, to_device
+from custom_sam_peft.runtime import Runtime, require_cuda, to_device
 
 
 def test_runtime_fields_default_world_size_1():
@@ -53,3 +53,16 @@ def test_to_device_passes_through_non_tensor():
     rt = Runtime(device=torch.device("cpu"), dtype=torch.float32)
     assert to_device("hello", rt) == "hello"
     assert to_device(42, rt) == 42
+
+
+def test_require_cuda_passes_when_cuda_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    require_cuda()  # must not raise
+
+
+def test_require_cuda_raises_when_cuda_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from custom_sam_peft.errors import EnvironmentError as CSPEnvironmentError
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(CSPEnvironmentError, match="CUDA GPU is required"):
+        require_cuda()

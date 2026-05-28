@@ -97,7 +97,7 @@ class _ResolvedConfig:
     image_size: int
     channels: int
     channel_semantics: str
-    device: str  # "cuda" or "cpu" (auto already resolved)
+    device: str  # "cuda" or "cpu" (auto resolves to "cuda"; "cpu" for test stubs only)
     dtype: torch.dtype  # resolved torch.dtype
     dtype_str: str  # "bfloat16" or "float32"
     normalize_mean: list[float]
@@ -190,10 +190,7 @@ def _resolve_config(opts: PredictOptions) -> _ResolvedConfig:
         )
 
     # --- device resolution ---
-    if opts.device == "auto":
-        device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device_str = opts.device
+    device_str = "cuda" if opts.device == "auto" else opts.device
 
     # --- dtype resolution ---
     if opts.dtype == "auto":
@@ -306,6 +303,9 @@ def run_predict(opts: PredictOptions) -> PredictReport:
     # ---------------------------------------------------------------------------
     from custom_sam_peft.config.schema import ModelConfig
     from custom_sam_peft.models.sam3 import load_sam31
+    from custom_sam_peft.runtime import require_cuda
+
+    require_cuda()
 
     model_cfg = ModelConfig(name=rcfg.model_name)
 
@@ -441,9 +441,7 @@ def run_predict(opts: PredictOptions) -> PredictReport:
                     outputs = model(img_batch, prompts_g, box_hints=None)
             except RuntimeError as exc:
                 if "out of memory" in str(exc).lower():
-                    logger.error(
-                        "OOM: consider --no-merge-adapter (QLoRA), --batch-size 1, or --device cpu"
-                    )
+                    logger.error("OOM: consider --no-merge-adapter (QLoRA) or --batch-size 1")
                 raise
 
             # postprocess each (image, class) row from the multiplexed output

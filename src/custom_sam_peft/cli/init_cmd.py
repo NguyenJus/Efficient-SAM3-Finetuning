@@ -214,8 +214,6 @@ def init(
 ) -> None:
     """Write a starter config, then optionally download weights."""
     if interactive:
-        import torch
-
         from custom_sam_peft.cli import setup_wizard
 
         if not sys.stdin.isatty():
@@ -228,7 +226,10 @@ def init(
                 f"refusing to overwrite existing {output}; pass --force",
                 param_hint="--output",
             )
-        setup_wizard.generate_config(output, force=force, cuda_available=torch.cuda.is_available())
+        from custom_sam_peft.runtime import require_cuda
+
+        require_cuda()
+        setup_wizard.generate_config(output, force=force, cuda_available=True)
         _maybe_download_weights(output, download_weights=download_weights, yes=yes)
         return
 
