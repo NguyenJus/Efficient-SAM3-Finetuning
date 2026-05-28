@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.11 /uv /uvx /usr/local/bin/
 
 ARG HATCH_VCS_PRETEND_VERSION_FOR_CUSTOM_SAM_PEFT
 ENV HATCH_VCS_PRETEND_VERSION_FOR_CUSTOM_SAM_PEFT=${HATCH_VCS_PRETEND_VERSION_FOR_CUSTOM_SAM_PEFT}
