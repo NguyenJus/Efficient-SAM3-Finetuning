@@ -4,6 +4,7 @@ Covers:
 - auto-chunk INFO log when classes_in_batch > MULTIPLEX_CAP
 - StepResult.n_classes == K_total (not G)
 - K_total=4 with default cap -> one model call with K=4 prompts
+- B-then-K OOM ladder: K-replay, zero_grad, sticky effective_K, events, hard-fail
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import logging
 import random
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -26,7 +28,7 @@ from custom_sam_peft.config.schema import (
 )
 from custom_sam_peft.data.base import Instance, TextPrompts
 from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, Sam3Wrapper
-from custom_sam_peft.train.loop import _reset_auto_chunk_log, train_step
+from custom_sam_peft.train.loop import OomState, _reset_auto_chunk_log, train_step
 from tests.fixtures.tiny_sam3_stub import TinySam3Stub
 
 
@@ -269,3 +271,325 @@ def test_two_groups_two_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     # Groups should partition class_names in sorted order: [cls0,cls1], [cls2,cls3]
     assert call_class_lists[0] == ["cls0", "cls1"]
     assert call_class_lists[1] == ["cls2", "cls3"]
+
+
+# ---------------------------------------------------------------------------
+# B-then-K OOM ladder tests (Spec §4)
+# ---------------------------------------------------------------------------
+
+
+def _make_oom_wrapper_spy(
+    monkeypatch: pytest.MonkeyPatch,
+    wrapper: Sam3Wrapper,
+    *,
+    oom_when_group_size_gt: int,
+) -> tuple[list[list[str]], list[list[str]]]:
+    """Patch wrapper.forward to OOM when a group has more than `oom_when_group_size_gt`
+    classes; succeed otherwise.  Returns (oom_classes_seen, ok_classes_seen) spy lists."""
+    real_forward = wrapper.forward
+    oom_classes: list[list[str]] = []
+    ok_classes: list[list[str]] = []
+
+    def spy(
+        images: torch.Tensor,
+        prompts: list[Any],
+        support: Any = None,
+    ) -> Any:
+        if not prompts:
+            return real_forward(images, prompts, support=support)
+        k = len(prompts[0].classes) if isinstance(prompts[0], TextPrompts) else 0
+        classes = list(prompts[0].classes) if isinstance(prompts[0], TextPrompts) else []
+        if k > oom_when_group_size_gt:
+            oom_classes.append(classes)
+            raise torch.cuda.OutOfMemoryError("synthetic OOM from spy")
+        ok_classes.append(classes)
+        return real_forward(images, prompts, support=support)
+
+    monkeypatch.setattr(wrapper, "forward", spy)
+    return oom_classes, ok_classes
+
+
+def test_oom_k_rung_rechunks_all_classes_none_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inner B-ladder exhausts at micro_batch=1 -> train_step halves effective_K,
+    re-chunks ALL classes into more groups, replays whole step, trains every class.
+    Spec §4.2 (inv a)."""
+    _reset_auto_chunk_log()
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    # 4 classes, classes_per_forward=4 -> G=1 initially.
+    # wrapper OOMs for group size > 2; succeeds for <= 2.
+    # After K halving 4->2: G becomes 2, each group has 2 classes.
+    K_total = 4
+    class_names = [f"cls{i}" for i in range(K_total)]
+    batch = _batch([class_names], [[_instance(i) for i in range(K_total)]])
+
+    wrapper = _make_wrapper()
+    _oom_spy, ok_spy = _make_oom_wrapper_spy(monkeypatch, wrapper, oom_when_group_size_gt=2)
+
+    cfg = _make_cfg(classes_per_forward=4, nan_abort_after=99)
+    opt = MagicMock()
+    sched = MagicMock()
+    sched.get_last_lr.return_value = [1e-4]
+
+    # micro_batch_size=1 so any OOM immediately signals _MicrobatchExhausted.
+    oom_state = OomState(micro_batch_size=1, effective_K=4)
+
+    train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=0,
+        nan_streak=0,
+        oom_state=oom_state,
+    )
+
+    assert oom_state.effective_K == 2, f"expected effective_K=2, got {oom_state.effective_K}"
+    # After K-rung replay: ok_spy should contain exactly the 4 classes split into 2 groups.
+    trained_classes = {c for group_cls in ok_spy for c in group_cls}
+    assert trained_classes == set(class_names), (
+        f"Not all classes trained: missing {set(class_names) - trained_classes}"
+    )
+
+
+def test_oom_k_rung_zero_grad_and_whole_step_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K-rung calls optimizer.zero_grad() (discards larger-K grads) and replays
+    from group 0. Spec §4.3 (inv b)."""
+    _reset_auto_chunk_log()
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    K_total = 4
+    class_names = [f"cls{i}" for i in range(K_total)]
+    batch = _batch([class_names], [[_instance(i) for i in range(K_total)]])
+
+    wrapper = _make_wrapper()
+    _make_oom_wrapper_spy(monkeypatch, wrapper, oom_when_group_size_gt=2)
+
+    cfg = _make_cfg(classes_per_forward=4, nan_abort_after=99)
+    opt = MagicMock()
+    sched = MagicMock()
+    sched.get_last_lr.return_value = [1e-4]
+
+    oom_state = OomState(micro_batch_size=1, effective_K=4)
+
+    train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=0,
+        nan_streak=0,
+        oom_state=oom_state,
+    )
+
+    # zero_grad must have been called at least once on OOM K-rung entry
+    # (to discard the partial grads from the failed larger-K attempt).
+    assert opt.zero_grad.called, "optimizer.zero_grad() must be called during K-rung replay"
+
+
+def test_oom_effective_k_sticky_across_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """effective_K shrinks once and stays shrunk next step. Spec §4.3 (inv e)."""
+    _reset_auto_chunk_log()
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    K_total = 4
+    class_names = [f"cls{i}" for i in range(K_total)]
+    batch = _batch([class_names], [[_instance(i) for i in range(K_total)]])
+
+    wrapper = _make_wrapper()
+    # Spy that OOMs on group size > 2 ONLY ON THE FIRST STEP (step=0).
+    # On step=1, effective_K is already 2 so groups are size <=2 — no OOM.
+    real_forward = wrapper.forward
+    call_count = [0]
+
+    def spy_sticky(images: torch.Tensor, prompts: list[Any], support: Any = None) -> Any:
+        k = len(prompts[0].classes) if (prompts and isinstance(prompts[0], TextPrompts)) else 0
+        call_count[0] += 1
+        if k > 2:
+            raise torch.cuda.OutOfMemoryError("synthetic OOM")
+        return real_forward(images, prompts, support=support)
+
+    monkeypatch.setattr(wrapper, "forward", spy_sticky)
+
+    cfg = _make_cfg(classes_per_forward=4, nan_abort_after=99)
+    opt = MagicMock()
+    sched = MagicMock()
+    sched.get_last_lr.return_value = [1e-4]
+
+    oom_state = OomState(micro_batch_size=1, effective_K=4)
+
+    # Step 0: triggers K-rung (effective_K 4->2)
+    train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=0,
+        nan_streak=0,
+        oom_state=oom_state,
+    )
+    assert oom_state.effective_K == 2, "After step 0: expected effective_K=2"
+
+    # Step 1: effective_K is sticky at 2, groups are <=2 classes -> no OOM
+    oom_events_before = len(oom_state.pending_oom_events)
+    train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=1,
+        nan_streak=0,
+        oom_state=oom_state,
+    )
+    assert oom_state.effective_K == 2, "effective_K must remain 2 on step 1 (sticky)"
+    # No new multiplex_halved events on step 1
+    new_events = oom_state.pending_oom_events[oom_events_before:]
+    assert all(e.action != "multiplex_halved" for e in new_events), (
+        "Step 1 must not emit another multiplex_halved event"
+    )
+
+
+def test_oom_records_multiplex_halved_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A multiplex_halved OomEvent carrying new effective_K recorded. Spec §4.4."""
+    _reset_auto_chunk_log()
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    K_total = 4
+    class_names = [f"cls{i}" for i in range(K_total)]
+    batch = _batch([class_names], [[_instance(i) for i in range(K_total)]])
+
+    wrapper = _make_wrapper()
+    _make_oom_wrapper_spy(monkeypatch, wrapper, oom_when_group_size_gt=2)
+
+    cfg = _make_cfg(classes_per_forward=4, nan_abort_after=99)
+    opt = MagicMock()
+    sched = MagicMock()
+    sched.get_last_lr.return_value = [1e-4]
+
+    oom_state = OomState(micro_batch_size=1, effective_K=4)
+
+    train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=5,
+        nan_streak=0,
+        oom_state=oom_state,
+    )
+
+    multiplex_events = [e for e in oom_state.pending_oom_events if e.action == "multiplex_halved"]
+    assert len(multiplex_events) >= 1, "Expected at least one multiplex_halved OomEvent"
+    ev = multiplex_events[0]
+    assert ev.effective_K == 2, f"Expected effective_K=2 in event, got {ev.effective_K}"
+    assert ev.step == 5, f"Expected step=5 in event, got {ev.step}"
+
+
+def test_oom_final_hard_fail_only_when_b_and_k_both_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """micro_batch=1 AND effective_K=1 and OOM still fires -> raise naming
+    classes_per_forward=1. Spec §4.5."""
+    _reset_auto_chunk_log()
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    class_names = ["cls0"]
+    batch = _batch([class_names], [[_instance(0)]])
+
+    wrapper = _make_wrapper()
+
+    def always_oom(images: torch.Tensor, prompts: list[Any], support: Any = None) -> Any:
+        raise torch.cuda.OutOfMemoryError("synthetic OOM — always")
+
+    monkeypatch.setattr(wrapper, "forward", always_oom)
+
+    cfg = _make_cfg(classes_per_forward=1, nan_abort_after=99)
+    opt = MagicMock()
+    sched = MagicMock()
+    sched.get_last_lr.return_value = [1e-4]
+
+    # Both B and K already at minimum
+    oom_state = OomState(micro_batch_size=1, effective_K=1)
+
+    with pytest.raises(RuntimeError, match=r"classes_per_forward=1"):
+        train_step(
+            wrapper,
+            batch,
+            opt,
+            sched,
+            cfg,
+            class_names=class_names,
+            global_step=3,
+            nan_streak=0,
+            oom_state=oom_state,
+        )
+
+
+def test_nan_group_skip_path_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hungarian non-finite-cost group-skip still SKIPS a group (does NOT re-chunk),
+    independent of OOM K-rung. Spec §4.2 (inv c)."""
+    _reset_auto_chunk_log()
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    # 2 classes; classes_per_forward=4 -> G=1 (both classes in one group).
+    class_names = ["cls0", "cls1"]
+    batch = _batch([class_names], [[_instance(0), _instance(1)]])
+
+    wrapper = _make_wrapper()
+
+    # The forward always raises ValueError (simulates Hungarian non-finite cost).
+    def value_error_forward(images: torch.Tensor, prompts: list[Any], support: Any = None) -> Any:
+        raise ValueError("synthetic non-finite cost matrix")
+
+    monkeypatch.setattr(wrapper, "forward", value_error_forward)
+
+    cfg = _make_cfg(classes_per_forward=4, nan_abort_after=99)
+    opt = MagicMock()
+    sched = MagicMock()
+    sched.get_last_lr.return_value = [1e-4]
+
+    oom_state = OomState(micro_batch_size=1, effective_K=4)
+
+    # ValueError should cause group-skip (skipped=True), NOT OOM K-rung.
+    result = train_step(
+        wrapper,
+        batch,
+        opt,
+        sched,
+        cfg,
+        class_names=class_names,
+        global_step=0,
+        nan_streak=0,
+        oom_state=oom_state,
+    )
+
+    # effective_K must remain unchanged (no K-halving happened)
+    assert oom_state.effective_K == cfg.train.multiplex.classes_per_forward, (
+        f"effective_K must not shrink on NaN-skip; got {oom_state.effective_K}"
+    )
+    # No multiplex_halved events
+    assert all(e.action != "multiplex_halved" for e in oom_state.pending_oom_events), (
+        "NaN-skip must not emit multiplex_halved events"
+    )
+    # The step was skipped (all groups non-finite)
+    assert result.skipped

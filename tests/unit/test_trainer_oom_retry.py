@@ -76,11 +76,16 @@ def test_oom_multiple_halvings_until_one() -> None:
     assert all(e.action == "microbatch_halved" for e in state.pending_oom_events)
 
 
-def test_oom_after_microbatch_1_raises() -> None:
+def test_oom_after_microbatch_1_signals_b_exhausted() -> None:
+    """At micro_batch=1, the inner ladder no longer hard-fails: it raises the
+    B-exhausted signal so train_step can try the K-rung. Spec §4.1."""
+    from custom_sam_peft.train.loop import _MicrobatchExhausted
+
     state = _State(micro_batch_size=8)
-    model = _OomThenOk(n_oom=4)  # 3 halvings → mb=1, 4th OOM raises
-    with pytest.raises(RuntimeError, match="OOM at step"):
+    model = _OomThenOk(n_oom=4)  # 3 halvings -> mb=1, 4th OOM signals exhaustion
+    with pytest.raises(_MicrobatchExhausted):
         _train_step_with_oom_ladder(model, _make_batch(8), state, forward_call=_fake_forward_call)
+    assert state.micro_batch_size == 1
 
 
 def test_oom_microbatch_shrink_is_sticky() -> None:
