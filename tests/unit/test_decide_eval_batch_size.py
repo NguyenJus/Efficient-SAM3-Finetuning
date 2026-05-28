@@ -116,3 +116,40 @@ def test_predicted_bytes_eval_mode_excludes_optimizer_and_adapter(monkeypatch) -
     eval_bytes = _predicted_bytes("lora", r=4, batch=1, image_size=1024, cache=None, mode="eval")
     # eval drops optimizer state + adapter weights; activations scaled by 0.25.
     assert eval_bytes < train_bytes
+
+
+def test_decide_eval_batch_size_sdpa_attention_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On a 23.46 GiB GPU the auto-batch must NOT return a batch size whose
+    SDPA attention score matrix (B*H*N*N*dtype_bytes) would exceed the eval budget.
+
+    SAM 3.1 vision backbone: patch_size=14 -> N=(1008/14)^2=5184, H=16.
+    At bf16 (2 bytes), attn_per_example = 16*5184*5184*2 ~860 MiB.
+    Without the cap the analytic model picks bs~35 -> 35*860 MiB ~29 GiB > 23 GiB budget.
+    With the cap, bs must satisfy B*attn_per_example <= budget.  Issue #162.
+    """
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    # 23.46 GiB -- the exact card reported in issue #162.
+    gpu_total = int(23.46 * _GB)
+    _stub_gpu(monkeypatch, gpu_total, name="NVIDIA A10")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "custom_sam_peft.presets._current_sam3_checkpoint_sha",
+        lambda: "deadbeef",
+    )
+    from custom_sam_peft.presets import decide_eval_batch_size
+
+    bs, _predicted, _prov = decide_eval_batch_size()
+
+    # SAM 3.1 vision backbone constants (patch_size=14, num_heads=16, bf16).
+    _N = (1008 // 14) ** 2  # 5184 tokens
+    _H = 16
+    _dtype_bytes = 2  # bf16
+    attn_bytes_for_bs = bs * _H * _N * _N * _dtype_bytes
+
+    budget = gpu_total - _GB  # 1 GiB headroom
+    assert attn_bytes_for_bs <= budget, (
+        f"bs={bs} -> SDPA attn matrix = {attn_bytes_for_bs / _GB:.2f} GiB "
+        f"exceeds eval budget {budget / _GB:.2f} GiB (issue #162)"
+    )
