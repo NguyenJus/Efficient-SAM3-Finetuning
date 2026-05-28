@@ -334,8 +334,13 @@ def _oom_edge_note(events: tuple[OomEvent, ...]) -> str | None:
     """Return the OOM-summary line for `## Edge cases`, or None when there were none."""
     if not events:
         return None
+    # Final micro_batch is carried on every event; final effective_K only on K-rungs.
     final_mb = events[-1].new_micro_batch_size
-    return f"OOM retries: {len(events)} — final micro_batch={final_mb}"
+    k_events = [e for e in events if e.action == "multiplex_halved" and e.effective_K is not None]
+    note = f"OOM retries: {len(events)} — final micro_batch={final_mb}"
+    if k_events:
+        note += f", final classes_per_forward={k_events[-1].effective_K}"
+    return note
 
 
 def _write_summary_no_val(ctx: BundleContext) -> None:
