@@ -259,9 +259,9 @@ class Sam3Wrapper(nn.Module):
                 )
 
         # Shared-class-list check (multiplex forward assumes shared K-prompt vocab).
-        ref = tuple(cast(TextPrompts, prompts[0]).classes)
+        ref = tuple(prompts[0].classes)
         for p in prompts[1:]:
-            if tuple(cast(TextPrompts, p).classes) != ref:
+            if tuple(p.classes) != ref:
                 raise ValueError(
                     "All TextPrompts in a batch must carry the same class "
                     "list in the same order (multiplex forward assumes a "
@@ -271,7 +271,7 @@ class Sam3Wrapper(nn.Module):
         boxes = support.boxes if support is not None else None
         if boxes is not None:
             # boxes length must be B*K (image-major / class-minor).
-            k = len(cast(TextPrompts, prompts[0]).classes)
+            k = len(prompts[0].classes)
             expected_len = b * k
             if len(boxes) != expected_len:
                 raise ValueError(
@@ -399,9 +399,8 @@ class _Sam3ImageAdapter(nn.Module):
     ) -> dict[str, Tensor]:
         if not all(isinstance(p, TextPrompts) for p in prompts):
             raise ValueError("_Sam3ImageAdapter only supports TextPrompts in v0")
-        text_prompts = cast(list[TextPrompts], prompts)
         # Sam3Wrapper._validate_inputs guarantees a shared class list across the batch.
-        classes = list(text_prompts[0].classes)
+        classes = list(prompts[0].classes)
         k = len(classes)
         device = images.device
         b = images.shape[0]
