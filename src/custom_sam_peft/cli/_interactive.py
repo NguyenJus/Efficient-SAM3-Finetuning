@@ -1,0 +1,248 @@
+"""Shared interactive-CLI machinery for `init -i`, `eval -i`, and `predict -i`.
+
+Prompt primitives, the WizardStep/Ctx/run_wizard registry-driver, reusable
+steps (dataset_source, validation, model_weights), the TTY guard, adapter-peek,
+small validators, and the per-command interactive helpers.
+
+Import discipline (spec §2): this module imports only typer, stdlib,
+config.loader/config.schema, and — LAZILY, inside function bodies — the
+peft_adapters seam and errors. It MUST NOT import init_cmd / setup_wizard /
+eval_cmd / predict_cmd at module scope.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Any, Literal
+
+import typer
+
+from custom_sam_peft.config.loader import load_config
+
+RunMode = Literal["train", "run", "eval"]  # superset; init -i narrows to train|run
+
+
+@dataclass
+class Ctx:
+    answers: dict[str, Any]
+    cuda_available: bool
+    run_mode: RunMode = "train"
+    categories: list[str] | None = None
+    category_counts: dict[str, int] | None = None
+
+
+@dataclass(frozen=True)
+class WizardStep:
+    id: str
+    ask: Callable[[Ctx], dict[str, Any]]
+    when: Callable[[Ctx], bool] = field(default=lambda ctx: True)
+
+
+def _deep_merge(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    """Recursively merge src into dst. Nested dicts merge; scalars/lists overwrite."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _deep_merge(dst[k], v)
+        else:
+            dst[k] = v
+
+
+def ask_text(
+    prompt: str,
+    *,
+    default: str | None = None,
+    validate: Callable[[str], str | None] | None = None,
+) -> str:
+    """Free-text prompt; re-asks on validate failure. validate returns an error string or None."""
+    while True:
+        value = (
+            typer.prompt(prompt, default=default) if default is not None else typer.prompt(prompt)
+        )
+        value = str(value).strip()
+        if validate is not None:
+            err = validate(value)
+            if err is not None:
+                typer.echo(err)
+                continue
+        return value
+
+
+def ask_choice(prompt: str, choices: list[str], *, default: str | None = None) -> str:
+    """Membership-checked choice; re-asks on invalid."""
+    rendered = f"{prompt} [{'/'.join(choices)}]"
+    while True:
+        value = (
+            typer.prompt(rendered, default=default)
+            if default is not None
+            else typer.prompt(rendered)
+        )
+        value = str(value).strip()
+        if value in choices:
+            return value
+        typer.echo(f"choose one of: {', '.join(choices)}")
+
+
+def ask_confirm(prompt: str, *, default: bool = True) -> bool:
+    return typer.confirm(prompt, default=default)
+
+
+def _ask_dataset_source(ctx: Ctx) -> dict[str, Any]:
+    fmt = ask_choice("Dataset format?", ["coco", "hf"], default="coco")
+    if fmt == "coco":
+        ann = ask_text("Path to COCO train annotations (.json)?")
+        imgs = ask_text("Path to COCO train images dir?")
+        return {"data": {"format": "coco", "train": {"annotations": ann, "images": imgs}}}
+    name = ask_text("HuggingFace dataset name (org/dataset)?")
+    return {"data": {"format": "hf", "hf": {"name": name}}}
+
+
+def _ask_validation(ctx: Ctx) -> dict[str, Any]:
+    fmt = ctx.answers.get("data", {}).get("format", "coco")
+    mode = ask_choice("Validation?", ["explicit", "auto-split", "none"], default="auto-split")
+    if mode == "none":
+        if ctx.run_mode in {"eval", "run"}:
+            typer.echo(
+                "note: eval/run needs a validation set to score against; "
+                "selecting none means eval will have nothing to evaluate."
+            )
+        return {}
+    if mode == "auto-split":
+
+        def _fraction(s: str) -> str | None:
+            try:
+                f = float(s)
+            except ValueError:
+                return "fraction must be a number"
+            return None if 0.0 < f <= 0.5 else "fraction must be in (0, 0.5]"
+
+        frac = ask_text("Auto-split fraction (0<f<=0.5)?", default="0.1", validate=_fraction)
+        return {"data": {"val_split": {"fraction": float(frac)}}}
+    if fmt == "hf":
+        split = ask_text("HF validation split name?", default="validation")
+        return {"data": {"hf": {"split_val": split}}}
+    ann = ask_text("Path to COCO val annotations (.json)?")
+    imgs = ask_text("Path to COCO val images dir?")
+    return {"data": {"val": {"annotations": ann, "images": imgs}}}
+
+
+def _ask_model_weights(ctx: Ctx) -> dict[str, Any]:
+    def _is_file_or_blank(s: str) -> str | None:
+        if s == "":
+            return None
+        return None if Path(s).is_file() else f"no file at {s}"
+
+    raw = ask_text(
+        "Path to an existing SAM 3.1 checkpoint (.pt)? Leave blank to use "
+        "`models/sam3.1` and download if missing.",
+        default="",
+        validate=_is_file_or_blank,
+    )
+    if raw:
+        p = Path(raw)
+        return {"model": {"local_dir": str(p.parent), "checkpoint_file": p.name}}
+    hits = sorted(Path("models").glob("**/sam3.1_multiplex.pt")) if Path("models").is_dir() else []
+    if hits:
+        return {"model": {"local_dir": str(hits[0].parent)}}
+    return {}
+
+
+def run_wizard(ctx: Ctx, steps: list[WizardStep]) -> dict[str, Any]:
+    for step in steps:
+        if step.when(ctx):
+            fragment = step.ask(ctx)
+            _deep_merge(ctx.answers, fragment)
+    return ctx.answers
+
+
+# ---------------------------------------------------------------------------
+# validate + emit
+# ---------------------------------------------------------------------------
+
+_LAUNCH_VERB = {"train": "train", "run": "run", "eval": "eval"}
+
+
+def validate(rendered: str) -> None:
+    """Validate the exact bytes via load_config by round-tripping through a temp file."""
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        f.write(rendered)
+        tmp = Path(f.name)
+    try:
+        load_config(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _launch_command(output: Path, run_mode: RunMode) -> str:
+    return f"custom-sam-peft {_LAUNCH_VERB[run_mode]} --config {output}"
+
+
+def _header(launch: str, generating_command: str = "custom-sam-peft init --interactive") -> str:
+    return (
+        f"# Generated by `{generating_command}` on {date.today().isoformat()}\n"
+        f"# Launch: {launch}\n\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# TTY guard, validators, adapter-peek
+# ---------------------------------------------------------------------------
+
+
+def require_tty() -> None:
+    """Raise typer.BadParameter if stdin is not a TTY. Call BEFORE any prompt."""
+    if not sys.stdin.isatty():
+        raise typer.BadParameter(
+            "interactive mode needs a TTY; use the flag-driven command instead"
+        )
+
+
+def validate_checkpoint_dir(s: str) -> str | None:
+    """ask_text validator: None unless s is a dir containing adapter_config.json."""
+    p = Path(s)
+    if p.is_dir() and (p / "adapter_config.json").is_file():
+        return None
+    return f"{s} is not an adapter checkpoint dir (missing adapter_config.json)"
+
+
+def validate_config_with_eval_split(s: str) -> str | None:
+    """ask_text validator for eval-reuse: None when s load_config's AND carries a
+    val / val_split / hf.split_val / test source; else an error string."""
+    from custom_sam_peft.errors import ConfigError
+
+    try:
+        cfg = load_config(Path(s))
+    except ConfigError as exc:
+        return str(exc)
+    hf_has_split_val = (
+        cfg.data.format == "hf" and cfg.data.hf is not None and cfg.data.hf.split_val is not None
+    )
+    has_split = (
+        cfg.data.val is not None
+        or cfg.data.val_split is not None
+        or hf_has_split_val
+        or cfg.data.test is not None
+    )
+    if has_split:
+        return None
+    return "config has no val/test split to evaluate; pick a config with one"
+
+
+def peek_adapter(checkpoint_dir: Path) -> tuple[str, str | None]:
+    """Return (pretty_method_name, base_model_name) for a known-good adapter dir.
+
+    The caller validates dir existence + adapter_config.json presence (via
+    validate_checkpoint_dir) BEFORE calling. Lazy-imports the peft_adapters seam.
+    """
+    from custom_sam_peft.peft_adapters import (
+        discover_method_from_checkpoint,
+        method_pretty_name,
+        read_adapter_base_model_name,
+    )
+
+    method = discover_method_from_checkpoint(checkpoint_dir)
+    return method_pretty_name(method), read_adapter_base_model_name(checkpoint_dir)
