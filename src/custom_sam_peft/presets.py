@@ -48,8 +48,6 @@ D_OUT = 768  # avg output feature dim across LoRA targets
 Q_OVERHEAD = 64 * _MIB  # bnb NF4 per-block scale + zero-point overhead
 WORKSPACE_BYTES = 256 * _MIB  # cuDNN workspace + autograd graph + tmp buffers (spec §3)
 BASE_ACTIVATION_AT_1024 = int(1.5 * _GB)  # seed; superseded by calibration cache.
-# _attention_bytes_per_example is the dominant term at SAM 3.1's 1008px image;
-# k_eff scales BASE_ACTIVATION_AT_1024 in the train branch (see _activation_bytes).
 
 # Forward-only memory is roughly 1/4 of the train-step probe (train captures
 # forward + backward + retained graph; eval captures only forward, no graph).
@@ -136,6 +134,9 @@ class PresetDecision:
 # SAM 3.1 vision backbone (hiera-large), from sam3/model_builder.py. Shared by
 # the train-branch formula and decide_eval_batch_size's SDPA ceiling so both
 # cite one definition (spec §3.2).
+# _attention_bytes_per_example is the dominant activation term at SAM 3.1's
+# 1008px image; k_eff scales BASE_ACTIVATION_AT_1024 in the train branch
+# (see _activation_bytes).
 _SAM3_PATCH = 14  # vision backbone patch size
 _SAM3_HEADS = 16  # vision backbone attention heads
 

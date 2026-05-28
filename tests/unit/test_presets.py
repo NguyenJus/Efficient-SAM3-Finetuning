@@ -95,6 +95,17 @@ def test_decide_preset_unfittable_raises(
         decide_preset()
 
 
+def test_decide_preset_invalid_k_raises(
+    monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
+) -> None:
+    """decide_preset(k=0) and decide_preset(k=-1) must raise ValueError."""
+    _stub_gpu(monkeypatch, int(40 * _GB))
+    with pytest.raises(ValueError):
+        decide_preset(k=0)
+    with pytest.raises(ValueError):
+        decide_preset(k=-1)
+
+
 def test_decide_preset_grad_accum_targets_16(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
@@ -358,17 +369,33 @@ def test_predicted_bytes_train_grows_with_k_eff() -> None:
 
 
 def test_predicted_bytes_train_includes_attention_term() -> None:
-    """Train-mode prediction includes the (dominant) SDPA attention term."""
+    """Train-mode prediction includes the (dominant) SDPA attention term.
+
+    Asserts additive equality so that any omitted or doubled term causes a
+    failure (near-tautological comparisons would miss those bugs).
+    """
     from custom_sam_peft.presets import (
+        WORKSPACE_BYTES,
+        _activation_bytes,
+        _adapter_bytes,
         _attention_bytes_per_example,
         _model_bytes,
+        _optimizer_bytes,
         _predicted_bytes,
     )
 
     pb = _predicted_bytes("lora", r=8, batch=1, image_size=1008, cache=None, k_eff=1)
-    # The attention term alone must be a large fraction of the prediction at 1008px.
+    expected = (
+        _model_bytes("lora")
+        + _adapter_bytes(8)
+        + _optimizer_bytes(8)
+        + _activation_bytes(1008, 1, None, k_eff=1)
+        + _attention_bytes_per_example(1008)  # batch=1
+        + WORKSPACE_BYTES
+    )
+    assert pb == expected
+    # Sanity: the attention term is positive (guards against a zero constant).
     assert _attention_bytes_per_example(1008) > 0
-    assert pb > _model_bytes("lora") + _attention_bytes_per_example(1008)
 
 
 def test_decide_preset_threads_k_into_formula(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -378,7 +405,7 @@ def test_decide_preset_threads_k_into_formula(monkeypatch: pytest.MonkeyPatch) -
     _stub_gpu(monkeypatch, int(80 * _GB))  # large card so a preset always fits
     d_small = decide_preset(k=1)
     d_big = decide_preset(k=16)
-    assert d_big.predicted_bytes >= d_small.predicted_bytes
+    assert d_big.predicted_bytes > d_small.predicted_bytes
 
 
 def test_decide_preset_defaults_k_to_cap_when_none(monkeypatch: pytest.MonkeyPatch) -> None:
