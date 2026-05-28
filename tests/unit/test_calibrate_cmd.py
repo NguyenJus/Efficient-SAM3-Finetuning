@@ -70,6 +70,8 @@ def _patch_probe(
     props.name = gpu_name
     monkeypatch.setattr(torch.cuda, "get_device_properties", lambda _idx: props)
     monkeypatch.setattr(torch.cuda, "get_device_name", lambda _idx: gpu_name)
+    # Ampere (8, 0) → bfloat16; needed for decide_preset dtype resolution.
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _idx: (8, 0))
     monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda: peak)
     monkeypatch.setattr(torch.cuda, "reset_peak_memory_stats", lambda: None)
     monkeypatch.setattr(
@@ -206,3 +208,34 @@ def test_calibrate_probes_at_config_r_and_k(
     result = runner.invoke(app, ["calibrate", "--config", "config.yaml"])
     assert result.exit_code == 0, result.output
     assert captured == {"method": "qlora", "r": 32, "k_eff": 8, "batch": 1}
+
+
+def test_calibrate_rewrites_config_in_place_annotated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a successful probe, the config's sizing block is re-annotated
+    '# calibrated <date>' and re-loads via load_config. Spec §5.3."""
+    _patch_probe(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    cfg_path = tmp_path / "config.yaml"
+    _write_config(cfg_path, method="lora", r=16, k=16)
+    result = runner.invoke(app, ["calibrate", "--config", "config.yaml"])
+    assert result.exit_code == 0, result.output
+    body = cfg_path.read_text()
+    assert "# calibrated" in body
+    from custom_sam_peft.config.loader import load_config
+
+    assert load_config(cfg_path) is not None  # still valid
+
+
+def test_calibrate_auto_inits_when_no_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No config -> warn + auto-init (formula, no probe) then probe it. Spec §5.4."""
+    _patch_probe(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    assert not (tmp_path / "config.yaml").exists()
+    result = runner.invoke(app, ["calibrate", "--config", "config.yaml"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "config.yaml").exists()
+    assert "not initialized" in result.output.lower() or "auto" in result.output.lower()

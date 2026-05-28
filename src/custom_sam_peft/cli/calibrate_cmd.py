@@ -111,6 +111,15 @@ def calibrate(
     gpu_name = torch.cuda.get_device_name(0)
     total = int(torch.cuda.get_device_properties(0).total_memory)
 
+    if not config.exists():
+        typer.echo(
+            f"WARNING: {config} not initialized — auto-init (formula, no probe) then probe.",
+            err=True,
+        )
+        from custom_sam_peft.cli.init_cmd import run_init
+
+        run_init("coco-text-lora", config, force=False)
+
     if not force and _cache_is_fresh(output, gpu_name):
         typer.echo("cache fresh — exiting")
         raise typer.Exit(code=0)
@@ -171,6 +180,28 @@ def calibrate(
     except OSError as exc:
         typer.echo(f"ERROR: cache write failed: {exc}", err=True)
         raise typer.Exit(code=6) from exc
+
+    # Rewrite the config's sizing block in place with calibrated values.
+    # decide_preset() now sees the freshly-written cache (provenance="calibrated").
+    try:
+        from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
+        from custom_sam_peft.presets import decide_preset
+
+        decision = decide_preset(k=k_eff)
+        annotation = f"# calibrated {datetime.now(UTC).date().isoformat()}"
+        _rewrite_sizing_block(
+            config,
+            method=decision.method,
+            r=decision.r,
+            batch_size=decision.batch_size,
+            grad_accum_steps=decision.grad_accum_steps,
+            dtype=decision.dtype,
+            annotation=annotation,
+        )
+    except Exception as exc:
+        typer.echo(
+            f"WARNING: config rewrite failed (cache written, config unchanged): {exc}", err=True
+        )
 
     def _gib(b: int) -> float:
         return b / (1024**3)
