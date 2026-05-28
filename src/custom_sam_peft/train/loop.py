@@ -152,6 +152,11 @@ class StepResult:
 
 
 def _box_hint_p(global_step: int, cfg: BoxHintSchedule) -> float:
+    # decay_steps is None when not yet resolved (Trainer.fit resolves it before
+    # the first step; can be None in unit tests that call train_step directly).
+    # Fall back to p_start (no decay applied) so direct callers are not disrupted.
+    if cfg.decay_steps is None:
+        return cfg.p_start
     if global_step >= cfg.decay_steps:
         return cfg.p_end
     frac = global_step / cfg.decay_steps
