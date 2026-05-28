@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
@@ -147,3 +148,168 @@ def test_rewrite_sizing_block_still_parses_via_load_config(tmp_path: Path) -> No
     assert cfg.train.batch_size == 2
     assert cfg.train.grad_accum_steps == 4
     assert cfg.model.dtype == "float16"
+
+
+# ---------------------------------------------------------------------------
+# C1: depth-aware section matching
+# ---------------------------------------------------------------------------
+
+
+def _write_config_nested_same_key(path: Path) -> None:
+    """Write a config where nested sub-keys share names with direct peft children.
+
+    peft.extra.r = 99 must NOT be rewritten.
+    peft.r = 16 is the REAL target and MUST be rewritten.
+    """
+    content = """\
+run:
+  name: test-run
+  output_dir: ./runs
+  seed: 42
+
+model:
+  name: facebook/sam3.1
+  local_dir: models/sam3.1
+  checkpoint_file: sam3.1_multiplex.pt
+  dtype: bfloat16
+
+data:
+  format: coco
+  train:
+    annotations: data/train.json
+    images: data/train/
+
+peft:
+  method: lora
+  extra:
+    r: 99
+  r: 16
+  alpha: 32
+  dropout: 0.05
+
+train:
+  epochs: 10
+  batch_size: 1
+  grad_accum_steps: 8
+  optimizer: auto
+  learning_rate: 1.0e-4
+  multiplex:
+    classes_per_forward: 16
+
+tracking:
+  backend: none
+"""
+    path.write_text(content)
+
+
+def test_rewrite_depth_aware_nested_key_untouched(tmp_path: Path) -> None:
+    """C1: a nested key (peft.extra.r) must not be rewritten; only direct child peft.r is."""
+    cfg_path = tmp_path / "config.yaml"
+    _write_config_nested_same_key(cfg_path)
+
+    _rewrite_sizing_block(
+        cfg_path,
+        method="qlora",
+        r=8,
+        batch_size=2,
+        grad_accum_steps=4,
+        dtype="float16",
+        annotation="# calibrated 2026-05-28",
+    )
+
+    body = cfg_path.read_text()
+    # The nested key must remain at 99.
+    assert "r: 99" in body, "nested peft.extra.r was wrongly overwritten"
+
+    # The real direct-child peft.r must be updated.
+    parsed = yaml.safe_load(body)
+    assert parsed["peft"]["r"] == 8, "real peft.r was not updated"
+    assert parsed["peft"]["extra"]["r"] == 99, "peft.extra.r was corrupted"
+
+
+# ---------------------------------------------------------------------------
+# C2: missing keys raise ValueError
+# ---------------------------------------------------------------------------
+
+
+def _write_config_missing_grad_accum(path: Path) -> None:
+    """Write a config that is missing grad_accum_steps under train."""
+    content = """\
+run:
+  name: test-run
+  output_dir: ./runs
+  seed: 42
+
+model:
+  name: facebook/sam3.1
+  local_dir: models/sam3.1
+  checkpoint_file: sam3.1_multiplex.pt
+  dtype: bfloat16
+
+data:
+  format: coco
+  train:
+    annotations: data/train.json
+    images: data/train/
+
+peft:
+  method: lora
+  r: 16
+  alpha: 32
+  dropout: 0.05
+
+train:
+  epochs: 10
+  batch_size: 1
+  optimizer: auto
+  learning_rate: 1.0e-4
+  multiplex:
+    classes_per_forward: 16
+
+tracking:
+  backend: none
+"""
+    path.write_text(content)
+
+
+def test_rewrite_missing_key_raises_value_error(tmp_path: Path) -> None:
+    """C2: when grad_accum_steps is absent, _rewrite_sizing_block raises ValueError naming it."""
+    cfg_path = tmp_path / "config.yaml"
+    _write_config_missing_grad_accum(cfg_path)
+
+    with pytest.raises(ValueError, match="grad_accum_steps"):
+        _rewrite_sizing_block(
+            cfg_path,
+            method="qlora",
+            r=8,
+            batch_size=2,
+            grad_accum_steps=4,
+            dtype="float16",
+            annotation="# calibrated 2026-05-28",
+        )
+
+
+# ---------------------------------------------------------------------------
+# I1: annotation idempotency
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_annotation_idempotent(tmp_path: Path) -> None:
+    """I1: running _rewrite_sizing_block twice leaves exactly one annotation line."""
+    cfg_path = tmp_path / "config.yaml"
+    _write_config_with_comments(cfg_path)
+
+    for _ in range(2):
+        _rewrite_sizing_block(
+            cfg_path,
+            method="qlora",
+            r=8,
+            batch_size=2,
+            grad_accum_steps=4,
+            dtype="float16",
+            annotation="# calibrated 2026-05-28",
+        )
+
+    body = cfg_path.read_text()
+    count = body.count("# calibrated 2026-05-28")
+    assert count == 1, f"expected 1 annotation line after 2 rewrites, got {count}"

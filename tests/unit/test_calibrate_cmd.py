@@ -47,6 +47,7 @@ peft:
 train:
   epochs: 1
   batch_size: 1
+  grad_accum_steps: 8
   multiplex:
     classes_per_forward: {k}
 
@@ -239,3 +240,41 @@ def test_calibrate_auto_inits_when_no_config(
     assert result.exit_code == 0, result.output
     assert (tmp_path / "config.yaml").exists()
     assert "not initialized" in result.output.lower() or "auto" in result.output.lower()
+
+
+def test_calibrate_non_default_output_uses_calibrated_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I2: calibrate --output <non-default> threads the path to decide_preset.
+
+    When --output points to a non-default path, decide_preset must receive that path
+    as cache_path so provenance reflects the just-written probe rather than falling
+    back to an absent default cache.
+    """
+    custom_cache = tmp_path / "my_custom_cache.json"
+    _patch_probe(monkeypatch, tmp_path=tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    # Intercept _load_cache (called from inside decide_preset) to capture which
+    # cache_path it receives. This avoids patching the lazily-imported decide_preset.
+    captured_cache_path: dict[str, object] = {}
+    from custom_sam_peft import presets as _presets_mod
+
+    orig_load_cache = _presets_mod._load_cache
+
+    def _spy_load_cache(gpu_name: str, cache_path: Path | None = None) -> tuple[object, object]:
+        captured_cache_path["path"] = cache_path
+        return orig_load_cache(gpu_name, cache_path=cache_path)
+
+    monkeypatch.setattr("custom_sam_peft.presets._load_cache", _spy_load_cache)
+
+    result = runner.invoke(
+        app, ["calibrate", "--output", str(custom_cache), "--config", "config.yaml"]
+    )
+    assert result.exit_code == 0, result.output
+    assert custom_cache.is_file(), "cache was not written to custom path"
+    # _load_cache (and therefore decide_preset) must have received the non-default path.
+    assert captured_cache_path.get("path") == custom_cache, (
+        f"_load_cache received cache_path={captured_cache_path.get('path')!r}, "
+        f"expected {custom_cache}"
+    )

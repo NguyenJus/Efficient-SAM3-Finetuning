@@ -7,7 +7,7 @@ model.dtype) without stripping surrounding comments or altering unrelated lines.
 Shared by `calibrate` (annotation: '# calibrated <date>') and `init` Task 9
 (annotation: '# formula-derived'). pyyaml only — no ruamel.yaml.
 
-Spec: docs/superpowers/specs/2026-05-22-algo-vram-preset-design.md §5.3.
+Spec: docs/superpowers/specs/2026-05-28-vram-calibration-reassess-design.md §5.3.
 """
 
 from __future__ import annotations
@@ -35,13 +35,23 @@ def _rewrite_sizing_block(
     Locates peft.method/peft.r, train.batch_size/train.grad_accum_steps, model.dtype
     and substitutes their values by LINE SURGERY (not yaml.safe_dump, which would
     strip comments/formatting). Prepends `annotation` as a comment line above the
-    first touched line. Validates with yaml.safe_load that the keys exist before and
-    that the rewritten file still parses. pyyaml ONLY — do NOT add ruamel.yaml or
-    any new dep.
+    first touched line. Only rewrites DIRECT children of the target section
+    (zero-indent section → first child-indent level); deeper-nested keys with the
+    same name are left untouched. If any of the 5 expected (section, key) targets are
+    absent from the file, raises ValueError naming the missing keys. Strips any
+    immediately preceding annotation line (starting with '# calibrated' or
+    '# formula-derived') before inserting the new one, so exactly one annotation
+    remains across repeated runs.
+
+    Note: inline comments on a rewritten line are preserved verbatim and may become
+    stale relative to the new value.
+
+    Validates the rewritten file still parses as valid YAML. pyyaml ONLY — do NOT
+    add ruamel.yaml or any new dep.
     """
     original = config_path.read_text(encoding="utf-8")
 
-    # Validate the original parses and has the expected keys present.
+    # Validate the original parses as a YAML mapping.
     parsed_before = yaml.safe_load(original)
     if not isinstance(parsed_before, dict):
         raise ValueError(f"config root is not a mapping: {config_path}")
@@ -52,12 +62,13 @@ def _rewrite_sizing_block(
     # We replace the value portion while preserving indentation and inline comments.
     lines = original.splitlines(keepends=True)
 
-    # Track context: which top-level section we're in
+    # Track context: which top-level section we're in, and the child indent level
+    # for that section (set on the first non-blank, non-comment child line).
     current_section: str | None = None
+    child_indent: str | None = None  # exact indent string of direct children
     annotation_inserted = False
 
-    # Pre-compile patterns for each target field.
-    # Pattern: optional whitespace, key, colon, space, value, optional trailing comment/whitespace
+    # Pre-compile patterns.
     _top_section_pat = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*):\s*$")
     _top_section_with_value_pat = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*):\s+\S")
 
@@ -71,26 +82,40 @@ def _rewrite_sizing_block(
     }
     done: set[tuple[str, str]] = set()
 
-    # Pattern to match an indented key: value line (2-space or 4-space indent)
+    # Pattern to match an indented key: value line
     _kv_pat = re.compile(r"^(\s+)(\S+?):\s+(\S+)(.*)")
+    # Pattern to detect an annotation comment line (for idempotency stripping)
+    _annotation_pat = re.compile(r"^(\s*)#\s*(calibrated|formula-derived)")
 
     touched_indices: list[int] = []
     staged: list[tuple[int, str]] = []  # (lineno, new_line)
 
     for i, line in enumerate(lines):
-        # Detect top-level section changes (lines with no leading whitespace and ending with ':')
         stripped = line.rstrip("\n")
+
+        # Detect top-level section changes (no leading whitespace, ends with ':')
         top_m = _top_section_pat.match(stripped)
         top_with_val_m = _top_section_with_value_pat.match(stripped) if not top_m else None
         if top_m or top_with_val_m:
             section_name = (top_m or top_with_val_m).group(1)  # type: ignore[union-attr]
             current_section = section_name
+            child_indent = None  # reset child-indent for the new section
+            continue
 
         # Try to match a key: value inside a target section
         if current_section in ("model", "peft", "train"):
             m = _kv_pat.match(stripped)
             if m:
                 indent, key, _val, tail = m.groups()
+
+                # Establish child indent on the first indented KV line in this section.
+                if child_indent is None:
+                    child_indent = indent
+
+                # Only act on DIRECT children: skip lines at a deeper indent level.
+                if indent != child_indent:
+                    continue
+
                 tgt = (current_section, key)
                 if tgt in replacements and tgt not in done:
                     new_val = replacements[tgt]
@@ -100,20 +125,34 @@ def _rewrite_sizing_block(
                     touched_indices.append(i)
                     done.add(tgt)
 
+    # Validate that all 5 expected targets were found.
+    missing = set(replacements.keys()) - done
+    if missing:
+        missing_keys = ", ".join(f"{sec}.{key}" for sec, key in sorted(missing))
+        raise ValueError(
+            f"_rewrite_sizing_block: config is missing expected sizing keys: {missing_keys}"
+        )
+
     # Apply annotation: insert it as a comment line before the first touched line.
-    # We insert it before the line so it appears above the first modified field.
-    # Build the result, inserting the annotation comment before the first touched line.
-    first_touch = min(touched_indices) if touched_indices else None
+    # Strip any immediately preceding existing annotation (idempotency).
+    first_touch = min(touched_indices)
     staged_map = dict(staged)
 
     result_lines: list[str] = []
+
     for i, line in enumerate(lines):
+        # When we reach the first touched line, insert the annotation before it,
+        # but first strip any existing annotation on the immediately preceding line.
         if i == first_touch and not annotation_inserted:
+            # Remove the last line of result_lines if it is an annotation comment.
+            if result_lines and _annotation_pat.match(result_lines[-1].rstrip("\n")):
+                result_lines.pop()
             # Determine indent of the first touched line to match annotation alignment
             indent_m = re.match(r"^(\s*)", lines[i])
             indent_str = indent_m.group(1) if indent_m else ""
             result_lines.append(f"{indent_str}{annotation}\n")
             annotation_inserted = True
+
         if i in staged_map:
             result_lines.append(staged_map[i])
         else:

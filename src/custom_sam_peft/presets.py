@@ -234,9 +234,19 @@ def _current_sam3_checkpoint_sha() -> str:
     return h.hexdigest()
 
 
-def _load_cache(gpu_name: str) -> tuple[dict[str, Any] | None, Path | None]:
-    """Return (cache_dict, absolute_cache_path) iff the cache matches."""
-    cache_path = Path(CACHE_FILENAME).resolve()
+def _load_cache(
+    gpu_name: str, cache_path: Path | None = None
+) -> tuple[dict[str, Any] | None, Path | None]:
+    """Return (cache_dict, absolute_cache_path) iff the cache matches.
+
+    Args:
+        gpu_name: the GPU name reported by torch.cuda.get_device_name(0).
+        cache_path: path to the calibration cache file. Defaults to
+            ``Path(CACHE_FILENAME).resolve()`` (the fixed default location).
+            Pass an explicit path when the caller writes the cache to a non-default
+            location (e.g. ``calibrate --output``).
+    """
+    cache_path = Path(CACHE_FILENAME).resolve() if cache_path is None else cache_path
     if not cache_path.is_file():
         return None, None
     try:
@@ -299,13 +309,18 @@ def _sort_key(c: tuple[str, int, int]) -> tuple[int, int, int]:
 # === Public entry point ====================================================
 
 
-def decide_preset(k: int | None = None) -> PresetDecision:
+def decide_preset(k: int | None = None, cache_path: Path | None = None) -> PresetDecision:
     """Pick the largest configuration that fits within the VRAM budget.
 
     Args:
       k: representative classes-per-forward for the train activation term. When
          None, uses the conservative worst case MULTIPLEX_CAP. Callers with a
          config in scope pass cfg.train.multiplex.classes_per_forward. Spec §3.1.
+      cache_path: path to the calibration cache file. Defaults to
+         ``Path(CACHE_FILENAME).resolve()`` (the fixed default location). Pass an
+         explicit path when the calibration cache was written to a non-default
+         location (e.g. ``calibrate --output``), so provenance reflects the
+         just-written probe rather than a stale/absent default cache.
 
     Raises:
       RuntimeError: CUDA unavailable, env-var malformed, or no candidate fits.
@@ -330,7 +345,7 @@ def decide_preset(k: int | None = None) -> PresetDecision:
     headroom = _headroom_bytes()
     budget = total - headroom
 
-    cache, cache_path = _load_cache(gpu_name)
+    cache, cache_path = _load_cache(gpu_name, cache_path=cache_path)
     provenance: Literal["calibrated", "analytic"] = (
         "calibrated" if cache is not None else "analytic"
     )

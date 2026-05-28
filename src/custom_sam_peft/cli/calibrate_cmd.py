@@ -4,7 +4,7 @@ Writes `./.custom_sam_peft_calibration.json` (schema_version=2). Read by
 `custom_sam_peft.presets._load_cache` so `decide_preset()` produces a tight,
 GPU-accurate config instead of an analytic estimate.
 
-Spec: docs/superpowers/specs/2026-05-22-algo-vram-preset-design.md §4-§5.
+Spec: docs/superpowers/specs/2026-05-28-vram-calibration-reassess-design.md §4-§5.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def _run_probe(*, method: str, r: int, k_eff: int, batch: int) -> int:
     model_cfg = ModelConfig()
     # No DataConfig in scope; rgb default is the documented exception (spec §5.4).
     wrapper = load_sam31(model_cfg, channels=3, channel_semantics="rgb")
-    apply_lora(wrapper, PEFTConfig(method=method, r=r))  # type: ignore[arg-type]
+    apply_lora(wrapper, PEFTConfig(method=method, r=r))
 
     device = next(wrapper.parameters()).device
     images = torch.zeros(
@@ -182,12 +182,13 @@ def calibrate(
         raise typer.Exit(code=6) from exc
 
     # Rewrite the config's sizing block in place with calibrated values.
-    # decide_preset() now sees the freshly-written cache (provenance="calibrated").
+    # Pass cache_path=output so decide_preset reads the freshly-written cache
+    # (provenance="calibrated") even when --output is non-default.
     try:
         from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
         from custom_sam_peft.presets import decide_preset
 
-        decision = decide_preset(k=k_eff)
+        decision = decide_preset(k=k_eff, cache_path=output)
         annotation = f"# calibrated {datetime.now(UTC).date().isoformat()}"
         _rewrite_sizing_block(
             config,
@@ -198,7 +199,7 @@ def calibrate(
             dtype=decision.dtype,
             annotation=annotation,
         )
-    except Exception as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         typer.echo(
             f"WARNING: config rewrite failed (cache written, config unchanged): {exc}", err=True
         )
