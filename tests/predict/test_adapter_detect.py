@@ -46,6 +46,13 @@ def test_detect_adapter_kind_missing_adapter_config_raises() -> None:
         detect_adapter_kind(_BAD_DIR)
 
 
+def test_detect_adapter_kind_qlora_only_no_adapter_config(tmp_path: Path) -> None:
+    """A dir with ONLY custom_sam_peft_qlora.json (no adapter_config.json) → "qlora", no raise."""
+    (tmp_path / "custom_sam_peft_qlora.json").write_text("{}", encoding="utf-8")
+    kind: AdapterKind = detect_adapter_kind(tmp_path)
+    assert kind == "qlora"
+
+
 # ---------------------------------------------------------------------------
 # load_adapter dispatch
 # ---------------------------------------------------------------------------

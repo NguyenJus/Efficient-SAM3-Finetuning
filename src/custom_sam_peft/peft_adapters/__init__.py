@@ -28,6 +28,7 @@ from custom_sam_peft._registry import RegistryError, lookup, register
 from custom_sam_peft.errors import CheckpointError
 
 _QLORA_META_FILENAME = "custom_sam_peft_qlora.json"
+_LORA_CONFIG_FILENAME = "adapter_config.json"
 
 
 @runtime_checkable
@@ -174,9 +175,6 @@ def discover_method_from_checkpoint(adapter_dir: Path) -> str:
     callers that need that check do it separately (e.g. predict's detect_adapter_kind).
     """
     return "qlora" if (adapter_dir / _QLORA_META_FILENAME).is_file() else "lora"
-
-
-_LORA_CONFIG_FILENAME = "adapter_config.json"
 
 
 def read_adapter_base_model_name(adapter_dir: Path) -> str | None:
