@@ -417,6 +417,14 @@ def emit(rendered: str, output: Path, force: bool, *, run_mode: RunMode) -> str:
     return launch
 
 
+def _invoke_calibrate(output: Path) -> None:
+    """Run the opt-in config-aware calibration probe on the just-written config."""
+    from custom_sam_peft.cli.calibrate_cmd import calibrate
+    from custom_sam_peft.presets import CACHE_FILENAME
+
+    calibrate(config=output, output=Path(CACHE_FILENAME), force=False)
+
+
 def generate_config(output: Path, *, force: bool, cuda_available: bool) -> tuple[str, RunMode]:
     """Run the wizard, validate, write. Returns (launch_command, run_mode).
 
@@ -443,4 +451,13 @@ def generate_config(output: Path, *, force: bool, cuda_available: bool) -> tuple
     output.write_text(body)
     typer.echo(f"wrote {output}")
     typer.echo(launch)
+    if cuda_available and ask_confirm(
+        "Run `csp calibrate` now to tighten the VRAM sizing with a live GPU probe? "
+        "(opt-in; loads the model and runs one forward+backward)",
+        default=False,
+    ):
+        try:
+            _invoke_calibrate(output)
+        except typer.Exit:
+            typer.echo("calibration did not complete; keeping the formula-derived config", err=True)
     return launch, ctx.run_mode
