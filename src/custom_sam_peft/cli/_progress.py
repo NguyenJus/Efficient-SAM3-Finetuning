@@ -13,7 +13,7 @@ import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -26,6 +26,14 @@ from rich.progress import (
     TextColumn,
     TimeRemainingColumn,
 )
+
+
+class SubTaskHandle(Protocol):
+    """Minimal handle returned by ``push_subtask`` for advancing a transient sub-task."""
+
+    def advance(self, n: int = 1) -> None: ...
+
+    def update_postfix(self, **kwargs: Any) -> None: ...
 
 
 class ProgressMode(StrEnum):
@@ -62,6 +70,16 @@ def resolve_mode(
     return ProgressMode.ON
 
 
+class _NoOpSubTaskHandle:
+    """No-op sub-task handle returned by ``_NoOpHandle.push_subtask``."""
+
+    def advance(self, n: int = 1) -> None:
+        pass
+
+    def update_postfix(self, **kwargs: Any) -> None:
+        pass
+
+
 class _NoOpHandle:
     """No-op progress handle used when no session is active (default)."""
 
@@ -82,8 +100,23 @@ class _NoOpHandle:
         pass
 
     @contextmanager
-    def push_subtask(self, label: str, total: int) -> Generator[None, None, None]:
-        yield
+    def push_subtask(self, label: str, total: int) -> Generator[_NoOpSubTaskHandle, None, None]:
+        yield _NoOpSubTaskHandle()
+
+
+class _RichSubTaskHandle:
+    """Sub-task handle for advancing a transient rich.Progress task created by push_subtask."""
+
+    def __init__(self, rich_progress: Progress, task_id: TaskID) -> None:
+        self._progress = rich_progress
+        self._task_id = task_id
+
+    def advance(self, n: int = 1) -> None:
+        self._progress.advance(self._task_id, n)
+
+    def update_postfix(self, **kwargs: Any) -> None:
+        desc = " ".join(f"{k}={v}" for k, v in kwargs.items())
+        self._progress.update(self._task_id, description=desc)
 
 
 class _ProgressHandle:
@@ -136,12 +169,36 @@ class _ProgressHandle:
         self._progress.update(self._inner, description=desc)
 
     @contextmanager
-    def push_subtask(self, label: str, total: int) -> Generator[None, None, None]:
+    def push_subtask(self, label: str, total: int) -> Generator[_RichSubTaskHandle, None, None]:
         task_id = self._progress.add_task(label, total=total)
+        sub = _RichSubTaskHandle(self._progress, task_id)
         try:
-            yield
+            yield sub
         finally:
             self._progress.remove_task(task_id)
+
+
+class _PlainSubTaskHandle:
+    """Sub-task handle for advancing a plain-mode sub-task created by push_subtask."""
+
+    def __init__(self, kind: str, label: str, logger: logging.Logger) -> None:
+        self._kind = kind
+        self._label = label
+        self._logger = logger
+        self._step = 0
+
+    def advance(self, n: int = 1) -> None:
+        self._step += n
+
+    def update_postfix(self, **kwargs: Any) -> None:
+        parts = [f"{k}={v}" for k, v in kwargs.items()]
+        self._logger.debug(
+            "progress: %s subtask=%s step=%d %s",
+            self._kind,
+            self._label,
+            self._step,
+            " ".join(parts),
+        )
 
 
 def format_eta(seconds: float) -> str:
@@ -199,10 +256,11 @@ class _PlainHandle:
         self._postfix.update(kwargs)
 
     @contextmanager
-    def push_subtask(self, label: str, total: int) -> Generator[None, None, None]:
+    def push_subtask(self, label: str, total: int) -> Generator[_PlainSubTaskHandle, None, None]:
         self._logger.info("progress: %s subtask=%s start total=%d", self._kind.value, label, total)
+        sub = _PlainSubTaskHandle(self._kind.value, label, self._logger)
         try:
-            yield
+            yield sub
         finally:
             self._logger.info("progress: %s subtask=%s end", self._kind.value, label)
 
@@ -300,9 +358,9 @@ class _ProgressProxy:
         _state.handle.update_postfix(**kwargs)
 
     @contextmanager
-    def push_subtask(self, label: str, total: int) -> Generator[None, None, None]:
-        with _state.handle.push_subtask(label, total):
-            yield
+    def push_subtask(self, label: str, total: int) -> Generator[SubTaskHandle, None, None]:
+        with _state.handle.push_subtask(label, total) as sub:
+            yield sub
 
 
 progress = _ProgressProxy()

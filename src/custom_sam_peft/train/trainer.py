@@ -266,6 +266,16 @@ class Trainer:
             lite_cfg = cfg.eval.model_copy(update=update)
             report = Evaluator(lite_cfg).evaluate(self.model, self.val_ds)
             self.tracker.log_scalars(step, report.overall)
+        except RuntimeError as exc:
+            if str(exc).startswith("eval OOM"):
+                _LOG.error(
+                    "validation eval ran out of GPU memory at batch_size=1 — "
+                    "skipping eval for step %d.",
+                    step,
+                    exc_info=True,
+                )
+            else:
+                _LOG.warning("lite eval failed at step %d; skipping.", step, exc_info=True)
         except Exception:
             _LOG.warning("lite eval failed at step %d; skipping.", step, exc_info=True)
 
