@@ -9,6 +9,15 @@ import pytest
 from PIL import Image
 
 
+@pytest.fixture(autouse=True)
+def _pretend_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Monkeypatch torch.cuda.is_available to True so require_cuda() passes.
+
+    Stub models in tests/predict/ never call real CUDA APIs, so this is safe.
+    """
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+
+
 @pytest.fixture()
 def image_dir(tmp_path: Path) -> Path:
     """A nested directory with allowed and disallowed image files."""

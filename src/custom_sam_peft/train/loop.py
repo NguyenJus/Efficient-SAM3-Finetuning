@@ -160,6 +160,8 @@ def _box_hint_p(global_step: int, cfg: BoxHintSchedule) -> float:
 def _autocast_ctx(cfg: TrainConfig, peft_method: PEFTMethod) -> Any:
     if peft_method.disables_outer_autocast():
         return contextlib.nullcontext()
+    if not torch.cuda.is_available():  # no-op shim for CPU unit tests
+        return contextlib.nullcontext()
     requested = torch.bfloat16 if cfg.model.dtype == "bfloat16" else torch.float16
     dtype = coerce_dtype_for_capability(
         requested, device=torch.device("cuda", torch.cuda.current_device())
