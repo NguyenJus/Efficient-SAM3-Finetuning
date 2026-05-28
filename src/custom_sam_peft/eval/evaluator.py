@@ -188,11 +188,9 @@ class Evaluator:
         state: dict[str, Any] = {"batch_size": int(cfg.batch_size), "warned": False}
 
         predictions: list[dict[str, object]] = []
-        log_every_n = max(1, len(examples) // 50)
-        P.reset_inner(total=len(examples))
         img_idx_global = 0
         try:
-            with torch.no_grad():
+            with torch.no_grad(), P.push_subtask("eval", total=len(examples)) as sub:
                 i = 0
                 while i < len(examples):
                     # Re-chunk based on the (possibly halved) state["batch_size"].
@@ -246,9 +244,8 @@ class Evaluator:
                         i += len(image_chunk)
                         img_idx_global += len(image_chunk)
                         for _ in range(len(image_chunk)):
-                            P.advance_inner()
-                        if img_idx_global % log_every_n == 0:
-                            P.update_postfix(it_s=float(img_idx_global))
+                            sub.advance()
+                        sub.update_postfix(it_s=float(img_idx_global))
         finally:
             if was_training and hasattr(model, "train"):
                 model.train()
