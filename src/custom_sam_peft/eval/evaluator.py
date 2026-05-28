@@ -71,9 +71,7 @@ def _eval_forward_with_oom_ladder(
                 _LOG.warning("eval OOM — halving batch_size to %d", state["batch_size"])
                 state["warned"] = True
             raise
-        raise RuntimeError(
-            "eval OOM at batch_size=1; use a larger GPU or smaller image_size."
-        ) from oom_err
+        raise RuntimeError("eval OOM at batch_size=1; use a larger GPU.") from oom_err
 
 
 def _int_image_id(image_id: str) -> int:
@@ -187,11 +185,9 @@ class Evaluator:
         state: dict[str, Any] = {"batch_size": int(cfg.batch_size), "warned": False}
 
         predictions: list[dict[str, object]] = []
-        log_every_n = max(1, len(examples) // 50)
-        P.reset_inner(total=len(examples))
         img_idx_global = 0
         try:
-            with torch.no_grad():
+            with torch.no_grad(), P.push_subtask("eval", total=len(examples)) as sub:
                 i = 0
                 while i < len(examples):
                     # Re-chunk based on the (possibly halved) state["batch_size"].
@@ -245,9 +241,8 @@ class Evaluator:
                         i += len(image_chunk)
                         img_idx_global += len(image_chunk)
                         for _ in range(len(image_chunk)):
-                            P.advance_inner()
-                        if img_idx_global % log_every_n == 0:
-                            P.update_postfix(it_s=float(img_idx_global))
+                            sub.advance()
+                        sub.update_postfix(it_s=float(img_idx_global))
         finally:
             if was_training and hasattr(model, "train"):
                 model.train()
