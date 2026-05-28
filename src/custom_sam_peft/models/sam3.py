@@ -27,7 +27,7 @@ from sam3.model.geometry_encoders import Prompt
 from torch import Tensor, nn
 
 from custom_sam_peft.config.schema import ModelConfig
-from custom_sam_peft.data.base import BoxPrompts, Prompts, TextPrompts
+from custom_sam_peft.data.base import Prompts, SupportPrompts, TextPrompts
 from custom_sam_peft.utils.huggingface import download_model
 
 logger = logging.getLogger(__name__)
@@ -176,21 +176,18 @@ class Sam3Wrapper(nn.Module):
     """Thin wrapper around Meta's SAM 3.1 model.
 
     Contract:
-      - ``forward(images, prompts, box_hints=None)`` accepts a batch of B images
-        and a list of B ``Prompts`` objects, one per image.
-      - ``box_hints``: optional flat list of length ``B·K``, ordered image-major /
-        class-minor (i.e. all K class slots for image 0, then all K class slots for
-        image 1, …).  Each element is either ``None`` (no geometric hint for that
-        slot) or a ``(M_i, 4)`` float tensor of absolute pixel xyxy boxes.
-        ``box_hints`` must not be combined with ``BoxPrompts`` (they carry
-        conflicting localization signals).  For the common K=1 case the list
-        length equals B and the ordering is trivially image-major.
-      - All prompts in a batch MUST be the same variant (TextPrompts XOR
-        BoxPrompts); the wrapper raises on mixed batches.
-      - For TextPrompts, each image's prompt may contain 1..MULTIPLEX_CAP
-        class names; all prompts in a batch must share the same class list
-        in the same order (multiplex forward assumes a shared K-prompt
-        vocabulary).
+      - ``forward(images, prompts, support=None)`` accepts a batch of B images
+        and a list of B ``Prompts`` objects (always ``TextPrompts`` after #126).
+      - ``support``: optional ``SupportPrompts`` carrying auxiliary localization
+        prompts. Today the only field is ``boxes``: a flat list of length
+        ``B·K``, ordered image-major / class-minor (all K class slots for image
+        0, then all K class slots for image 1, …). Each element is either
+        ``None`` (no geometric hint for that slot) or a ``(M_i, 4)`` float tensor
+        of absolute pixel xyxy boxes. For the common K=1 case the list length
+        equals B and the ordering is trivially image-major.
+      - Each ``TextPrompts`` may contain 1..MULTIPLEX_CAP class names; all
+        prompts in a batch must share the same class list in the same order
+        (multiplex forward assumes a shared K-prompt vocabulary).
       - Returns Meta's native output dict unchanged.
       - ``forward`` supports both training (``model.train()``) and inference
         (``model.eval()``) modes.  The internal ``_Sam3ImageAdapter``
@@ -224,9 +221,10 @@ class Sam3Wrapper(nn.Module):
         self,
         images: Tensor,
         prompts: list[Prompts],
-        box_hints: list[Tensor | None] | None = None,
+        support: SupportPrompts | None = None,
     ) -> dict[str, Any]:
-        self._validate_inputs(images, prompts, box_hints)
+        self._validate_inputs(images, prompts, support)
+        box_hints = support.boxes if support is not None else None
         out: dict[str, Any] = self.model(images, prompts, box_hints=box_hints)
         return out
 
@@ -234,7 +232,7 @@ class Sam3Wrapper(nn.Module):
         self,
         images: Tensor,
         prompts: list[Prompts],
-        box_hints: list[Tensor | None] | None,
+        support: SupportPrompts | None,
     ) -> None:
         if images.ndim != 4:
             raise ValueError(
@@ -250,55 +248,43 @@ class Sam3Wrapper(nn.Module):
             raise ValueError(f"len(prompts)={len(prompts)} must equal batch size {b}")
         if not prompts:
             return
-        first = type(prompts[0])
+
+        # After #126, Prompts == TextPrompts; the mixed-batch / BoxPrompts checks
+        # are gone. Per-prompt: validate K ∈ [1, MULTIPLEX_CAP].
         for p in prompts:
-            if type(p) is not first:
-                raise ValueError(
-                    "All prompts in a batch must be the same prompt variant "
-                    "(TextPrompts or BoxPrompts), not mixed."
-                )
-            if isinstance(p, TextPrompts) and not (1 <= len(p.classes) <= MULTIPLEX_CAP):
+            if not isinstance(p, TextPrompts) or not (1 <= len(p.classes) <= MULTIPLEX_CAP):
                 raise ValueError(
                     f"TextPrompts must contain 1..MULTIPLEX_CAP (={MULTIPLEX_CAP}) classes per "
-                    f"call (got {len(p.classes)}). Configure "
+                    f"call (got {len(p.classes) if isinstance(p, TextPrompts) else 0}). Configure "
                     f"train.multiplex.classes_per_forward to bound K."
                 )
 
-        # After the per-prompt loop, enforce shared class list for TextPrompts.
-        if first is TextPrompts:
-            ref = tuple(cast(TextPrompts, prompts[0]).classes)
-            for p in prompts[1:]:
-                if tuple(cast(TextPrompts, p).classes) != ref:
-                    raise ValueError(
-                        "All TextPrompts in a batch must carry the same class "
-                        "list in the same order (multiplex forward assumes a "
-                        "shared K-prompt vocabulary)."
-                    )
+        # Shared-class-list check (multiplex forward assumes shared K-prompt vocab).
+        ref = tuple(cast(TextPrompts, prompts[0]).classes)
+        for p in prompts[1:]:
+            if tuple(cast(TextPrompts, p).classes) != ref:
+                raise ValueError(
+                    "All TextPrompts in a batch must carry the same class "
+                    "list in the same order (multiplex forward assumes a "
+                    "shared K-prompt vocabulary)."
+                )
 
-        if box_hints is not None:
-            if first is BoxPrompts:
+        boxes = support.boxes if support is not None else None
+        if boxes is not None:
+            # boxes length must be B*K (image-major / class-minor).
+            k = len(cast(TextPrompts, prompts[0]).classes)
+            expected_len = b * k
+            if len(boxes) != expected_len:
                 raise ValueError(
-                    "box_hints must not be combined with BoxPrompts prompts. "
-                    "BoxPrompts already carry localization information."
+                    f"len(support.boxes)={len(boxes)} must equal batch size x classes "
+                    f"({b}x{k}={expected_len})"
                 )
-            # For TextPrompts, box_hints must be length B*K (image-major / class-minor).
-            # For other prompt types (currently only BoxPrompts, guarded above), length B.
-            if first is TextPrompts and prompts:
-                k = len(cast(TextPrompts, prompts[0]).classes)
-                expected_len = b * k
-            else:
-                expected_len = b
-            if len(box_hints) != expected_len:
-                raise ValueError(
-                    f"len(box_hints)={len(box_hints)} must equal batch size x classes "
-                    f"({b}x{expected_len // b if b else 1}={expected_len})"
-                )
-            for i, h in enumerate(box_hints):
+            for i, h in enumerate(boxes):
                 if h is None:
                     continue
                 if h.ndim != 2 or h.shape[-1] != 4:
                     raise ValueError(
-                        f"box_hints[{i}] must have shape (M_i, 4); got {tuple(h.shape)}"
+                        f"support.boxes[{i}] must have shape (M_i, 4); got {tuple(h.shape)}"
                     )
 
 

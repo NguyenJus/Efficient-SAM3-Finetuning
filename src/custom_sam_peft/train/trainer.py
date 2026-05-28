@@ -482,7 +482,7 @@ class Trainer:
                     out = self.model(
                         ex.image.unsqueeze(0).to(model_dev),
                         [ex.prompts.__class__(classes=[c])],
-                        box_hints=None,
+                        support=None,
                     )
                     obj = out["pred_logits"].squeeze(-1).sigmoid().squeeze(0)
                     masks = out["pred_masks"].squeeze(0)
