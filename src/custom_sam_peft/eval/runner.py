@@ -70,9 +70,8 @@ def run_eval(
     """Load model + adapter, build dataset, run Evaluator.
 
     When ``artifacts`` is provided (the EvalArtifacts seam), the evaluator reads
-    ``checkpoint_path``, ``peft_method``, and ``run_dir`` from it and does NOT
-    reach into trainer internals. ``checkpoint`` is ignored when ``artifacts`` is
-    given.
+    ``checkpoint_path`` and ``run_dir`` from it and does NOT reach into trainer
+    internals. ``checkpoint`` is ignored when ``artifacts`` is given.
 
     When ``artifacts`` is None (standalone eval path), ``checkpoint`` is optional:
       - ``checkpoint`` supplied: loads the adapter from disk, dispatching LoRA vs

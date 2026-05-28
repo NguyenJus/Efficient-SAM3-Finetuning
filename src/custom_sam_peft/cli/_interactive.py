@@ -249,6 +249,12 @@ def peek_adapter(checkpoint_dir: Path) -> tuple[str, str | None]:
     return method_pretty_name(method), read_adapter_base_model_name(checkpoint_dir)
 
 
+def _echo_peek(checkpoint_dir: Path) -> None:
+    """Echo the detected adapter method + base model for a known-good checkpoint dir."""
+    pretty, base = peek_adapter(checkpoint_dir)
+    typer.echo(f"detected adapter: {pretty}, base model: {base or '(unspecified)'}")
+
+
 # ---------------------------------------------------------------------------
 # eval --interactive helper
 # ---------------------------------------------------------------------------
@@ -264,8 +270,7 @@ def _eval_reuse() -> None:
         "Path to the adapter checkpoint directory?",
         validate=validate_checkpoint_dir,
     )
-    pretty, base = peek_adapter(Path(checkpoint_dir))
-    typer.echo(f"detected adapter: {pretty}, base model: {base or '(unspecified)'}")
+    _echo_peek(Path(checkpoint_dir))
     split = ask_choice("Which split?", ["val", "test"], default="val")
     typer.echo(
         f"custom-sam-peft eval --config {config_path} --checkpoint {checkpoint_dir} --split {split}"
@@ -348,8 +353,7 @@ def run_predict_interactive(*, force: bool) -> None:
         validate=lambda s: None if s == "" else validate_checkpoint_dir(s),
     )
     if checkpoint:
-        pretty, base = peek_adapter(Path(checkpoint))
-        typer.echo(f"detected adapter: {pretty}, base model: {base or '(unspecified)'}")
+        _echo_peek(Path(checkpoint))
 
     # P2: channels
     channels = int(
