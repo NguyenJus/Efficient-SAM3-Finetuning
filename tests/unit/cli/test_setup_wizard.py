@@ -247,10 +247,31 @@ def test_step_fragment_shapes_are_nested_dicts(monkeypatch) -> None:
     assert ctx.run_mode == "train"
 
 
-def test_when_gating_skips_class_imbalance_in_eval_mode() -> None:
+def test_run_mode_offers_only_train_run(monkeypatch) -> None:
+    captured: dict[str, list[str]] = {}
+
+    def _fake_choice(prompt, choices, *, default=None):
+        captured["choices"] = list(choices)
+        return "train"
+
+    monkeypatch.setattr(sw, "ask_choice", _fake_choice)
+    ctx = sw.Ctx(answers={}, cuda_available=False)
+    sw._ask_run_mode(ctx)
+    assert captured["choices"] == ["train", "run"]
+
+
+def test_epochs_step_always_runs() -> None:
+    step = next(s for s in sw.STEPS if s.id == "epochs")
+    for mode in ("train", "run"):
+        ctx = sw.Ctx(answers={}, cuda_available=False, run_mode=mode)
+        assert step.when(ctx) is True
+
+
+def test_class_imbalance_step_runs_for_train_and_run() -> None:
     step = next(s for s in sw.STEPS if s.id == "class_imbalance")
-    ctx = sw.Ctx(answers={"data": {"format": "coco"}}, cuda_available=False, run_mode="eval")
-    assert step.when(ctx) is False
+    for mode in ("train", "run"):
+        ctx = sw.Ctx(answers={"data": {"format": "coco"}}, cuda_available=False, run_mode=mode)
+        assert step.when(ctx) is True
 
 
 def test_when_gating_skips_vram_autosize_without_cuda(monkeypatch) -> None:

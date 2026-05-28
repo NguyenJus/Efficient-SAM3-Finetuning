@@ -218,7 +218,7 @@ def render(answers: dict[str, Any], *, run_mode: RunMode) -> str:
 
 
 def _ask_run_mode(ctx: Ctx) -> dict[str, Any]:
-    ctx.run_mode = ask_choice("Run mode?", ["train", "run", "eval"], default="train")  # type: ignore[assignment]
+    ctx.run_mode = ask_choice("Run mode?", ["train", "run"], default="train")  # type: ignore[assignment]
     return {}
 
 
@@ -315,13 +315,9 @@ STEPS: list[WizardStep] = [
     WizardStep("dataset_source", _ask_dataset_source),
     WizardStep("validation", _ask_validation),
     WizardStep("domain", _ask_domain),
-    WizardStep(
-        "class_imbalance",
-        _ask_class_imbalance,
-        when=lambda ctx: ctx.run_mode in {"train", "run"},
-    ),
+    WizardStep("class_imbalance", _ask_class_imbalance),
     WizardStep("peft_sizing", _ask_peft_sizing),
-    WizardStep("epochs", _ask_epochs, when=lambda ctx: ctx.run_mode != "eval"),
+    WizardStep("epochs", _ask_epochs),
     WizardStep("model_weights", _ask_model_weights),
 ]
 
