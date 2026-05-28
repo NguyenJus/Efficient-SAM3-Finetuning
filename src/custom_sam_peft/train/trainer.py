@@ -309,6 +309,10 @@ class Trainer:
                     bs = self._cap_eval_batch_size(bs, oom_state.micro_batch_size)
                 update["batch_size"] = bs
             lite_cfg = cfg.eval.model_copy(update=update)
+            # Return training's freed-but-reserved activation pool to the CUDA
+            # driver so the eval forward can allocate a contiguous block (#176).
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             report = Evaluator(lite_cfg).evaluate(self.model, self.val_ds)
             self.tracker.log_scalars(step, report.overall)
             self._maybe_save_best(report, step, run_dir)

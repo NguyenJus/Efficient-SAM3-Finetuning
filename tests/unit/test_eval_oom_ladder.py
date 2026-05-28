@@ -181,3 +181,47 @@ def test_oom_raises_at_B1_floor() -> None:
 
     with pytest.raises(RuntimeError, match="OOM"):
         _eval_forward_with_oom_ladder(_always_oom, images, prompts, state=state)
+
+
+def test_oom_at_B1_retries_once_and_succeeds(monkeypatch) -> None:
+    """At bs==1, a transient OOM is retried exactly once; success on the second call is returned.
+
+    Patches torch.cuda.is_available -> True and torch.cuda.empty_cache -> no-op so the
+    test runs on CPU.  The model must be called exactly twice and the result returned.
+    """
+    import torch as _torch
+
+    monkeypatch.setattr(_torch.cuda, "is_available", lambda: True)
+    empty_cache_calls: list[int] = []
+
+    def _noop_empty_cache() -> None:
+        empty_cache_calls.append(1)
+
+    monkeypatch.setattr(_torch.cuda, "empty_cache", _noop_empty_cache)
+
+    call_count: list[int] = [0]
+
+    def _oom_then_ok(images, prompts, support=None):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise _make_oom_error()
+        b = images.shape[0]
+        return {
+            "pred_logits": torch.zeros(b, 1, 1),
+            "pred_boxes": torch.zeros(b, 1, 4),
+            "pred_masks": torch.zeros(b, 1, 4, 4),
+            "presence_logit_dec": torch.zeros(b, 1),
+        }
+
+    state: dict = {"batch_size": 1, "warned": False}
+    images = torch.zeros(1, 3, 8, 8)
+    prompts = [None]
+
+    result = _eval_forward_with_oom_ladder(_oom_then_ok, images, prompts, state=state)
+
+    assert result is not None, "Expected a result dict, got None"
+    assert call_count[0] == 2, f"Expected exactly 2 model calls, got {call_count[0]}"
+    # The retry only works because the reserved pool was freed first (#176 invariant).
+    assert len(empty_cache_calls) == 1, (
+        f"Expected exactly 1 empty_cache() call before the retry, got {len(empty_cache_calls)}"
+    )
