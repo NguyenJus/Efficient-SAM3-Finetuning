@@ -41,6 +41,36 @@ def test_eval_config_required_non_interactive() -> None:
     assert "config" in result.output.lower()
 
 
+def test_eval_interactive_dispatches_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CliRunner replaces sys.stdin; patch require_tty directly to simulate TTY.
+    monkeypatch.setattr(
+        "custom_sam_peft.cli._interactive.require_tty",
+        lambda: None,
+    )
+    called: list[dict] = []
+    monkeypatch.setattr(
+        "custom_sam_peft.cli._interactive.run_eval_interactive",
+        lambda **kw: called.append(kw),
+    )
+    result = runner.invoke(app, ["eval", "--interactive"])
+    assert result.exit_code == 0, result.output
+    assert len(called) == 1
+
+
+def test_eval_interactive_non_tty_hard_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CliRunner replaces sys.stdin with a non-TTY; require_tty should fire.
+    # Do NOT patch require_tty here — the real one should raise BadParameter.
+    called: list[dict] = []
+    monkeypatch.setattr(
+        "custom_sam_peft.cli._interactive.run_eval_interactive",
+        lambda **kw: called.append(kw),
+    )
+    result = runner.invoke(app, ["eval", "--interactive"])
+    assert result.exit_code != 0
+    assert "tty" in result.output.lower()
+    assert called == []
+
+
 def test_eval_export_requires_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """--export without --checkpoint must exit non-zero with a message mentioning
     export and checkpoint."""

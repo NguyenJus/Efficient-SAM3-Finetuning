@@ -48,9 +48,21 @@ def evaluate(
         help="Progress display mode: auto|on|off|plain.",
         metavar="MODE",
     ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help=("Build an eval command (reuse a trained adapter) or a baseline eval config."),
+    ),
 ) -> None:
     """Evaluate a checkpoint on the val or test split."""
     configure_logging(verbose)
+    if interactive:
+        from custom_sam_peft.cli import _interactive
+
+        _interactive.require_tty()
+        _interactive.run_eval_interactive(output=output, force=False)
+        return
     if config is None:
         raise typer.BadParameter("--config is required", param_hint="--config")
     if split not in ("val", "test"):
