@@ -110,6 +110,98 @@ def test_infer_iscrowd_excluded(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #165: _ask_class_imbalance reports the measured ratio and asks for
+# agreement (confirm) rather than forcing a tier choice.
+# ---------------------------------------------------------------------------
+
+
+def _capture_echo(monkeypatch) -> list[str]:
+    lines: list[str] = []
+    monkeypatch.setattr(sw.typer, "echo", lambda msg="", *a, **k: lines.append(str(msg)))
+    return lines
+
+
+def test_ask_class_imbalance_moderate_confirm_applies_detected_tier(tmp_path, monkeypatch) -> None:
+    p = tmp_path / "a.json"
+    _write_coco(p, {1: 10, 2: 40})  # R=4.0 → moderate
+    echoes = _capture_echo(monkeypatch)
+    confirms: list[bool] = []
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: confirms.append(True) or True)
+    ctx = sw.Ctx(
+        answers={"data": {"format": "coco", "train": {"annotations": str(p)}}},
+        cuda_available=False,
+    )
+    frag = sw._ask_class_imbalance(ctx)
+    assert frag == {"train": {"loss": {"class_imbalance": "moderate"}}}
+    assert confirms == [True]  # confirm prompt was shown
+    assert any("4.0x" in line and "moderate" in line for line in echoes)
+
+
+def test_ask_class_imbalance_severe_decline_returns_balanced(tmp_path, monkeypatch) -> None:
+    p = tmp_path / "a.json"
+    _write_coco(p, {1: 5, 2: 100})  # R=20.0 → severe
+    echoes = _capture_echo(monkeypatch)
+    confirms: list[bool] = []
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: confirms.append(False) or False)
+    ctx = sw.Ctx(
+        answers={"data": {"format": "coco", "train": {"annotations": str(p)}}},
+        cuda_available=False,
+    )
+    frag = sw._ask_class_imbalance(ctx)
+    assert frag == {"train": {"loss": {"class_imbalance": "balanced"}}}
+    assert confirms == [False]  # confirm prompt was shown
+    assert any("20.0x" in line and "severe" in line for line in echoes)
+
+
+def test_ask_class_imbalance_measured_balanced_no_confirm(tmp_path, monkeypatch) -> None:
+    p = tmp_path / "a.json"
+    _write_coco(p, {1: 10, 2: 12})  # R≈1.2 → balanced
+    echoes = _capture_echo(monkeypatch)
+
+    def _no_confirm(*a, **k):
+        raise AssertionError("ask_confirm must not be called for the balanced path")
+
+    monkeypatch.setattr(sw, "ask_confirm", _no_confirm)
+    ctx = sw.Ctx(
+        answers={"data": {"format": "coco", "train": {"annotations": str(p)}}},
+        cuda_available=False,
+    )
+    frag = sw._ask_class_imbalance(ctx)
+    assert frag == {"train": {"loss": {"class_imbalance": "balanced"}}}
+    assert any("balanced" in line for line in echoes)
+
+
+def test_ask_class_imbalance_non_coco_no_confirm(monkeypatch) -> None:
+    echoes = _capture_echo(monkeypatch)
+
+    def _no_confirm(*a, **k):
+        raise AssertionError("ask_confirm must not be called for the undetectable path")
+
+    monkeypatch.setattr(sw, "ask_confirm", _no_confirm)
+    ctx = sw.Ctx(answers={"data": {"format": "hf", "hf": {"name": "org/ds"}}}, cuda_available=False)
+    frag = sw._ask_class_imbalance(ctx)
+    assert frag == {"train": {"loss": {"class_imbalance": "balanced"}}}
+    assert any("auto-detect" in line.lower() for line in echoes)
+
+
+def test_ask_class_imbalance_coco_unmeasurable_no_confirm(tmp_path, monkeypatch) -> None:
+    echoes = _capture_echo(monkeypatch)
+
+    def _no_confirm(*a, **k):
+        raise AssertionError("ask_confirm must not be called when the ratio cannot be measured")
+
+    monkeypatch.setattr(sw, "ask_confirm", _no_confirm)
+    missing = tmp_path / "missing.json"  # COCO path set, file unreadable -> ratio is None
+    ctx = sw.Ctx(
+        answers={"data": {"format": "coco", "train": {"annotations": str(missing)}}},
+        cuda_available=False,
+    )
+    frag = sw._ask_class_imbalance(ctx)
+    assert frag == {"train": {"loss": {"class_imbalance": "balanced"}}}
+    assert any("measure" in line.lower() for line in echoes)
+
+
+# ---------------------------------------------------------------------------
 # Task 12: STEPS registry + run_wizard
 # ---------------------------------------------------------------------------
 
@@ -128,9 +220,11 @@ def test_step_fragment_shapes_are_nested_dicts(monkeypatch) -> None:
     _patch_prompts(
         monkeypatch,
         texts=["my-run", "ann.json", "imgs/", "5", ""],
-        choices=["train", "coco", "none", "natural", "medium", "balanced", "lora"],
+        choices=["train", "coco", "none", "natural", "medium", "lora"],
     )
-    monkeypatch.setattr(sw, "infer_class_imbalance", lambda *a, **k: "balanced")
+    # Class-imbalance step measures the ratio (no ask_choice). Undetectable
+    # annotations → balanced with no confirm prompt.
+    monkeypatch.setattr(sw, "measure_class_imbalance_ratio", lambda *a, **k: None)
     ctx = sw.Ctx(answers={}, cuda_available=False)
     answers = sw.run_wizard(ctx)
     assert answers["run"]["name"] == "my-run"
@@ -293,9 +387,9 @@ def test_generate_config_happy_path_local_coco_autosplit(tmp_path, monkeypatch) 
     _patch_prompts(
         monkeypatch,
         texts=["my-run", "ann.json", "imgs/", "0.1", "7", ""],
-        choices=["train", "coco", "auto-split", "natural", "medium", "balanced", "lora"],
+        choices=["train", "coco", "auto-split", "natural", "medium", "lora"],
     )
-    monkeypatch.setattr(sw, "infer_class_imbalance", lambda *a, **k: "balanced")
+    monkeypatch.setattr(sw, "measure_class_imbalance_ratio", lambda *a, **k: None)
     out = tmp_path / "c.yaml"
     sw.generate_config(out, force=False, cuda_available=False)
     cfg = load_config(out)

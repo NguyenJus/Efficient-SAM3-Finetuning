@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import typer
 
@@ -93,12 +93,12 @@ def ask_confirm(prompt: str, *, default: bool = True) -> bool:
     return typer.confirm(prompt, default=default)
 
 
-def infer_class_imbalance(annotations: str) -> ClassImbalance:
-    """Detect a class-imbalance tier from per-category instance counts.
+def measure_class_imbalance_ratio(annotations: str) -> float | None:
+    """Compute the most-to-least-frequent per-category instance-count ratio.
 
     Mirrors data/subset.py per-class frequency; uses the pycocotools-backed
     primitives in data/coco.py. On ANY failure (missing/unreadable file, zero
-    present categories) returns "balanced".
+    present categories) returns None.
     """
     try:
         from custom_sam_peft.data.coco import _build_category_remap, _load_coco_index
@@ -117,16 +117,31 @@ def infer_class_imbalance(annotations: str) -> ClassImbalance:
                 counts[dense] = counts.get(dense, 0) + 1
         present = [c for c in counts.values() if c > 0]
         if not present:
-            raise ValueError("no present categories")
-        ratio = max(present) / min(present)
+            return None
+        return max(present) / min(present)
     except Exception:
-        return "balanced"
+        return None
 
+
+def ratio_to_tier(ratio: float) -> ClassImbalance:
+    """Map a most-to-least-frequent ratio to a class-imbalance tier."""
     if ratio < IMBALANCE_MODERATE_RATIO:
         return "balanced"
     if ratio < IMBALANCE_SEVERE_RATIO:
         return "moderate"
     return "severe"
+
+
+def infer_class_imbalance(annotations: str) -> ClassImbalance:
+    """Detect a class-imbalance tier from per-category instance counts.
+
+    On ANY failure (missing/unreadable file, zero present categories) returns
+    "balanced".
+    """
+    ratio = measure_class_imbalance_ratio(annotations)
+    if ratio is None:
+        return "balanced"
+    return ratio_to_tier(ratio)
 
 
 # ---------------------------------------------------------------------------
@@ -330,21 +345,34 @@ def _coco_train_annotations(ctx: Ctx) -> str | None:
 
 
 def _ask_class_imbalance(ctx: Ctx) -> dict[str, Any]:
+    balanced: dict[str, Any] = {"train": {"loss": {"class_imbalance": "balanced"}}}
     ann = _coco_train_annotations(ctx)
     if ann is None:
         typer.echo(
-            "could not auto-detect class imbalance (non-COCO/no annotations); "
-            "defaulting to balanced"
+            "Could not auto-detect class imbalance (non-COCO/no annotations); "
+            "defaulting to balanced loss weighting."
         )
-        detected: ClassImbalance = "balanced"
-    else:
-        detected = infer_class_imbalance(ann)
-        typer.echo(f"detected class imbalance: {detected}")
-    tier = cast(
-        ClassImbalance,
-        ask_choice("Class imbalance tier?", ["balanced", "moderate", "severe"], default=detected),
+        return balanced
+    ratio = measure_class_imbalance_ratio(ann)
+    if ratio is None:
+        typer.echo(
+            "Could not measure class imbalance (unreadable annotations/no categories); "
+            "defaulting to balanced loss weighting."
+        )
+        return balanced
+    tier = ratio_to_tier(ratio)
+    if tier == "balanced":
+        typer.echo(
+            f"Detected class imbalance: most-to-least frequent class ratio is {ratio:.1f}x "
+            "(balanced); no meaningful imbalance to handle."
+        )
+        return balanced
+    typer.echo(
+        f"Detected class imbalance: most-to-least frequent class ratio is {ratio:.1f}x ({tier})."
     )
-    return {"train": {"loss": {"class_imbalance": tier}}}
+    if ask_confirm("Let the wizard handle this class imbalance automatically?", default=True):
+        return {"train": {"loss": {"class_imbalance": tier}}}
+    return balanced
 
 
 def _ask_peft_sizing(ctx: Ctx) -> dict[str, Any]:
