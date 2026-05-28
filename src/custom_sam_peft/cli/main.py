@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
+from typing import Any
 
+import click
 import typer
 import typer.core
 
@@ -53,15 +55,16 @@ _RESUME_PATCH_CMDS: frozenset[str] = frozenset({"train", "run"})
 class _ResumeAwareGroup(typer.core.TyperGroup):
     """TyperGroup that patches --resume on 'train' and 'run' to accept an optional value."""
 
-    def __init__(self, *, commands: dict | None = None, **kwargs: object) -> None:
+    def __init__(self, *, commands: dict[str, click.Command] | None = None, **kwargs: Any) -> None:
         super().__init__(commands=commands, **kwargs)
         for cmd_name in _RESUME_PATCH_CMDS:
             cmd = (self.commands or {}).get(cmd_name)
-            if cmd is not None:
-                for p in cmd.params:
-                    if p.name == "resume":
-                        p._flag_needs_value = True
-                        p.flag_value = _LATEST_SENTINEL
+            if cmd is None:
+                continue
+            for p in cmd.params:
+                if isinstance(p, click.Option) and p.name == "resume":
+                    p._flag_needs_value = True
+                    p.flag_value = _LATEST_SENTINEL
 
 
 app = typer.Typer(
