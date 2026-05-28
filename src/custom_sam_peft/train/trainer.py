@@ -132,12 +132,6 @@ class Trainer:
         *,
         runtime: Runtime | None = None,
     ) -> None:
-        if cfg.data.prompt_mode == "bbox":
-            raise ValueError(
-                "prompt_mode='bbox' is not supported for training in v0; v0 trains "
-                "text-only with optional GT-box hints sampled per-image. See "
-                "logs/TODO.md for the deferred spec."
-            )
         self.model = model
         self.train_ds = train_ds
         self.val_ds = val_ds

@@ -21,7 +21,7 @@ def _plain(s: str) -> str:
     return _ANSI.sub("", s)
 
 
-def _make_cfg_yaml(tmp_path: Path, *, merge: bool = False, bbox: bool = False) -> Path:
+def _make_cfg_yaml(tmp_path: Path, *, merge: bool = False) -> Path:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f"""
@@ -250,16 +250,6 @@ def test_run_bundle_failure_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     # run_dir and adapter remain on disk.
     assert run_dir.exists()
     assert (run_dir / "adapter").exists()
-
-
-def test_run_rejects_bbox_prompt_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _patch_phases(monkeypatch, run_dir=tmp_path / "runs" / "r")
-    cfg = _make_cfg_yaml(tmp_path, bbox=True)
-    result = runner.invoke(app, ["run", "--config", str(cfg)])
-    assert result.exit_code == 2
-    assert "train" not in captured["order"]
-    assert "eval" not in captured["order"]
-    assert "bbox" in _plain(result.output).lower()
 
 
 def test_run_reads_preset_sidecar_when_present(
