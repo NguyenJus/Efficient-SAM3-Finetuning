@@ -386,4 +386,35 @@ def decide_eval_batch_size(
         if pb <= budget:
             best_bs = batch
             best_predicted = pb
+
+    # Attention-memory ceiling: SDPA math fallback materialises the full B*H*N*N
+    # score matrix in float32 (4 bytes) even when inputs are bf16.  At SAM 3.1's
+    # patch_size=14, image_size=1008 -> N=5184 tokens, H=16 heads, the analytic
+    # model can return bs~35 on a 24 GiB card, causing a 56 GiB allocation (OOM).
+    # Constants: SAM 3.1 hiera-large vision backbone, from sam3/model_builder.py.
+    _SAM3_PATCH = 14  # vision backbone patch size
+    _SAM3_HEADS = 16  # vision backbone attention heads
+    _n_tokens = (image_size // _SAM3_PATCH) ** 2
+    # fp32 (4 bytes): worst case when SDPA math backend upcasts bf16 inputs.
+    _attn_per_example = _SAM3_HEADS * _n_tokens * _n_tokens * 4
+    # Model weights and forward activations are ALREADY resident when SDPA runs;
+    # subtract them from the budget before solving for the attention-bound bs.
+    attn_budget = budget - _model_bytes("lora") - WORKSPACE_BYTES
+    _act_per_example = int(_activation_per_example(image_size, cache) * forward_only_factor)
+    _per_example = _attn_per_example + _act_per_example
+    attn_cap = max(1, attn_budget // _per_example) if attn_budget > 0 else 1
+    if attn_cap < best_bs:
+        _LOG.warning(
+            "eval auto-batch capped %d -> %d by SDPA attention memory "
+            "(H*N^2*fp32=%.1f GiB SDPA/image at image_size=%d; issue #162)",
+            best_bs,
+            attn_cap,
+            _attn_per_example / _GB,
+            image_size,
+        )
+        best_bs = attn_cap
+        best_predicted = _predicted_bytes(
+            "lora", r=4, batch=best_bs, image_size=image_size, cache=cache, mode="eval"
+        )
+
     return best_bs, best_predicted, provenance
