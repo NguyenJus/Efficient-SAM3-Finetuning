@@ -58,7 +58,6 @@ def _cfg(tmp_path: Path, tiny_coco_dir: Path, save_every: int) -> TrainConfig:
                 annotations=str(tiny_coco_dir / "annotations.json"),
                 images=str(tiny_coco_dir / "images"),
             ),
-            image_size=32,
         ),
         peft=PEFTConfig(
             method="lora",

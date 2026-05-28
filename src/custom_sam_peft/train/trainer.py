@@ -245,7 +245,18 @@ class Trainer:
             oom_state=oom_state,
         )
 
-    def _eval_epoch(self, step: int) -> None:
+    def _cap_eval_batch_size(self, bs: int, cap: int) -> int:
+        """Return *bs* capped at *cap*, logging an INFO message if the cap fires."""
+        if bs > cap:
+            _LOG.info(
+                "eval auto-batch capped at train batch (%d) — predictor picked %d",
+                cap,
+                bs,
+            )
+            return min(bs, cap)
+        return bs
+
+    def _eval_epoch(self, step: int, oom_state: OomState | None = None) -> None:
         """Run a periodic lite evaluation and log scalars to the tracker."""
         if self.val_ds is None:
             return
@@ -255,13 +266,24 @@ class Trainer:
             if cfg.eval.batch_size == "auto":
                 from custom_sam_peft.presets import decide_eval_batch_size
 
-                bs, _, _ = decide_eval_batch_size(
-                    cfg.data.image_size, classes_per_forward=MULTIPLEX_CAP
-                )
+                bs, _, _ = decide_eval_batch_size(classes_per_forward=MULTIPLEX_CAP)
+                # Cap by the sticky train micro-batch size to avoid eval OOM.
+                if oom_state is not None:
+                    bs = self._cap_eval_batch_size(bs, oom_state.micro_batch_size)
                 update["batch_size"] = bs
             lite_cfg = cfg.eval.model_copy(update=update)
             report = Evaluator(lite_cfg).evaluate(self.model, self.val_ds)
             self.tracker.log_scalars(step, report.overall)
+        except RuntimeError as exc:
+            if str(exc).startswith("eval OOM"):
+                _LOG.error(
+                    "validation eval ran out of GPU memory at batch_size=1 — "
+                    "skipping eval for step %d.",
+                    step,
+                    exc_info=True,
+                )
+            else:
+                _LOG.warning("lite eval failed at step %d; skipping.", step, exc_info=True)
         except Exception:
             _LOG.warning("lite eval failed at step %d; skipping.", step, exc_info=True)
 
@@ -366,7 +388,7 @@ class Trainer:
             )
 
         def on_eval(step: int) -> None:
-            self._eval_epoch(step)
+            self._eval_epoch(step, oom_state)
 
         merged_path: Path | None = None
         full_report: MetricsReport | None = None
@@ -400,9 +422,9 @@ class Trainer:
                 if full_eval_cfg.batch_size == "auto":
                     from custom_sam_peft.presets import decide_eval_batch_size
 
-                    bs, _, _ = decide_eval_batch_size(
-                        cfg.data.image_size, classes_per_forward=MULTIPLEX_CAP
-                    )
+                    bs, _, _ = decide_eval_batch_size(classes_per_forward=MULTIPLEX_CAP)
+                    # Cap by the sticky train micro-batch size to avoid eval OOM.
+                    bs = self._cap_eval_batch_size(bs, oom_state.micro_batch_size)
                     full_eval_cfg = full_eval_cfg.model_copy(update={"batch_size": bs})
                 full_report = Evaluator(full_eval_cfg).evaluate(self.model, self.val_ds)
             if full_report is not None:

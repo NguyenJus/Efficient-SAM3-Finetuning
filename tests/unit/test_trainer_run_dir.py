@@ -215,7 +215,6 @@ def test_fit_calls_start_run_once_before_first_log(tmp_path: Path) -> None:
                 annotations=str(tiny_coco_dir / "annotations.json"),
                 images=str(tiny_coco_dir / "images"),
             ),
-            image_size=32,
         ),
         peft=PEFTConfig(
             method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
@@ -367,7 +366,6 @@ def test_run_dir_writes_augmentation_pipeline_json(
                 annotations=str(tiny_coco_dir / "annotations.json"),
                 images=str(tiny_coco_dir / "images"),
             ),
-            image_size=32,
             augmentations=AugmentationsConfig(preset="medical", intensity="medium"),
         ),
         peft=PEFTConfig(
@@ -464,7 +462,6 @@ def test_run_dir_writes_loss_bundle_json(tmp_path: Path, monkeypatch: pytest.Mon
                 annotations=str(tiny_coco_dir / "annotations.json"),
                 images=str(tiny_coco_dir / "images"),
             ),
-            image_size=32,
             augmentations=AugmentationsConfig(preset="medical", intensity="medium"),
         ),
         peft=PEFTConfig(

@@ -73,7 +73,6 @@ def test_fit_end_to_end_on_tiny_coco(backend: str, tmp_path: Path, tiny_coco_dir
                 annotations=str(tiny_coco_dir / "annotations.json"),
                 images=str(tiny_coco_dir / "images"),
             ),
-            image_size=32,
             augmentations=AugmentationsConfig(preset="none"),
         ),
         peft=PEFTConfig(
@@ -136,7 +135,6 @@ def test_end_to_end_writes_loss_bundle_json(tmp_path: Path, tiny_coco_dir: Path)
                 annotations=str(tiny_coco_dir / "annotations.json"),
                 images=str(tiny_coco_dir / "images"),
             ),
-            image_size=32,
             augmentations=AugmentationsConfig(preset="none"),
         ),
         peft=PEFTConfig(
@@ -189,7 +187,6 @@ def _bad_data_cfg(
             format="coco",
             train=DataSplit(annotations=str(annotations), images=str(images)),
             val=DataSplit(annotations=str(annotations), images=str(images)),
-            image_size=32,
         ),
         peft=PEFTConfig(
             method="lora",
@@ -378,7 +375,6 @@ def test_e2e_auto_split_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> Non
             ),
             val=None,
             val_split=ValSplitConfig(fraction=0.5, seed=None),
-            image_size=32,
         ),
         peft=PEFTConfig(
             method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]
@@ -428,7 +424,6 @@ def test_e2e_no_val_on_tiny_coco(tmp_path: Path, tiny_coco_dir: Path) -> None:
             ),
             val=None,
             val_split=None,
-            image_size=32,
         ),
         peft=PEFTConfig(
             method="lora", scope="vision", target_modules=FIXTURE_SCOPE_PATTERNS["vision"]

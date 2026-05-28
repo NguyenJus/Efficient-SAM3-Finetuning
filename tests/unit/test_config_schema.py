@@ -16,7 +16,6 @@ def _minimal_dict() -> dict[str, object]:
             "format": "coco",
             "train": {"annotations": "data/train.json", "images": "data/train/"},
             "val": {"annotations": "data/val.json", "images": "data/val/"},
-            "image_size": 1024,
         },
         "peft": {"method": "lora"},
         "train": {"epochs": 10},
@@ -108,6 +107,14 @@ def test_zero_epochs_rejected() -> None:
 def test_unknown_top_level_key_rejected() -> None:
     d = _minimal_dict()
     d["extra_section"] = {}
+    with pytest.raises(ValidationError):
+        TrainConfig.model_validate(d)
+
+
+def test_data_image_size_key_rejected() -> None:
+    """data.image_size must be rejected — removed field; guard against silent re-introduction."""
+    d = _minimal_dict()
+    d["data"]["image_size"] = 1008  # type: ignore[index]
     with pytest.raises(ValidationError):
         TrainConfig.model_validate(d)
 

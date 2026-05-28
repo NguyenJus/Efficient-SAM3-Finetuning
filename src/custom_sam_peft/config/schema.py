@@ -381,7 +381,6 @@ class DataConfig(_Strict):
     train: DataSplit
     val: DataSplit | None = None
     val_split: ValSplitConfig | None = None
-    image_size: PositiveInt = 1008  # SAM3.1's native input; see models/sam3.py:192,304,1202-1203.
     channels: int = Field(
         default=3,
         ge=1,
