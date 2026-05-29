@@ -113,3 +113,56 @@ def test_returned_in_descending_iou_order() -> None:
     picked = pick_samples(iou, ds, 6)
     vals = [iou[i] for i in picked]
     assert vals == sorted(vals, reverse=True)
+
+
+def test_denormalize_to_rgb_round_trip() -> None:
+    import numpy as np
+    from PIL import Image
+
+    from custom_sam_peft.eval.visualize import denormalize_to_rgb
+
+    # Known uint8 image → normalize with mean/std → denorm → expect round-trip.
+    rng = np.random.default_rng(0)
+    orig = rng.integers(0, 256, size=(5, 7, 3), dtype=np.uint8)  # (H, W, C)
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    norm = (orig.astype(np.float32) / 255.0 - np.asarray(mean)) / np.asarray(std)
+    tensor = torch.from_numpy(norm).permute(2, 0, 1)  # (C, H, W)
+    img = denormalize_to_rgb(tensor, mean, std)
+    assert isinstance(img, Image.Image)
+    assert img.mode == "RGB"
+    assert img.size == (7, 5)  # (W, H)
+    back = np.asarray(img)
+    assert np.abs(back.astype(int) - orig.astype(int)).max() <= 2  # rounding tolerance
+
+
+def test_denormalize_to_rgb_n_channel_uses_first_3() -> None:
+    from custom_sam_peft.eval.visualize import denormalize_to_rgb
+
+    tensor = torch.zeros(5, 4, 6)  # C=5, H=4, W=6
+    mean = [0.5] * 5
+    std = [0.5] * 5
+    img = denormalize_to_rgb(tensor, mean, std)
+    assert img.mode == "RGB"
+    assert img.size == (6, 4)  # (W, H); only first 3 channels rendered
+
+
+def test_gt_instances_to_entries_conversion() -> None:
+    import pycocotools.mask as mask_utils
+
+    from custom_sam_peft.data.base import Instance
+    from custom_sam_peft.eval.visualize import gt_instances_to_entries
+
+    mask = torch.zeros(8, 8, dtype=torch.bool)
+    mask[1:5, 2:6] = True
+    inst = Instance(mask=mask, class_id=2, box=torch.tensor([2.0, 1.0, 6.0, 5.0]))
+    entries = gt_instances_to_entries([inst])
+    assert len(entries) == 1
+    e = entries[0]
+    assert e["category_id"] == 3  # class_id + 1
+    assert e["bbox"] == [2.0, 1.0, 4.0, 4.0]  # xyxy -> xywh
+    assert "score" not in e  # GT carries no score
+    # segmentation decodes back to the input mask.
+    decoded = mask_utils.decode(e["segmentation"])  # (H, W) uint8
+    assert decoded.shape == (8, 8)
+    assert bool((torch.from_numpy(decoded).bool() == mask).all())

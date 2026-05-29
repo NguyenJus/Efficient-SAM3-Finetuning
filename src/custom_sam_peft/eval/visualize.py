@@ -18,7 +18,12 @@ import logging
 import math
 from collections.abc import Sequence
 
-from custom_sam_peft.data.base import Dataset
+import numpy as np
+import pycocotools.mask as mask_utils
+import torch
+from PIL import Image
+
+from custom_sam_peft.data.base import Dataset, Instance
 
 _LOG = logging.getLogger(__name__)
 
@@ -108,3 +113,61 @@ def pick_samples(
     # Return in descending-IoU order.
     chosen.sort(key=rank_key, reverse=True)
     return chosen[:count]
+
+
+def denormalize_to_rgb(
+    image: torch.Tensor,
+    mean: Sequence[float],
+    std: Sequence[float],
+) -> Image.Image:
+    """Invert normalization and return a PIL RGB image (first 3 channels when C>3).
+
+    pixel = normalized * std + mean, clamped to [0, 1], scaled to [0, 255], uint8,
+    transposed (C, H, W) -> (H, W, C). For C>3 inputs only the first 3 channels are
+    rendered as RGB (the corresponding first-3 mean/std are used).
+    """
+    c = image.shape[0]
+    n = min(c, 3)
+    chans = image[:n].float()
+    m = torch.tensor([float(x) for x in mean[:n]]).view(n, 1, 1)
+    s = torch.tensor([float(x) for x in std[:n]]).view(n, 1, 1)
+    pixel = (chans * s + m).clamp(0.0, 1.0)
+    arr = (pixel * 255.0).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy()  # (H, W, n)
+    if n < 3:
+        # Pad to 3 channels by repeating the last channel (e.g. grayscale -> RGB).
+        arr = np.repeat(arr[:, :, :1], 3, axis=2) if n == 1 else np.concatenate(
+            [arr, arr[:, :, -1:].repeat(3 - n, axis=2)], axis=2
+        )
+    return Image.fromarray(arr, mode="RGB")
+
+
+def _mask_to_rle(mask: torch.Tensor) -> dict[str, object]:
+    """(H, W) bool/uint8 mask -> pycocotools RLE dict with ASCII counts.
+
+    Mirrors eval/postprocess.py::_logits_to_rle's encode + ascii-decode.
+    """
+    arr = np.asfortranarray(mask.cpu().numpy().astype(np.uint8))
+    rle: dict[str, object] = mask_utils.encode(arr)
+    counts = rle["counts"]
+    rle["counts"] = counts.decode("ascii") if isinstance(counts, bytes) else counts
+    return rle
+
+
+def gt_instances_to_entries(instances: list[Instance]) -> list[dict[str, object]]:
+    """Convert GT Instances to render_overlay entry dicts (no score key).
+
+    category_id = class_id + 1 (1-indexed); bbox = xyxy -> xywh; segmentation = RLE
+    of inst.mask. No `score` key (GT carries no score; the renderer labels the class
+    name only).
+    """
+    entries: list[dict[str, object]] = []
+    for inst in instances:
+        x1, y1, x2, y2 = (float(v) for v in inst.box.tolist())
+        entries.append(
+            {
+                "category_id": int(inst.class_id) + 1,
+                "bbox": [x1, y1, x2 - x1, y2 - y1],
+                "segmentation": _mask_to_rle(inst.mask),
+            }
+        )
+    return entries
