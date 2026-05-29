@@ -45,13 +45,17 @@ def test_shared_steps_return_fragments(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
 
-def test_auto_detect_path_accepts_candidate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_auto_detect_path_accepts_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(itv, "ask_confirm", lambda *a, **k: True)
     result = itv._auto_detect_path("train annotations", "Path?", [tmp_path / "train.json"])
     assert result == str(tmp_path / "train.json")
 
 
-def test_auto_detect_path_override_candidate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_auto_detect_path_override_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(itv, "ask_confirm", lambda *a, **k: False)
     monkeypatch.setattr(itv, "ask_text", lambda *a, **k: "custom.json")
     result = itv._auto_detect_path("train annotations", "Path?", [tmp_path / "train.json"])
