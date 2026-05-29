@@ -419,8 +419,6 @@ def run_predict_interactive(*, force: bool) -> None:
     # P4: merge (only when checkpoint given)
     if checkpoint:
         merge_adapter = ask_confirm("Merge adapter weights before inference?", default=True)
-    else:
-        merge_adapter = True  # unused
 
     # P5: threshold
     threshold = float(

@@ -57,7 +57,9 @@ def test_bootstrap_populates_all_kinds() -> None:
             if m in sys.modules:
                 del sys.modules[m]
 
-        import custom_sam_peft._bootstrap  # noqa: F401  # triggers @register decorators
+        from custom_sam_peft._bootstrap import (
+            bootstrap as _,  # noqa: F401  # triggers @register decorators
+        )
 
         assert set(list_registered("dataset")) >= {"coco", "hf"}
         assert set(list_registered("peft")) >= {"lora", "qlora"}
