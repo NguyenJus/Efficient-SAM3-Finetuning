@@ -22,6 +22,7 @@ from rich.console import Console
 from custom_sam_peft._registry import lookup
 from custom_sam_peft.cli._logging import configure_logging
 from custom_sam_peft.cli._progress import ProgressKind, ProgressMode, progress_session, resolve_mode
+from custom_sam_peft.cli.init_cmd import run_init
 from custom_sam_peft.config.loader import load_config
 from custom_sam_peft.config.schema import TrainConfig
 from custom_sam_peft.data.base import Dataset
@@ -197,6 +198,11 @@ def run(
     notebook uses `run` for the canonical end-to-end flow.
     """
     configure_logging(verbose)
+    if not config.is_file():
+        rprint(
+            f"[yellow]{config} not initialized — auto-init (formula, no probe) then run.[/yellow]"
+        )
+        run_init("coco-text-lora", config, force=False)
     cfg = load_config(config)
     mode = resolve_mode(
         progress_flag if progress_flag != "auto" else None,

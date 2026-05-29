@@ -16,6 +16,29 @@ runner = CliRunner()
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
+# Minimal valid TrainConfig YAML — used by the skip-init guard test so run_init's
+# side-effect produces a config that load_config can parse.
+_MINIMAL_CONFIG = """\
+run:
+  name: t
+  output_dir: /tmp/runs
+  seed: 0
+data:
+  format: coco
+  train:
+    annotations: t.json
+    images: t/
+  val:
+    annotations: v.json
+    images: v/
+peft:
+  method: lora
+train:
+  epochs: 1
+export:
+  merge: false
+"""
+
 
 def _plain(s: str) -> str:
     return _ANSI.sub("", s)
@@ -294,3 +317,24 @@ def test_run_synthesizes_analytic_preset_when_sidecar_absent(
     assert result.exit_code == 0, result.output
     ctx = captured["bundle_ctx"]
     assert ctx.preset.provenance == "analytic"
+
+
+def test_run_skip_init_guard_warns_and_autoinits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run with no usable config warns 'not initialized', auto-inits (formula, no
+    probe), then proceeds. Spec §6.2."""
+    monkeypatch.chdir(tmp_path)
+    called: dict[str, object] = {}
+    monkeypatch.setattr(
+        "custom_sam_peft.cli.run_cmd._orchestrate",
+        lambda *a, **k: called.setdefault("ran", True) or 0,
+    )
+    # Patch run_init so the guard does not need a GPU.
+    monkeypatch.setattr(
+        "custom_sam_peft.cli.run_cmd.run_init",
+        lambda *a, **k: (tmp_path / "config.yaml").write_text(_MINIMAL_CONFIG),
+    )
+    result = runner.invoke(app, ["run", "--config", "config.yaml"])
+    assert "not initialized" in result.output.lower()
+    assert called.get("ran") is True
