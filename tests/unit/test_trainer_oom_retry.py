@@ -76,11 +76,16 @@ def test_oom_multiple_halvings_until_one() -> None:
     assert all(e.action == "microbatch_halved" for e in state.pending_oom_events)
 
 
-def test_oom_after_microbatch_1_raises() -> None:
+def test_oom_after_microbatch_1_signals_b_exhausted() -> None:
+    """At micro_batch=1, the inner ladder no longer hard-fails: it raises the
+    B-exhausted signal so train_step can try the K-rung. Spec §4.1."""
+    from custom_sam_peft.train.loop import _MicrobatchExhausted
+
     state = _State(micro_batch_size=8)
-    model = _OomThenOk(n_oom=4)  # 3 halvings → mb=1, 4th OOM raises
-    with pytest.raises(RuntimeError, match="OOM at step"):
+    model = _OomThenOk(n_oom=4)  # 3 halvings -> mb=1, 4th OOM signals exhaustion
+    with pytest.raises(_MicrobatchExhausted):
         _train_step_with_oom_ladder(model, _make_batch(8), state, forward_call=_fake_forward_call)
+    assert state.micro_batch_size == 1
 
 
 def test_oom_microbatch_shrink_is_sticky() -> None:
@@ -154,6 +159,17 @@ def test_oom_gradient_magnitude_preserved_across_ladder() -> None:
     assert abs(p.grad.item() - 3.0) < 1e-5, (
         f"Expected grad 3.0 (sum/n_micro = 6/2), got {p.grad.item()} — double-divide?"
     )
+
+
+def test_oom_event_supports_multiplex_halved_action() -> None:
+    ev = OomEvent(step=5, action="multiplex_halved", new_micro_batch_size=1, effective_K=8)
+    assert ev.action == "multiplex_halved"
+    assert ev.effective_K == 8
+
+
+def test_oom_event_microbatch_action_defaults_effective_k_none() -> None:
+    ev = OomEvent(step=1, action="microbatch_halved", new_micro_batch_size=4)
+    assert ev.effective_K is None
 
 
 def test_oom_events_serialise_into_bundle_edge_cases() -> None:

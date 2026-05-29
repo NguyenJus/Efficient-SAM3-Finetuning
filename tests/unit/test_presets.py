@@ -38,33 +38,37 @@ def _stub_gpu(
 # ---- decide_preset: per-tier behavior --------------------------------------
 
 
-def test_decide_preset_11gib_chooses_qlora(
+def test_decide_preset_32gib_chooses_qlora(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
-    _stub_gpu(monkeypatch, int(11 * _GB))
+    # With K_eff=MULTIPLEX_CAP (16) as default, the train activation term is
+    # ~23 GiB/example, so LoRA (10 GiB weights) needs ~35 GiB minimum budget.
+    # A 32 GiB card (budget=31 GiB) fits QLoRA (~28 GiB) but not LoRA.
+    _stub_gpu(monkeypatch, int(32 * _GB))
     d = decide_preset()
     assert d.method == "qlora"
-    # At 11 GiB the LoRA base model is too large; QLoRA is chosen at the highest
-    # rank that fits (analytic seed, superseded by calibration cache).
+    # QLoRA is chosen at the highest rank that fits (analytic seed, superseded by
+    # calibration cache).
     assert d.predicted_bytes <= d.budget_bytes
 
 
-def test_decide_preset_16gib_chooses_lora_low_rank(
+def test_decide_preset_40gib_chooses_lora_low_rank(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
-    _stub_gpu(monkeypatch, int(16 * _GB))
+    # At 40 GiB (budget=39 GiB), LoRA r=8 batch=1 (~35 GiB) fits; lora is
+    # preferred over qlora by the sort key.  Exact rank depends on analytic seed.
+    _stub_gpu(monkeypatch, int(40 * _GB))
     d = decide_preset()
     assert d.method == "lora"
-    # At 16 GiB, lora is chosen over qlora (quality preference). The rank is
-    # within the search space maximum; exact rank depends on analytic seed constants.
     assert d.r <= 64
     assert d.batch_size >= 1
 
 
-def test_decide_preset_40gib_chooses_lora_high_rank(
+def test_decide_preset_65gib_chooses_lora_high_rank(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
-    _stub_gpu(monkeypatch, int(40 * _GB))
+    # At 65 GiB (budget=64 GiB), LoRA r=64 batch=2 (~60 GiB) fits.
+    _stub_gpu(monkeypatch, int(65 * _GB))
     d = decide_preset()
     assert d.method == "lora"
     assert d.r >= 32
@@ -74,10 +78,13 @@ def test_decide_preset_40gib_chooses_lora_high_rank(
 def test_decide_preset_80gib_chooses_max_rank_batch(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
+    # At 80 GiB (budget=79 GiB) with K_eff=16, the activation term at batch=2 is
+    # ~46 GiB, so max batch is 2 at r=64.  We test that the sort key selects r=64
+    # and picks the highest feasible batch (>=2).
     _stub_gpu(monkeypatch, int(80 * _GB))
     d = decide_preset()
     assert d.r == 64
-    assert d.batch_size >= 8  # within 1 step of max (spec says "or near max")
+    assert d.batch_size >= 2  # max feasible batch at K_eff=16 within 79 GiB
 
 
 def test_decide_preset_unfittable_raises(
@@ -86,6 +93,17 @@ def test_decide_preset_unfittable_raises(
     _stub_gpu(monkeypatch, int(4 * _GB))
     with pytest.raises(RuntimeError, match=r"SAM 3\.1 needs"):
         decide_preset()
+
+
+def test_decide_preset_invalid_k_raises(
+    monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
+) -> None:
+    """decide_preset(k=0) and decide_preset(k=-1) must raise ValueError."""
+    _stub_gpu(monkeypatch, int(40 * _GB))
+    with pytest.raises(ValueError):
+        decide_preset(k=0)
+    with pytest.raises(ValueError):
+        decide_preset(k=-1)
 
 
 def test_decide_preset_grad_accum_targets_16(
@@ -310,7 +328,8 @@ def test_decide_preset_selects_float16_below_cc80(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
     """On CC<8.0 hardware (Pascal/GTX 1080) decide_preset must pick float16."""
-    _stub_gpu(monkeypatch, int(16 * _GB), cc=(6, 1))
+    # Use 40 GiB so a preset fits even at K_eff=MULTIPLEX_CAP (16).
+    _stub_gpu(monkeypatch, int(40 * _GB), cc=(6, 1))
     decision = decide_preset()
     assert decision.dtype == "float16"
     assert "fp16" in decision.label()
@@ -321,6 +340,78 @@ def test_decide_preset_selects_bfloat16_at_cc80(
     monkeypatch: pytest.MonkeyPatch, _force_cuda_available: None
 ) -> None:
     """On CC>=8.0 hardware (Ampere+) decide_preset must pick bfloat16."""
-    _stub_gpu(monkeypatch, int(16 * _GB), cc=(8, 0))
+    # Use 40 GiB so a preset fits even at K_eff=MULTIPLEX_CAP (16).
+    _stub_gpu(monkeypatch, int(40 * _GB), cc=(8, 0))
     decision = decide_preset()
     assert decision.dtype == "bfloat16"
+
+
+# ---- K_eff activation + shared attention helper ----------------------------
+
+
+def test_attention_bytes_helper_matches_sdpa_model() -> None:
+    """The shared helper reproduces the inline SDPA model: H * N^2 * 4 bytes."""
+    from custom_sam_peft.presets import _attention_bytes_per_example
+
+    image_size = 1008
+    n_tokens = (image_size // 14) ** 2  # patch=14
+    expected = 16 * n_tokens * n_tokens * 4  # heads=16, fp32
+    assert _attention_bytes_per_example(image_size) == expected
+
+
+def test_predicted_bytes_train_grows_with_k_eff() -> None:
+    """Train-mode prediction is monotone in K_eff (more classes/group -> more activation)."""
+    from custom_sam_peft.presets import _predicted_bytes
+
+    small_k = _predicted_bytes("lora", r=8, batch=1, image_size=1008, cache=None, k_eff=1)
+    big_k = _predicted_bytes("lora", r=8, batch=1, image_size=1008, cache=None, k_eff=16)
+    assert big_k > small_k
+
+
+def test_predicted_bytes_train_includes_attention_term() -> None:
+    """Train-mode prediction includes the (dominant) SDPA attention term.
+
+    Asserts additive equality so that any omitted or doubled term causes a
+    failure (near-tautological comparisons would miss those bugs).
+    """
+    from custom_sam_peft.presets import (
+        WORKSPACE_BYTES,
+        _activation_bytes,
+        _adapter_bytes,
+        _attention_bytes_per_example,
+        _model_bytes,
+        _optimizer_bytes,
+        _predicted_bytes,
+    )
+
+    pb = _predicted_bytes("lora", r=8, batch=1, image_size=1008, cache=None, k_eff=1)
+    expected = (
+        _model_bytes("lora")
+        + _adapter_bytes(8)
+        + _optimizer_bytes(8)
+        + _activation_bytes(1008, 1, None, k_eff=1)
+        + _attention_bytes_per_example(1008)  # batch=1
+        + WORKSPACE_BYTES
+    )
+    assert pb == expected
+    # Sanity: the attention term is positive (guards against a zero constant).
+    assert _attention_bytes_per_example(1008) > 0
+
+
+def test_decide_preset_threads_k_into_formula(monkeypatch: pytest.MonkeyPatch) -> None:
+    """decide_preset(k=...) feeds K_eff into the train formula; larger k -> larger
+    predicted_bytes for the chosen preset (monotone), all else equal."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    _stub_gpu(monkeypatch, int(80 * _GB))  # large card so a preset always fits
+    d_small = decide_preset(k=1)
+    d_big = decide_preset(k=16)
+    assert d_big.predicted_bytes > d_small.predicted_bytes
+
+
+def test_decide_preset_defaults_k_to_cap_when_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No k supplied -> conservative worst case == MULTIPLEX_CAP."""
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    _stub_gpu(monkeypatch, int(80 * _GB))
+    assert decide_preset().predicted_bytes == decide_preset(k=MULTIPLEX_CAP).predicted_bytes

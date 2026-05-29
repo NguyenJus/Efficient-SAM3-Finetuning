@@ -379,6 +379,24 @@ def test_write_bundle_oom_edge_note_multiple_halvings(
     assert "gradient_checkpointing" not in summary
 
 
+def test_oom_edge_note_renders_multiplex_halved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The OOM edge note reports the final effective_K alongside final micro_batch
+    when a multiplex_halved event occurred. Spec §8."""
+    events = (
+        OomEvent(step=10, action="microbatch_halved", new_micro_batch_size=1),
+        OomEvent(step=10, action="multiplex_halved", new_micro_batch_size=1, effective_K=8),
+    )
+    ctx = _make_ctx(tmp_path, per_example_iou=[], oom_events=events)
+    monkeypatch.setattr("custom_sam_peft.runs.bundle._reinfer_one_example", _fake_reinfer)
+    write_bundle(ctx, _make_metrics(0.5), val_dataset=_make_dataset(0), model_wrapper=MagicMock())
+    summary = (ctx.run_dir / "summary.md").read_text()
+    assert "OOM retries: 2" in summary
+    assert "final micro_batch=1" in summary
+    assert "final classes_per_forward=8" in summary
+
+
 def test_write_bundle_oom_edge_note_no_ckpt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
