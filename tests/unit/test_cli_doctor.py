@@ -219,8 +219,6 @@ def test_doctor_with_config_renders_resolved_losses(tmp_path) -> None:
 
 
 def test_doctor_json_with_config_has_loss_block(tmp_path) -> None:
-    import json
-
     from typer.testing import CliRunner
 
     from custom_sam_peft.cli.main import app
@@ -265,8 +263,6 @@ def test_doctor_json_with_config_has_loss_block(tmp_path) -> None:
 
 def test_doctor_json_without_config_no_loss_block() -> None:
     """Spec §10.2: with no --config, output has no loss block."""
-    import json
-
     from typer.testing import CliRunner
 
     from custom_sam_peft.cli.main import app
