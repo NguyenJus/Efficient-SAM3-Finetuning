@@ -358,8 +358,9 @@ def write_eval_visualizations(
     try:
         with torch.no_grad():
             for idx in selected:
-                example = dataset[idx]
+                example = None
                 try:
+                    example = dataset[idx]
                     composite = render_eval_pair(
                         model, example, list(dataset.class_names),
                         mask_threshold=mask_threshold, mean=mean, std=std, matcher=matcher,
@@ -368,9 +369,10 @@ def write_eval_visualizations(
                     composite.save(out_path)
                     written.append(out_path)
                 except Exception:
+                    image_id = example.image_id if example is not None else "<unavailable>"
                     _LOG.warning(
                         "eval visualize: failed to render image_id=%r (idx=%d); skipping.",
-                        example.image_id, idx, exc_info=True,
+                        image_id, idx, exc_info=True,
                     )
     finally:
         if was_training and hasattr(model, "train"):
