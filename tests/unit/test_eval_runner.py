@@ -580,7 +580,10 @@ def test_run_eval_calls_write_eval_visualizations_when_on(
     )
     # Evaluator.evaluate(..., return_per_example_iou=True) -> (report, iou_list)
     ev = MagicMock()
-    ev.evaluate.return_value = (MagicMock(overall={}, per_class={}, n_images=1, n_predictions=0), [0.5])
+    ev.evaluate.return_value = (
+        MagicMock(overall={}, per_class={}, n_images=1, n_predictions=0),
+        [0.5],
+    )
     ev._last_predictions = []
     monkeypatch.setattr("custom_sam_peft.eval.runner.Evaluator", lambda _c: ev)
 
@@ -599,9 +602,7 @@ def test_run_eval_calls_write_eval_visualizations_when_on(
     assert captured["per_example_iou"] == [0.5]
 
 
-def test_run_eval_no_visualize_skips_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_run_eval_no_visualize_skips_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """visualize=False overrides cfg → write_eval_visualizations is NOT called and the
     plain evaluate_and_save path is used."""
     cfg = _make_cfg()
@@ -639,7 +640,10 @@ def test_run_eval_viz_failure_does_not_abort(
         lambda *_a, **_kw: lambda *a, **kw: MagicMock(__len__=lambda self: 0, class_names=["cat"]),
     )
     ev = MagicMock()
-    ev.evaluate.return_value = (MagicMock(overall={}, per_class={}, n_images=1, n_predictions=0), [0.5])
+    ev.evaluate.return_value = (
+        MagicMock(overall={}, per_class={}, n_images=1, n_predictions=0),
+        [0.5],
+    )
     ev._last_predictions = []
     monkeypatch.setattr("custom_sam_peft.eval.runner.Evaluator", lambda _c: ev)
     monkeypatch.setattr(
@@ -647,6 +651,6 @@ def test_run_eval_viz_failure_does_not_abort(
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("viz boom")),
     )
     with caplog.at_level("WARNING"):
-        report = run_eval(cfg, checkpoint=None, split="val", output_dir=tmp_path)
+        run_eval(cfg, checkpoint=None, split="val", output_dir=tmp_path)
     assert (tmp_path / "metrics.json").exists()  # persisted before viz
     assert any("viz" in r.message.lower() or "visuali" in r.message.lower() for r in caplog.records)

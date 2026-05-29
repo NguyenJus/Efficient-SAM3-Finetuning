@@ -77,9 +77,7 @@ def pick_samples(
     """
     # Candidate filter: >=1 GT instance. per_example_iou is index-aligned to the
     # dataset slice the metrics pass evaluated (full or lite).
-    candidates = [
-        i for i in range(len(per_example_iou)) if len(dataset[i].instances) > 0
-    ]
+    candidates = [i for i in range(len(per_example_iou)) if len(dataset[i].instances) > 0]
     if not candidates:
         return []
 
@@ -146,8 +144,10 @@ def denormalize_to_rgb(
     arr = (pixel * 255.0).round().to(torch.uint8).permute(1, 2, 0).cpu().numpy()  # (H, W, n)
     if n < 3:
         # Pad to 3 channels by repeating the last channel (e.g. grayscale -> RGB).
-        arr = np.repeat(arr[:, :, :1], 3, axis=2) if n == 1 else np.concatenate(
-            [arr, arr[:, :, -1:].repeat(3 - n, axis=2)], axis=2
+        arr = (
+            np.repeat(arr[:, :, :1], 3, axis=2)
+            if n == 1
+            else np.concatenate([arr, arr[:, :, -1:].repeat(3 - n, axis=2)], axis=2)
         )
     return Image.fromarray(arr, mode="RGB")
 
@@ -301,8 +301,12 @@ def render_eval_pair(
     gt_panel = render_overlay(source, gt_entries, prompts=class_names)
 
     pred_entries = _matched_pred_entries(
-        model, example, class_names,
-        mask_threshold=mask_threshold, matcher=matcher, runtime=runtime,
+        model,
+        example,
+        class_names,
+        mask_threshold=mask_threshold,
+        matcher=matcher,
+        runtime=runtime,
     )
     pred_panel = render_overlay(source, pred_entries, prompts=class_names)
 
@@ -340,7 +344,9 @@ def write_eval_visualizations(
         return []
 
     mean, std = resolve_normalization(
-        model_name, normalize, channel_semantics=channel_semantics  # type: ignore[arg-type]
+        model_name,
+        normalize,
+        channel_semantics=channel_semantics,  # type: ignore[arg-type]
     )
     w = MatcherWeights()
     matcher = HungarianMatcher(
@@ -362,8 +368,13 @@ def write_eval_visualizations(
                 try:
                     example = dataset[idx]
                     composite = render_eval_pair(
-                        model, example, list(dataset.class_names),
-                        mask_threshold=mask_threshold, mean=mean, std=std, matcher=matcher,
+                        model,
+                        example,
+                        list(dataset.class_names),
+                        mask_threshold=mask_threshold,
+                        mean=mean,
+                        std=std,
+                        matcher=matcher,
                     )
                     out_path = vis_dir / f"{_sanitize_image_id(example.image_id)}.png"
                     composite.save(out_path)
@@ -372,7 +383,9 @@ def write_eval_visualizations(
                     image_id = example.image_id if example is not None else "<unavailable>"
                     _LOG.warning(
                         "eval visualize: failed to render image_id=%r (idx=%d); skipping.",
-                        image_id, idx, exc_info=True,
+                        image_id,
+                        idx,
+                        exc_info=True,
                     )
     finally:
         if was_training and hasattr(model, "train"):

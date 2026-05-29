@@ -58,8 +58,13 @@ def test_render_eval_pair_no_gt_class_draws_no_pred_for_that_class() -> None:
     model = TinySam3Stub()
     ex = _example(class_id=0)
     out = render_eval_pair(
-        model, ex, ["cat", "dog"], mask_threshold=0.0,
-        mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], matcher=_matcher(),
+        model,
+        ex,
+        ["cat", "dog"],
+        mask_threshold=0.0,
+        mean=[0.5, 0.5, 0.5],
+        std=[0.5, 0.5, 0.5],
+        matcher=_matcher(),
     )
     assert isinstance(out, Image.Image)
 
@@ -90,10 +95,15 @@ def test_write_eval_visualizations_writes_pngs(tmp_path) -> None:
     ds = _dataset([0, 1, 0])  # 3 GT-bearing images
     model = TinySam3Stub()
     paths = write_eval_visualizations(
-        model, ds, tmp_path,
-        per_example_iou=[0.9, 0.5, 0.1], count=10,
-        mask_threshold=0.0, model_name="facebook/sam3.1",
-        normalize=None, channel_semantics="rgb",
+        model,
+        ds,
+        tmp_path,
+        per_example_iou=[0.9, 0.5, 0.1],
+        count=10,
+        mask_threshold=0.0,
+        model_name="facebook/sam3.1",
+        normalize=None,
+        channel_semantics="rgb",
     )
     assert len(paths) == 3  # small pool → all candidates
     vis_dir = tmp_path / "visualizations"
@@ -110,8 +120,12 @@ def test_write_eval_visualizations_zero_candidates(tmp_path, caplog) -> None:
 
     # All images have NO GT → zero candidates.
     no_gt = [
-        Example(image=torch.zeros(3, 8, 8), image_id=f"n_{i}",
-                prompts=TextPrompts(classes=["cat", "dog"]), instances=[])
+        Example(
+            image=torch.zeros(3, 8, 8),
+            image_id=f"n_{i}",
+            prompts=TextPrompts(classes=["cat", "dog"]),
+            instances=[],
+        )
         for i in range(2)
     ]
 
@@ -126,10 +140,15 @@ def test_write_eval_visualizations_zero_candidates(tmp_path, caplog) -> None:
 
     with caplog.at_level("INFO"):
         paths = write_eval_visualizations(
-            TinySam3Stub(), _DS(), tmp_path,
-            per_example_iou=[1.0, 1.0], count=5,
-            mask_threshold=0.0, model_name="facebook/sam3.1",
-            normalize=None, channel_semantics="rgb",
+            TinySam3Stub(),
+            _DS(),
+            tmp_path,
+            per_example_iou=[1.0, 1.0],
+            count=5,
+            mask_threshold=0.0,
+            model_name="facebook/sam3.1",
+            normalize=None,
+            channel_semantics="rgb",
         )
     assert paths == []
     assert not (tmp_path / "visualizations").exists() or not list(
@@ -159,10 +178,15 @@ def test_write_eval_visualizations_per_image_failure_is_caught(
     monkeypatch.setattr(viz, "render_eval_pair", flaky)
     with caplog.at_level("WARNING"):
         paths = viz.write_eval_visualizations(
-            model, ds, tmp_path,
-            per_example_iou=[0.9, 0.1], count=10,
-            mask_threshold=0.0, model_name="facebook/sam3.1",
-            normalize=None, channel_semantics="rgb",
+            model,
+            ds,
+            tmp_path,
+            per_example_iou=[0.9, 0.1],
+            count=10,
+            mask_threshold=0.0,
+            model_name="facebook/sam3.1",
+            normalize=None,
+            channel_semantics="rgb",
         )
     assert len(paths) == 1  # one survived
     assert any(r.levelname == "WARNING" for r in caplog.records)

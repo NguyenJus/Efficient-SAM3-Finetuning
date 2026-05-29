@@ -67,7 +67,9 @@ def _build_val_dataset(cfg: TrainConfig, vs: ValSource) -> Dataset:
     return cast(Dataset, builder(data_cfg_dict, model_name=cfg.model.name, pipeline="eval"))
 
 
-def _orchestrate(cfg: TrainConfig, resume: Path | None, mode: ProgressMode, *, visualize: bool) -> int:
+def _orchestrate(
+    cfg: TrainConfig, resume: Path | None, mode: ProgressMode, *, visualize: bool
+) -> int:
     from custom_sam_peft.data.val_source import load_val_source
 
     start_ts = datetime.now(UTC)

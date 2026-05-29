@@ -92,9 +92,7 @@ def test_eval_export_requires_checkpoint(tmp_path: Path, monkeypatch: pytest.Mon
     assert "export" in output_lower or "checkpoint" in output_lower
 
 
-def test_eval_no_visualize_threads_false(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_eval_no_visualize_threads_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = tmp_path / "c.yaml"
     cfg.write_text("placeholder")
     monkeypatch.setattr("custom_sam_peft.cli.eval_cmd.load_config", lambda p: MagicMock())
@@ -112,9 +110,7 @@ def test_eval_no_visualize_threads_false(
     assert captured["visualize"] is False
 
 
-def test_eval_default_visualize_is_none(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_eval_default_visualize_is_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = tmp_path / "c.yaml"
     cfg.write_text("placeholder")
     monkeypatch.setattr("custom_sam_peft.cli.eval_cmd.load_config", lambda p: MagicMock())
