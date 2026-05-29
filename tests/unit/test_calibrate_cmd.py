@@ -115,9 +115,14 @@ def test_calibrate_writes_cache_with_schema_v2(
 
 
 def test_calibrate_cache_fresh_exits_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Write a config too: the fresh-cache exit currently fires before load_config,
-    # but Task 6 may move config reading earlier — don't let this test depend on order.
+    # Write a config too: the fresh-cache path now reads load_config before checking
+    # freshness so it can derive k_eff for the config rewrite.
     _patch_probe(monkeypatch, tmp_path=tmp_path)
+    # decide_preset validates the cache via presets._current_sam3_checkpoint_sha;
+    # _patch_probe only rebinds the calibrate_cmd alias, so patch the presets-side
+    # too (in production they are the same function) — otherwise decide_preset
+    # rejects the cache on sha mismatch and falls back to analytic provenance.
+    monkeypatch.setattr("custom_sam_peft.presets._current_sam3_checkpoint_sha", lambda: "deadbeef")
     monkeypatch.chdir(tmp_path)
     cache = tmp_path / ".custom_sam_peft_calibration.json"
     cache.write_text(
@@ -130,8 +135,8 @@ def test_calibrate_cache_fresh_exits_zero(tmp_path: Path, monkeypatch: pytest.Mo
                 "sam3_checkpoint_sha": "deadbeef",
                 "torch_version": "2.4.0",
                 "custom_sam_peft_version": "0.0.0",
-                "activation_bytes_per_example": 1,
-                "peak_memory_bytes_at_probe": 2,
+                "activation_bytes_per_example": int(1 * _GB),
+                "peak_memory_bytes_at_probe": int(38 * _GB),
             }
         )
     )
@@ -139,7 +144,25 @@ def test_calibrate_cache_fresh_exits_zero(tmp_path: Path, monkeypatch: pytest.Mo
     result = runner.invoke(app, ["calibrate"])
     assert result.exit_code == 0, result.output
     assert "cache fresh" in result.output
-    assert cache.stat().st_mtime == mtime_before  # not rewritten
+    # The cache file must NOT be rewritten (mtime unchanged).
+    assert cache.stat().st_mtime == mtime_before
+    # The config sizing block MUST be rewritten from the cached values.
+    cfg_path = tmp_path / "config.yaml"
+    body = cfg_path.read_text()
+    assert "# calibrated" in body
+    from custom_sam_peft.config.loader import load_config
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP
+    from custom_sam_peft.presets import decide_preset
+
+    cfg = load_config(cfg_path)  # still a valid config
+    # The rewritten sizing must reflect the *calibrated* decision (cache consumed),
+    # not the analytic formula — otherwise the fresh-cache path silently ignored it.
+    k_eff = min(cfg.train.multiplex.classes_per_forward, MULTIPLEX_CAP)
+    calibrated = decide_preset(k=k_eff, cache_path=cache)
+    assert calibrated.provenance == "calibrated"
+    assert cfg.train.batch_size == calibrated.batch_size
+    assert cfg.peft.r == calibrated.r
+    assert cfg.train.grad_accum_steps == calibrated.grad_accum_steps
 
 
 def test_calibrate_force_overwrites_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

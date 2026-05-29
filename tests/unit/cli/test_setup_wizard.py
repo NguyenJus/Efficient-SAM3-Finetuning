@@ -926,3 +926,47 @@ def test_generate_config_no_calibrate_when_cpu_only(
     out = tmp_path / "config.yaml"
     sw.generate_config(out, force=True, cuda_available=False)
     assert "ran" not in invoked
+
+
+def test_generate_config_fresh_cache_no_failure_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When calibrate exits 0 (cache fresh), the wizard must NOT print the
+    'calibration did not complete' failure message. Issue #184."""
+    echoes: list[str] = []
+    monkeypatch.setattr(sw.typer, "echo", lambda msg="", *a, **k: echoes.append(str(msg)))
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: True)
+
+    # Simulate _invoke_calibrate raising typer.Exit(code=0) — the cache-fresh path.
+    def _fake_calibrate_fresh(output: Path) -> None:
+        raise typer.Exit(code=0)
+
+    monkeypatch.setattr(sw, "_invoke_calibrate", _fake_calibrate_fresh)
+    out = tmp_path / "config.yaml"
+    sw.generate_config(out, force=True, cuda_available=True)
+
+    failure_msgs = [m for m in echoes if "did not complete" in m]
+    assert failure_msgs == [], f"Expected no failure message on exit-0, but got: {failure_msgs}"
+
+
+def test_generate_config_nonzero_exit_emits_failure_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When calibrate exits non-zero (real failure), the wizard MUST print the
+    'calibration did not complete' message. Issue #184."""
+    echoes: list[str] = []
+    monkeypatch.setattr(sw.typer, "echo", lambda msg="", *a, **k: echoes.append(str(msg)))
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: True)
+
+    # Simulate _invoke_calibrate raising typer.Exit with a non-zero code.
+    def _fake_calibrate_fail(output: Path) -> None:
+        raise typer.Exit(code=4)
+
+    monkeypatch.setattr(sw, "_invoke_calibrate", _fake_calibrate_fail)
+    out = tmp_path / "config.yaml"
+    sw.generate_config(out, force=True, cuda_available=True)
+
+    failure_msgs = [m for m in echoes if "did not complete" in m]
+    assert failure_msgs, "Expected failure message on non-zero exit, but none was emitted"

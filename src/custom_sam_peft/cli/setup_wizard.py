@@ -461,6 +461,11 @@ def generate_config(output: Path, *, force: bool, cuda_available: bool) -> tuple
     ):
         try:
             _invoke_calibrate(output)
-        except typer.Exit:
-            typer.echo("calibration did not complete; keeping the formula-derived config", err=True)
+        except typer.Exit as exc:
+            # Exit code 0 (or None) means success (e.g. "cache fresh — exiting").
+            # Only treat a non-zero exit as a failure worth reporting.
+            if (exc.exit_code or 0) != 0:
+                typer.echo(
+                    "calibration did not complete; keeping the formula-derived config", err=True
+                )
     return launch, ctx.run_mode
