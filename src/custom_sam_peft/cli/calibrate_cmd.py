@@ -95,6 +95,37 @@ def _run_probe(*, method: str, r: int, k_eff: int, batch: int) -> int:
     return int(torch.cuda.max_memory_allocated())
 
 
+def _apply_config_rewrite(config: Path, *, k_eff: int, cache_path: Path) -> None:
+    """Rewrite the config's sizing block using calibrated values from *cache_path*.
+
+    Shared by the post-probe path and the cache-fresh path so both always tighten
+    the config when a valid calibration cache exists. Emits a WARNING on failure
+    (OSError/ValueError/RuntimeError) and silently returns — the cache is always
+    considered the authoritative output.
+    """
+    try:
+        from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
+        from custom_sam_peft.presets import decide_preset
+
+        decision = decide_preset(k=k_eff, cache_path=cache_path)
+        annotation = f"# calibrated {datetime.now(UTC).date().isoformat()}"
+        _rewrite_sizing_block(
+            config,
+            method=decision.method,
+            r=decision.r,
+            batch_size=decision.batch_size,
+            grad_accum_steps=decision.grad_accum_steps,
+            dtype=decision.dtype,
+            annotation=annotation,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        # The cache (existing or freshly written) stays authoritative; only the
+        # in-place config rewrite failed, so the config is left untouched.
+        typer.echo(
+            f"WARNING: config rewrite failed (cache intact, config unchanged): {exc}", err=True
+        )
+
+
 def calibrate(
     output: Path = typer.Option(Path(CACHE_FILENAME), "--output", help="Cache file path."),
     force: bool = typer.Option(False, "--force", help="Re-probe even if the cache is fresh."),
@@ -120,15 +151,16 @@ def calibrate(
 
         run_init("coco-text-lora", config, force=False)
 
-    if not force and _cache_is_fresh(output, gpu_name):
-        typer.echo("cache fresh — exiting")
-        raise typer.Exit(code=0)
-
     cfg = load_config(config)
     method = cfg.peft.method
     r = cfg.peft.r
     k_eff = min(cfg.train.multiplex.classes_per_forward, MULTIPLEX_CAP)
     batch = cfg.train.batch_size
+
+    if not force and _cache_is_fresh(output, gpu_name):
+        typer.echo("cache fresh — exiting")
+        _apply_config_rewrite(config, k_eff=k_eff, cache_path=output)
+        raise typer.Exit(code=0)
 
     try:
         peak = _run_probe(method=method, r=r, k_eff=k_eff, batch=batch)
@@ -184,25 +216,7 @@ def calibrate(
     # Rewrite the config's sizing block in place with calibrated values.
     # Pass cache_path=output so decide_preset reads the freshly-written cache
     # (provenance="calibrated") even when --output is non-default.
-    try:
-        from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
-        from custom_sam_peft.presets import decide_preset
-
-        decision = decide_preset(k=k_eff, cache_path=output)
-        annotation = f"# calibrated {datetime.now(UTC).date().isoformat()}"
-        _rewrite_sizing_block(
-            config,
-            method=decision.method,
-            r=decision.r,
-            batch_size=decision.batch_size,
-            grad_accum_steps=decision.grad_accum_steps,
-            dtype=decision.dtype,
-            annotation=annotation,
-        )
-    except (OSError, ValueError, RuntimeError) as exc:
-        typer.echo(
-            f"WARNING: config rewrite failed (cache written, config unchanged): {exc}", err=True
-        )
+    _apply_config_rewrite(config, k_eff=k_eff, cache_path=output)
 
     def _gib(b: int) -> float:
         return b / (1024**3)
