@@ -892,7 +892,7 @@ def test_generate_config_offers_calibrate_with_consent(
     explicit consent (opt-in). Spec §5.2."""
     invoked: dict[str, bool] = {}
     monkeypatch.setattr(sw, "_invoke_calibrate", lambda output: invoked.setdefault("ran", True))
-    monkeypatch.setattr(sw, "run_wizard", lambda ctx: _MINIMAL_ANSWERS)
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
     # Post-emit calibrate confirm returns True → _invoke_calibrate must run.
     monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: True)
     out = tmp_path / "config.yaml"
@@ -906,7 +906,7 @@ def test_generate_config_no_calibrate_when_declined(
     """Declining the offer never runs the probe. Spec §5.2 / §7."""
     invoked: dict[str, bool] = {}
     monkeypatch.setattr(sw, "_invoke_calibrate", lambda output: invoked.setdefault("ran", True))
-    monkeypatch.setattr(sw, "run_wizard", lambda ctx: _MINIMAL_ANSWERS)
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
     # Post-emit calibrate confirm returns False → _invoke_calibrate must NOT run.
     monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: False)
     out = tmp_path / "config.yaml"
@@ -920,7 +920,7 @@ def test_generate_config_no_calibrate_when_cpu_only(
     """CPU-only boxes (cuda_available=False) never get the calibrate offer. Spec §7."""
     invoked: dict[str, bool] = {}
     monkeypatch.setattr(sw, "_invoke_calibrate", lambda output: invoked.setdefault("ran", True))
-    monkeypatch.setattr(sw, "run_wizard", lambda ctx: _MINIMAL_ANSWERS)
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
     # Even if confirm were to return True somehow, gating on cuda_available prevents it.
     monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: True)
     out = tmp_path / "config.yaml"
