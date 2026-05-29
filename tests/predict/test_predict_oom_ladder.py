@@ -137,3 +137,158 @@ def test_predict_oom_retry_b_discards_partial_chunk(tmp_path: Path) -> None:
     assert not over_committed, (
         f"double-committed (image, class) pairs after RETRY_B: {over_committed}"
     )
+
+
+# ---------------------------------------------------------------------------
+# New tests: close review gaps #1, #2, #3
+# ---------------------------------------------------------------------------
+
+
+def test_predict_oom_retry_b_discards_non_empty_buffer(tmp_path: Path, monkeypatch) -> None:
+    """RETRY_B with a non-empty chunk_buf (review gap #1).
+
+    Sequence:
+      MULTIPLEX_CAP=1 → each class is its own group (j advances 1 per iteration).
+      prompts="a,b,c"  → category_ids 1, 2, 3.
+      batch_size=4     → B=4 on entry; OOM fires at (B=4, class="b").
+
+      j=0 (class "a") succeeds → 4 rows (category_id=1) land in chunk_buf.
+      j=1 (class "b") OOMs    → RETRY_B (B 4→2); chunk_buf DISCARDED; restart_chunk=True.
+      Outer while restarts at i=0, B=2 → two chunks of 2 images, all 3 classes each.
+
+    Asserts:
+      - No (image_id, category_id) pair appears more than Q times (a failed discard
+        would re-emit class-a rows at B=4 then again at B=2 → 2*Q duplicates).
+      - All 4 images x 3 classes present (no missing pair).
+      - category_ids {1, 2, 3} all represented.
+    """
+    import unittest.mock as mock
+    from collections import Counter
+
+    images = _make_image_dir(tmp_path, n=4)
+    opts = _opts(tmp_path, images, prompts="a,b,c", batch_size=4)
+
+    # Patch MULTIPLEX_CAP=1 so each class is its own forward pass (K_g=1 always).
+    monkeypatch.setattr("custom_sam_peft.models.sam3.MULTIPLEX_CAP", 1, raising=False)
+
+    # OOM fires exactly once: when B=4 and the class group is "b".
+    stub = _MultiplexStub(
+        oom_predicate=lambda imgs, pr: imgs.shape[0] == 4 and pr[0].classes == ["b"]
+    )
+
+    with mock.patch("custom_sam_peft.models.sam3.load_sam31", side_effect=lambda cfg, **kw: stub):
+        run_predict(opts)
+
+    got = __import__("json").loads((opts.output / "predictions.json").read_text())
+
+    pair_counts = Counter((int(p["image_id"]), int(p["category_id"])) for p in got)
+
+    # No pair should exceed Q occurrences (a failed buffer discard would give 2*Q).
+    over_committed = [(pair, cnt) for pair, cnt in pair_counts.items() if cnt > Q]
+    assert not over_committed, (
+        f"RETRY_B did not discard chunk_buf: double-committed pairs {over_committed}"
+    )
+
+    # All 4 images x 3 classes must be present.
+    assert len(pair_counts) == 4 * 3, (
+        f"missing (image, class) pairs; got {len(pair_counts)}, expected {4 * 3}: {pair_counts}"
+    )
+
+    # All three category_ids present.
+    category_ids = {int(p["category_id"]) for p in got}
+    assert category_ids == {1, 2, 3}, f"unexpected category_ids: {category_ids}"
+
+
+def test_predict_oom_retry_k_multi_group_j_arithmetic(tmp_path: Path, monkeypatch) -> None:
+    """RETRY_K with j>0 class groups — exercises the j-advance arithmetic (review gap #2).
+
+    Sequence:
+      MULTIPLEX_CAP=4 → all 4 classes start in ONE group (K_g=4, j=0).
+      batch_size=1    → B=1 (already at floor); first OOM → RETRY_K (K 4→2).
+      OOM fires when len(classes) > 2 (fires at K_g=4, silent at K_g=2).
+
+      After RETRY_K:  j=0, K_g=2 → group ["a","b"] → category_ids 1,2; j advances to 2.
+                      j=2, K_g=2 → group ["c","d"] → category_ids 3,4; j advances to 4.
+
+    Asserts:
+      - All 4 category_ids {1,2,3,4} present.
+      - No (image_id, category_id) pair appears more than Q times.
+      - Exactly 1 image x 4 classes pairs present (no drop, no dup).
+    """
+    import unittest.mock as mock
+    from collections import Counter
+
+    images = _make_image_dir(tmp_path, n=1)
+    opts = _opts(tmp_path, images, prompts="a,b,c,d", batch_size=1)
+
+    # Patch MULTIPLEX_CAP=4 so all 4 classes start in one group.
+    monkeypatch.setattr("custom_sam_peft.models.sam3.MULTIPLEX_CAP", 4, raising=False)
+
+    # OOM fires exactly once: when the class group has more than 2 classes (K_g=4).
+    stub = _MultiplexStub(oom_predicate=lambda imgs, pr: len(pr[0].classes) > 2)
+
+    with mock.patch("custom_sam_peft.models.sam3.load_sam31", side_effect=lambda cfg, **kw: stub):
+        run_predict(opts)
+
+    got = __import__("json").loads((opts.output / "predictions.json").read_text())
+
+    pair_counts = Counter((int(p["image_id"]), int(p["category_id"])) for p in got)
+
+    # No pair should exceed Q occurrences.
+    over_committed = [(pair, cnt) for pair, cnt in pair_counts.items() if cnt > Q]
+    assert not over_committed, f"double-committed pairs after RETRY_K: {over_committed}"
+
+    # All 1 image x 4 classes must be present.
+    assert len(pair_counts) == 1 * 4, (
+        f"missing (image, class) pairs; got {len(pair_counts)}, expected 4: {pair_counts}"
+    )
+
+    # All four category_ids present — proves j=2 group's (j+kk)+1 arithmetic is correct.
+    category_ids = {int(p["category_id"]) for p in got}
+    assert category_ids == {1, 2, 3, 4}, f"unexpected category_ids: {category_ids}"
+
+
+def test_predict_oom_content_identical_same_image_dir(tmp_path: Path) -> None:
+    """OOM run produces content-identical predictions to a non-OOM run (review gap #3).
+
+    Strengthens test_predict_oom_recovers_byte_identical_to_non_oom by using the
+    SAME image directory (so image_ids match) and comparing the full sorted list of
+    (image_id, category_id, score) tuples — not just row counts.
+    """
+    import unittest.mock as mock
+
+    # Shared image directory → both runs compute identical image_id hashes.
+    images = _make_image_dir(tmp_path / "images", n=3)
+
+    ref_opts = _opts(tmp_path / "ref", images, prompts="a,b,c,d,e", batch_size=2)
+    oom_opts = _opts(tmp_path / "oom", images, prompts="a,b,c,d,e", batch_size=2)
+
+    ref_stub = _MultiplexStub()
+    oom_stub = _MultiplexStub(oom_predicate=lambda imgs, pr: len(pr[0].classes) >= 1)
+
+    with mock.patch(
+        "custom_sam_peft.models.sam3.load_sam31", side_effect=lambda cfg, **kw: ref_stub
+    ):
+        run_predict(ref_opts)
+
+    with mock.patch(
+        "custom_sam_peft.models.sam3.load_sam31", side_effect=lambda cfg, **kw: oom_stub
+    ):
+        run_predict(oom_opts)
+
+    ref = __import__("json").loads((ref_opts.output / "predictions.json").read_text())
+    got = __import__("json").loads((oom_opts.output / "predictions.json").read_text())
+
+    def _key(p: dict) -> tuple:
+        return (int(p["image_id"]), int(p["category_id"]), round(float(p["score"]), 6))
+
+    ref_sorted = sorted(ref, key=_key)
+    got_sorted = sorted(got, key=_key)
+
+    assert len(got_sorted) == len(ref_sorted), (
+        f"row count mismatch: OOM run has {len(got_sorted)}, ref has {len(ref_sorted)}"
+    )
+    first_diff = next((g for g, r in zip(got_sorted, ref_sorted, strict=True) if g != r), None)
+    assert got_sorted == ref_sorted, (
+        f"OOM run predictions differ from reference in content (first mismatch: {first_diff})"
+    )

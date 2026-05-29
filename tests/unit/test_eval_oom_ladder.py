@@ -192,3 +192,93 @@ def test_eval_k_rung_resumes_mid_chunk_no_dup_no_drop(monkeypatch) -> None:
     assert not dups, f"duplicate (image_id, category_id): {dups}"
     # All 4 classes (category_id 1..4) must appear exactly once for the 1 image.
     assert {cid for _, cid in seen} == {1, 2, 3, 4}, f"missing/extra classes: {seen}"
+
+
+def test_eval_k_rung_retains_nonempty_buffer_across_halving(monkeypatch) -> None:
+    """chunk_buf rows buffered BEFORE a RETRY_K OOM must survive the K halving.
+
+    Setup:
+      - MULTIPLEX_CAP=2, 4 classes ["a","b","c","d"], batch_size=1.
+        → effective_K starts at 2; first group is [a,b] (j=0), second is [c,d] (j=2).
+      - Forward 1: group [a,b] succeeds → a,b rows enter chunk_buf.
+      - Forward 2: group [c,d] OOMs ONCE → RETRY_K decision; K halves to 1.
+      - Resume j=2 at K_g=1: [c] succeeds, [d] succeeds.
+      - All four a/b/c/d rows must appear in the final prediction list.
+
+    A buffer-retention bug (dropping chunk_buf on RETRY_K) would drop category_ids
+    1 and 2 (the a,b rows buffered before the OOM). Spec invariant (f) §7.3.
+    """
+    from custom_sam_peft.config.schema import EvalConfig
+    from custom_sam_peft.data.base import Example, Instance, TextPrompts
+    from custom_sam_peft.eval.evaluator import Evaluator
+
+    class_names = ["a", "b", "c", "d"]
+    monkeypatch.setattr("custom_sam_peft.eval.evaluator.MULTIPLEX_CAP", 2, raising=False)
+
+    def _make_ex(idx: int) -> Example:
+        h = w = 8
+        image = torch.zeros(3, h, w)
+        mask = torch.zeros(h, w, dtype=torch.bool)
+        mask[:4, :4] = True
+        return Example(
+            image=image,
+            image_id=f"img_{idx}",
+            prompts=TextPrompts(classes=class_names),
+            instances=[Instance(mask=mask, class_id=0, box=torch.tensor([0.0, 0.0, 4.0, 4.0]))],
+        )
+
+    class _DS:
+        class_names: ClassVar[list[str]] = ["a", "b", "c", "d"]
+
+        def __len__(self) -> int:
+            return 1
+
+        def __getitem__(self, i: int) -> Example:
+            return _make_ex(i)
+
+    dataset = _DS()
+
+    # Track call count to fire OOM exactly once on the [c,d] group (K_g==2, j==2).
+    # After K halves to 1, [c] and [d] are each forwarded alone and succeed.
+    cd_oom_fired: list[bool] = [False]
+
+    def _model(images, prompts, support=None):
+        classes = list(prompts[0].classes)
+        k_g = len(classes)
+        # OOM once when we see a 2-class group containing "c" (i.e. the [c,d] group).
+        if k_g == 2 and "c" in classes and not cd_oom_fired[0]:
+            cd_oom_fired[0] = True
+            raise _make_oom_error()
+        b = images.shape[0]
+        rows = b * k_g
+        h, w = images.shape[-2], images.shape[-1]
+        return {
+            "pred_logits": torch.zeros(rows, 1, 1),
+            "pred_boxes": torch.zeros(rows, 1, 4),
+            "pred_masks": torch.zeros(rows, 1, h, w),
+            "presence_logit_dec": torch.zeros(rows, 1),
+        }
+
+    cfg = EvalConfig(mode="full", iou_thresholds=[0.5], batch_size=1)
+    ev = Evaluator(cfg)
+    examples = [dataset[0]]
+    preds = ev._iter_predictions(_model, examples, dataset)
+
+    # Verify no duplicates.
+    seen: set[tuple[int, int]] = set()
+    dups: list[tuple[int, int]] = []
+    for p in preds:
+        key = (int(p["image_id"]), int(p["category_id"]))
+        if key in seen:
+            dups.append(key)
+        seen.add(key)
+    assert not dups, f"duplicate (image_id, category_id): {dups}"
+
+    # All 4 classes must appear exactly once.
+    found_cids = {cid for _, cid in seen}
+    assert found_cids == {1, 2, 3, 4}, f"missing/extra category_ids: {found_cids}"
+
+    # Specifically confirm that category_ids 1 and 2 (the a,b rows buffered BEFORE
+    # the halving) are present — proving non-empty chunk_buf was retained across RETRY_K.
+    assert 1 in found_cids, "category_id 1 (class 'a', buffered before OOM) was dropped"
+    assert 2 in found_cids, "category_id 2 (class 'b', buffered before OOM) was dropped"
