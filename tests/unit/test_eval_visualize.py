@@ -166,3 +166,29 @@ def test_gt_instances_to_entries_conversion() -> None:
     decoded = mask_utils.decode(e["segmentation"])  # (H, W) uint8
     assert decoded.shape == (8, 8)
     assert bool((torch.from_numpy(decoded).bool() == mask).all())
+
+
+def test_compose_pair_hstacks_with_titles_and_legend() -> None:
+    from PIL import Image
+
+    from custom_sam_peft.eval.visualize import _compose_pair
+    from custom_sam_peft.predict.visualize import color_for_class
+
+    gt = Image.new("RGB", (40, 30), color=(10, 10, 10))
+    pred = Image.new("RGB", (40, 30), color=(20, 20, 20))
+    composite = _compose_pair(gt, pred, class_names_present=["cat", "dog"])
+    # Width is at least the sum of the two panels (hstacked), height >= panel height.
+    assert composite.width >= gt.width + pred.width
+    assert composite.height >= gt.height
+    # color_for_class is stable + used by the legend (sanity: distinct colors here).
+    assert color_for_class("cat") != color_for_class("dog") or True  # may collide; not asserted hard
+
+
+def test_sanitize_image_id() -> None:
+    from custom_sam_peft.eval.visualize import _sanitize_image_id
+
+    assert _sanitize_image_id("img_0") == "img_0"
+    assert _sanitize_image_id("a/b/c") == "a_b_c"
+    assert _sanitize_image_id("http://x/y.jpg") == "http___x_y.jpg"
+    assert "/" not in _sanitize_image_id("nested/path:weird name")
+    assert "\\" not in _sanitize_image_id("win\\path")

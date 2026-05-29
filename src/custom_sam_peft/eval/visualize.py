@@ -16,14 +16,16 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Sequence
 
 import numpy as np
 import pycocotools.mask as mask_utils
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from custom_sam_peft.data.base import Dataset, Instance
+from custom_sam_peft.predict.visualize import color_for_class
 
 _LOG = logging.getLogger(__name__)
 
@@ -171,3 +173,53 @@ def gt_instances_to_entries(instances: list[Instance]) -> list[dict[str, object]
             }
         )
     return entries
+
+
+_TITLE_BAR_H = 18
+_LEGEND_ROW_H = 16
+_LEGEND_SWATCH = 12
+_SANITIZE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _sanitize_image_id(image_id: str) -> str:
+    """Replace any char outside [A-Za-z0-9._-] with '_' (path separators, ':',
+    spaces, URL chars). Yields a single-segment, filesystem-safe filename stem."""
+    return _SANITIZE_RE.sub("_", image_id)
+
+
+def _compose_pair(
+    gt_panel: Image.Image,
+    pred_panel: Image.Image,
+    *,
+    class_names_present: list[str],
+) -> Image.Image:
+    """Hstack `Ground Truth | Prediction` with panel titles and a shared per-class
+    color legend (the union of classes present in either panel). The same class is
+    the same color in both panels because both call color_for_class."""
+    font = ImageFont.load_default()
+    panel_h = max(gt_panel.height, pred_panel.height)
+    panel_w = gt_panel.width + pred_panel.width
+    legend_h = _LEGEND_ROW_H * (len(class_names_present) + 1) if class_names_present else 0
+    total_h = _TITLE_BAR_H + panel_h + legend_h
+    canvas = Image.new("RGB", (panel_w, total_h), color=(255, 255, 255))
+
+    # Titles.
+    draw = ImageDraw.Draw(canvas)
+    draw.text((4, 4), "Ground Truth", fill=(0, 0, 0), font=font)
+    draw.text((gt_panel.width + 4, 4), "Prediction", fill=(0, 0, 0), font=font)
+
+    # Panels below the title bar.
+    canvas.paste(gt_panel, (0, _TITLE_BAR_H))
+    canvas.paste(pred_panel, (gt_panel.width, _TITLE_BAR_H))
+
+    # Legend below the panels.
+    if class_names_present:
+        y = _TITLE_BAR_H + panel_h
+        draw.text((4, y), "Legend:", fill=(0, 0, 0), font=font)
+        y += _LEGEND_ROW_H
+        for name in class_names_present:
+            color = color_for_class(name)
+            draw.rectangle([4, y, 4 + _LEGEND_SWATCH, y + _LEGEND_SWATCH], fill=color)
+            draw.text((4 + _LEGEND_SWATCH + 4, y), name, fill=(0, 0, 0), font=font)
+            y += _LEGEND_ROW_H
+    return canvas
