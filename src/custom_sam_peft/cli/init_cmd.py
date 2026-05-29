@@ -12,11 +12,14 @@ from importlib.resources import files
 from pathlib import Path
 from typing import get_args
 
+import torch
 import typer
 from rich import print as rprint
 
+from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
 from custom_sam_peft.config.loader import load_config
 from custom_sam_peft.config.schema import ClassImbalance, Intensity, Preset
+from custom_sam_peft.presets import decide_preset
 from custom_sam_peft.utils.huggingface import download_model
 
 TEMPLATES: dict[str, str] = {
@@ -166,6 +169,31 @@ def run_init(
         **blocks,
     )
     output.write_text(body)
+
+    # Bake concrete formula-derived sizing into the file the user reviews (spec §6.1).
+    cfg = load_config(output)
+    k = cfg.train.multiplex.classes_per_forward
+    if torch.cuda.is_available():
+        try:
+            decision = decide_preset(k=k)
+            _rewrite_sizing_block(
+                output,
+                method=decision.method,
+                r=decision.r,
+                batch_size=decision.batch_size,
+                grad_accum_steps=decision.grad_accum_steps,
+                dtype=decision.dtype,
+                annotation="# formula-derived",
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Symmetric with calibrate's rewrite guard: a sizing or rewrite failure
+            # must not crash init — leave the safe template defaults in place.
+            rprint(f"[yellow]could not auto-size ({exc}); leaving template defaults[/yellow]")
+    else:
+        rprint(
+            "[yellow]init ran CPU-only; wrote safe template defaults. Re-run "
+            "`custom-sam-peft init` (or `calibrate`) on the GPU to resolve sizing.[/yellow]"
+        )
 
 
 def init(

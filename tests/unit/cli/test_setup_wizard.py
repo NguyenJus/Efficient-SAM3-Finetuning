@@ -867,3 +867,62 @@ def test_generate_config_happy_path_with_limit_step(tmp_path, monkeypatch) -> No
     assert cfg.run.name == "my-run"
     assert cfg.data.val_split is not None
     assert cfg.train.epochs == 7
+
+
+# ---------------------------------------------------------------------------
+# Task 12 (wizard): opt-in calibrate offer after emit (consent-gated, CUDA-only)
+# ---------------------------------------------------------------------------
+
+_MINIMAL_ANSWERS = {
+    "run": {"name": "r"},
+    "data": {
+        "format": "coco",
+        "train": {"annotations": "t.json", "images": "t/"},
+        "augmentations": {"preset": "natural", "intensity": "medium"},
+    },
+    "peft": {"method": "lora"},
+    "train": {"epochs": 1, "loss": {"preset": "natural", "class_imbalance": "balanced"}},
+}
+
+
+def test_generate_config_offers_calibrate_with_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After emit, on a CUDA box the wizard OFFERS calibrate; running it requires
+    explicit consent (opt-in). Spec §5.2."""
+    invoked: dict[str, bool] = {}
+    monkeypatch.setattr(sw, "_invoke_calibrate", lambda output: invoked.setdefault("ran", True))
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
+    # Post-emit calibrate confirm returns True → _invoke_calibrate must run.
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: True)
+    out = tmp_path / "config.yaml"
+    sw.generate_config(out, force=True, cuda_available=True)
+    assert invoked.get("ran") is True
+
+
+def test_generate_config_no_calibrate_when_declined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Declining the offer never runs the probe. Spec §5.2 / §7."""
+    invoked: dict[str, bool] = {}
+    monkeypatch.setattr(sw, "_invoke_calibrate", lambda output: invoked.setdefault("ran", True))
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
+    # Post-emit calibrate confirm returns False → _invoke_calibrate must NOT run.
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: False)
+    out = tmp_path / "config.yaml"
+    sw.generate_config(out, force=True, cuda_available=True)
+    assert "ran" not in invoked
+
+
+def test_generate_config_no_calibrate_when_cpu_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CPU-only boxes (cuda_available=False) never get the calibrate offer. Spec §7."""
+    invoked: dict[str, bool] = {}
+    monkeypatch.setattr(sw, "_invoke_calibrate", lambda output: invoked.setdefault("ran", True))
+    monkeypatch.setattr(sw, "run_wizard", lambda ctx, steps: _MINIMAL_ANSWERS)
+    # Even if confirm were to return True somehow, gating on cuda_available prevents it.
+    monkeypatch.setattr(sw, "ask_confirm", lambda *a, **k: True)
+    out = tmp_path / "config.yaml"
+    sw.generate_config(out, force=True, cuda_available=False)
+    assert "ran" not in invoked

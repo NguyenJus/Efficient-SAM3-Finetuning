@@ -422,3 +422,57 @@ def test_init_non_custom_preset_renders_commented_scaffold(tmp_path: Path) -> No
     # Commented scaffold lives under train.loss:
     assert "# overrides:" in body
     assert "#   mask_family:" in body
+
+
+# ---------------------------------------------------------------------------
+# spec §6.1 — formula-derived sizing baked into init output
+# ---------------------------------------------------------------------------
+
+
+def test_init_bakes_formula_sizing_with_annotation_on_gpu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a (patched) GPU, init bakes concrete decide_preset sizing annotated
+    '# formula-derived'. Spec §6.1."""
+    # Patch torch.cuda + decide_preset to a known decision.
+    from custom_sam_peft.presets import PresetDecision
+
+    fake = PresetDecision(
+        method="lora",
+        r=24,
+        batch_size=2,
+        grad_accum_steps=8,
+        dtype="bfloat16",
+        headroom_bytes=0,
+        predicted_bytes=0,
+        budget_bytes=0,
+        gpu_name="X",
+        provenance="analytic",
+        cache_path=None,
+        calibrated_at=None,
+    )
+    monkeypatch.setattr("custom_sam_peft.cli.init_cmd.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr("custom_sam_peft.cli.init_cmd.decide_preset", lambda **kw: fake)
+    out = tmp_path / "config.yaml"
+    result = runner.invoke(app, ["init", "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    body = out.read_text()
+    assert "# formula-derived" in body
+    cfg = load_config(out)
+    assert cfg.peft.r == 24
+    assert cfg.train.batch_size == 2
+    assert cfg.model.dtype == "bfloat16"
+
+
+def test_init_cpu_only_writes_safe_defaults_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CPU-only init scaffolds safe defaults + a re-resolve warning; never invents
+    GPU numbers. Spec §6.1."""
+    monkeypatch.setattr("custom_sam_peft.cli.init_cmd.torch.cuda.is_available", lambda: False)
+    out = tmp_path / "config.yaml"
+    result = runner.invoke(app, ["init", "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    assert "re-resolve" in result.output.lower() or "gpu" in result.output.lower()
+    cfg = load_config(out)  # safe defaults still valid
+    assert cfg.peft.method in {"lora", "qlora"}

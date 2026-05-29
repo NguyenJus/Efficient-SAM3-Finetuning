@@ -17,9 +17,11 @@ def test_oom_event_is_frozen() -> None:
 
 def test_oom_event_field_order_and_types() -> None:
     fields = {f.name: f.type for f in dataclasses.fields(OomEvent)}
-    assert list(fields) == ["step", "action", "new_micro_batch_size"]
+    assert list(fields) == ["step", "action", "new_micro_batch_size", "effective_K"]
 
 
 def test_oom_event_only_microbatch_halved_action() -> None:
     ev = OomEvent(step=0, action="microbatch_halved", new_micro_batch_size=1)
     assert ev.action == "microbatch_halved"
+    # effective_K defaults to None for microbatch_halved events
+    assert ev.effective_K is None

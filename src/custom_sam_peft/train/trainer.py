@@ -490,7 +490,12 @@ class Trainer:
         start_epoch = rs.start_epoch
 
         class_names = self.train_ds.class_names
-        oom_state = OomState(micro_batch_size=cfg.train.batch_size)
+        from custom_sam_peft.models.sam3 import MULTIPLEX_CAP as _MULTIPLEX_CAP
+
+        oom_state = OomState(
+            micro_batch_size=cfg.train.batch_size,
+            effective_K=min(cfg.train.multiplex.classes_per_forward, _MULTIPLEX_CAP),
+        )
 
         def on_checkpoint(step: int, epoch: int, p_t: float, streak: int) -> None:
             self._maybe_checkpoint(

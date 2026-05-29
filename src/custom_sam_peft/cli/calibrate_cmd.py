@@ -1,10 +1,10 @@
-"""`custom-sam-peft calibrate` — probe peak VRAM at LoRA r=4 and cache the result.
+"""`custom-sam-peft calibrate` — probe peak VRAM at the config's (method, r, k, batch).
 
-Writes `./.custom_sam_peft_calibration.json` (schema_version=1). Read by
+Writes `./.custom_sam_peft_calibration.json` (schema_version=2). Read by
 `custom_sam_peft.presets._load_cache` so `decide_preset()` produces a tight,
 GPU-accurate config instead of an analytic estimate.
 
-Spec: docs/superpowers/specs/2026-05-22-algo-vram-preset-design.md §4.
+Spec: docs/superpowers/specs/2026-05-28-vram-calibration-reassess-design.md §4-§5.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from custom_sam_peft.presets import (
     CACHE_SCHEMA_VERSION,
     WORKSPACE_BYTES,
     _adapter_bytes,
+    _attention_bytes_per_example,
     _model_bytes,
     _optimizer_bytes,
 )
@@ -61,35 +62,31 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
-def _run_probe() -> int:
-    """Run one forward+backward at LoRA r=4, return peak bytes. CUDA only.
+def _run_probe(*, method: str, r: int, k_eff: int, batch: int) -> int:
+    """Run one forward+backward at the config's (method, r, k_eff, batch).
 
-    Steps mirror §4 procedure 3-7: load wrapper, attach LoRA stub at r=4,
-    build one synthetic batch, reset peak stats, forward+backward, read
-    max_memory_allocated.
+    Returns peak bytes. CUDA only. Spec §5.1.
     """
-    from custom_sam_peft.models.sam3 import SAM3_IMAGE_SIZE, load_sam31  # local import — heavy
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, SAM3_IMAGE_SIZE, load_sam31
     from custom_sam_peft.peft_adapters.lora import apply_lora
 
+    k_eff = max(1, min(k_eff, MULTIPLEX_CAP))
     model_cfg = ModelConfig()
-    # calibrate is a VRAM probe with no DataConfig in scope; the rgb default is the
-    # documented exception (spec §5.4 / risk #2): probe RAM is for the base model,
-    # not channel-adapter sizing.
+    # No DataConfig in scope; rgb default is the documented exception (spec §5.4).
     wrapper = load_sam31(model_cfg, channels=3, channel_semantics="rgb")
-    peft_cfg = PEFTConfig(method="lora", r=4)
-    apply_lora(wrapper, peft_cfg)
+    apply_lora(wrapper, PEFTConfig(method=method, r=r))
 
     device = next(wrapper.parameters()).device
     images = torch.zeros(
-        1, 3, SAM3_IMAGE_SIZE, SAM3_IMAGE_SIZE, dtype=torch.bfloat16, device=device
+        batch, 3, SAM3_IMAGE_SIZE, SAM3_IMAGE_SIZE, dtype=torch.bfloat16, device=device
     )
     from custom_sam_peft.data.base import TextPrompts
 
-    prompts = [TextPrompts(classes=["thing"])]
+    # K_eff distinct synthetic class prompts per image (not a single "thing").
+    prompts = [TextPrompts(classes=[f"class_{j}" for j in range(k_eff)]) for _ in range(batch)]
 
     torch.cuda.reset_peak_memory_stats()
     out = wrapper(images, prompts, support=None)
-    # Synthetic loss: sum of all output tensors that require grad.
     loss = torch.zeros((), device=device, dtype=torch.float32)
     for t in out.values():
         if isinstance(t, torch.Tensor):
@@ -101,9 +98,11 @@ def _run_probe() -> int:
 def calibrate(
     output: Path = typer.Option(Path(CACHE_FILENAME), "--output", help="Cache file path."),
     force: bool = typer.Option(False, "--force", help="Re-probe even if the cache is fresh."),
+    config: Path = typer.Option(Path("config.yaml"), "--config", help="Training config YAML path."),
 ) -> None:
-    """Probe peak VRAM at LoRA r=4 and cache the result."""
-    from custom_sam_peft.models.sam3 import SAM3_IMAGE_SIZE
+    """Probe peak VRAM at the config's (method, r, k, batch) and cache the result."""
+    from custom_sam_peft.config.loader import load_config
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, SAM3_IMAGE_SIZE
 
     if not torch.cuda.is_available():
         typer.echo(f"ERROR: {_CUDA_HINT}", err=True)
@@ -112,26 +111,47 @@ def calibrate(
     gpu_name = torch.cuda.get_device_name(0)
     total = int(torch.cuda.get_device_properties(0).total_memory)
 
+    if not config.exists():
+        typer.echo(
+            f"WARNING: {config} not initialized — auto-init (formula, no probe) then probe.",
+            err=True,
+        )
+        from custom_sam_peft.cli.init_cmd import run_init
+
+        run_init("coco-text-lora", config, force=False)
+
     if not force and _cache_is_fresh(output, gpu_name):
         typer.echo("cache fresh — exiting")
         raise typer.Exit(code=0)
 
+    cfg = load_config(config)
+    method = cfg.peft.method
+    r = cfg.peft.r
+    k_eff = min(cfg.train.multiplex.classes_per_forward, MULTIPLEX_CAP)
+    batch = cfg.train.batch_size
+
     try:
-        peak = _run_probe()
+        peak = _run_probe(method=method, r=r, k_eff=k_eff, batch=batch)
     except FileNotFoundError as exc:
         typer.echo(f"ERROR: SAM 3.1 checkpoint not found: {exc}", err=True)
         raise typer.Exit(code=3) from exc
     except torch.cuda.OutOfMemoryError as exc:
         typer.echo(
-            "ERROR: calibration probe OOMed at minimum config — GPU too small",
+            "ERROR: calibration probe OOMed at config's sizing — GPU too small",
             err=True,
         )
         raise typer.Exit(code=5) from exc
     except (RuntimeError, ValueError) as exc:
-        typer.echo(f"ERROR: LoRA stub attach failed: {exc}", err=True)
+        typer.echo(f"ERROR: probe failed: {exc}", err=True)
         raise typer.Exit(code=4) from exc
 
-    overhead = _model_bytes("lora") + _adapter_bytes(4) + _optimizer_bytes(4) + WORKSPACE_BYTES
+    overhead = (
+        _model_bytes(method)
+        + _adapter_bytes(r)
+        + _optimizer_bytes(r)
+        + WORKSPACE_BYTES
+        + _attention_bytes_per_example(SAM3_IMAGE_SIZE) * batch
+    )
     activation = peak - overhead
     if activation < 0:
         typer.echo(
@@ -141,6 +161,9 @@ def calibrate(
         )
         activation = 0
 
+    # Store per-(example*K_eff) so _activation_per_example * k_eff reconstructs it.
+    activation_per_example = int(activation / max(1, batch * k_eff))
+
     payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "calibrated_at": datetime.now(UTC).isoformat(),
@@ -149,7 +172,7 @@ def calibrate(
         "sam3_checkpoint_sha": _sam3_checkpoint_sha(),
         "torch_version": torch.__version__,
         "custom_sam_peft_version": _PKG_VERSION,
-        "activation_bytes_per_example": int(activation),
+        "activation_bytes_per_example": int(activation_per_example),
         "peak_memory_bytes_at_probe": int(peak),
     }
     try:
@@ -158,10 +181,33 @@ def calibrate(
         typer.echo(f"ERROR: cache write failed: {exc}", err=True)
         raise typer.Exit(code=6) from exc
 
+    # Rewrite the config's sizing block in place with calibrated values.
+    # Pass cache_path=output so decide_preset reads the freshly-written cache
+    # (provenance="calibrated") even when --output is non-default.
+    try:
+        from custom_sam_peft.cli._config_rewrite import _rewrite_sizing_block
+        from custom_sam_peft.presets import decide_preset
+
+        decision = decide_preset(k=k_eff, cache_path=output)
+        annotation = f"# calibrated {datetime.now(UTC).date().isoformat()}"
+        _rewrite_sizing_block(
+            config,
+            method=decision.method,
+            r=decision.r,
+            batch_size=decision.batch_size,
+            grad_accum_steps=decision.grad_accum_steps,
+            dtype=decision.dtype,
+            annotation=annotation,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        typer.echo(
+            f"WARNING: config rewrite failed (cache written, config unchanged): {exc}", err=True
+        )
+
     def _gib(b: int) -> float:
         return b / (1024**3)
 
     typer.echo(f"GPU:        {gpu_name} (SAM3_IMAGE_SIZE={SAM3_IMAGE_SIZE})")
     typer.echo(f"Peak:       {_gib(peak):.1f} GiB")
-    typer.echo(f"Activation: {_gib(activation):.2f} GiB/example")
+    typer.echo(f"Activation: {_gib(activation_per_example):.2f} GiB/example")
     typer.echo(f"Cache:      {output}")

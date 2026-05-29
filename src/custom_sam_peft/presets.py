@@ -47,7 +47,7 @@ D_IN = 768  # avg input feature dim across LoRA targets
 D_OUT = 768  # avg output feature dim across LoRA targets
 Q_OVERHEAD = 64 * _MIB  # bnb NF4 per-block scale + zero-point overhead
 WORKSPACE_BYTES = 256 * _MIB  # cuDNN workspace + autograd graph + tmp buffers (spec §3)
-BASE_ACTIVATION_AT_1024 = int(1.5 * _GB)  # seed; superseded by calibration cache
+BASE_ACTIVATION_AT_1024 = int(1.5 * _GB)  # seed; superseded by calibration cache.
 
 # Forward-only memory is roughly 1/4 of the train-step probe (train captures
 # forward + backward + retained graph; eval captures only forward, no graph).
@@ -131,6 +131,15 @@ class PresetDecision:
         return cls(**d)
 
 
+# SAM 3.1 vision backbone (hiera-large), from sam3/model_builder.py. Shared by
+# the train-branch formula and decide_eval_batch_size's SDPA ceiling so both
+# cite one definition (spec §3.2).
+# _attention_bytes_per_example is the dominant activation term at SAM 3.1's
+# 1008px image; k_eff scales BASE_ACTIVATION_AT_1024 in the train branch
+# (see _activation_bytes).
+_SAM3_PATCH = 14  # vision backbone patch size
+_SAM3_HEADS = 16  # vision backbone attention heads
+
 # === Memory model ==========================================================
 
 
@@ -154,15 +163,31 @@ def _optimizer_bytes(r: int) -> int:
     return _adapter_bytes(r) * 4
 
 
+def _attention_bytes_per_example(image_size: int) -> int:
+    """Per-example SDPA score-matrix bytes: H * N^2 * 4 (fp32 math upcast).
+
+    At SAM 3.1's image_size=1008, patch=14 -> N=5184 tokens, so this term is the
+    dominant activation contributor and is exactly what the train formula omitted
+    (the 10-vs-22 GiB miss). Spec §3.2.
+    """
+    n_tokens = (image_size // _SAM3_PATCH) ** 2
+    return _SAM3_HEADS * n_tokens * n_tokens * 4
+
+
 def _activation_per_example(image_size: int, cache: dict[str, Any] | None) -> int:
     if cache is not None:
         return int(cache["activation_bytes_per_example"])
     return int(BASE_ACTIVATION_AT_1024 * (image_size / 1024) ** 2)
 
 
-def _activation_bytes(image_size: int, batch: int, cache: dict[str, Any] | None) -> int:
+def _activation_bytes(
+    image_size: int, batch: int, cache: dict[str, Any] | None, k_eff: int = 1
+) -> int:
+    # The SAM 3.1 multiplex forward materializes per-class mask/box decoder
+    # activations within a group, so per-example activation scales with k_eff
+    # (the per-group class count). Spec §3.1.
     per = _activation_per_example(image_size, cache)
-    return int(per * batch)
+    return int(per * batch * k_eff)
 
 
 def _predicted_bytes(
@@ -172,16 +197,21 @@ def _predicted_bytes(
     image_size: int,
     cache: dict[str, Any] | None,
     mode: Literal["train", "eval"] = "train",
+    k_eff: int = 1,
 ) -> int:
     if mode == "train":
         return (
             _model_bytes(method)
             + _adapter_bytes(r)
             + _optimizer_bytes(r)
-            + _activation_bytes(image_size, batch, cache)
+            # Per-group activation scales with k_eff; the SDPA attention term is
+            # forward+backward (NOT scaled by forward_only_factor). Spec §3.1/§3.2.
+            + _activation_bytes(image_size, batch, cache, k_eff=k_eff)
+            + _attention_bytes_per_example(image_size) * batch
             + WORKSPACE_BYTES
         )
     # mode == "eval": no optimizer, no adapter bytes; activations x forward_only_factor.
+    # K and attention are handled by decide_eval_batch_size's own cap, not here.
     activations = int(_activation_bytes(image_size, batch, cache) * forward_only_factor)
     return _model_bytes(method) + activations + WORKSPACE_BYTES
 
@@ -204,9 +234,19 @@ def _current_sam3_checkpoint_sha() -> str:
     return h.hexdigest()
 
 
-def _load_cache(gpu_name: str) -> tuple[dict[str, Any] | None, Path | None]:
-    """Return (cache_dict, absolute_cache_path) iff the cache matches."""
-    cache_path = Path(CACHE_FILENAME).resolve()
+def _load_cache(
+    gpu_name: str, cache_path: Path | None = None
+) -> tuple[dict[str, Any] | None, Path | None]:
+    """Return (cache_dict, absolute_cache_path) iff the cache matches.
+
+    Args:
+        gpu_name: the GPU name reported by torch.cuda.get_device_name(0).
+        cache_path: path to the calibration cache file. Defaults to
+            ``Path(CACHE_FILENAME).resolve()`` (the fixed default location).
+            Pass an explicit path when the caller writes the cache to a non-default
+            location (e.g. ``calibrate --output``).
+    """
+    cache_path = Path(CACHE_FILENAME).resolve() if cache_path is None else cache_path
     if not cache_path.is_file():
         return None, None
     try:
@@ -269,17 +309,30 @@ def _sort_key(c: tuple[str, int, int]) -> tuple[int, int, int]:
 # === Public entry point ====================================================
 
 
-def decide_preset() -> PresetDecision:
+def decide_preset(k: int | None = None, cache_path: Path | None = None) -> PresetDecision:
     """Pick the largest configuration that fits within the VRAM budget.
+
+    Args:
+      k: representative classes-per-forward for the train activation term. When
+         None, uses the conservative worst case MULTIPLEX_CAP. Callers with a
+         config in scope pass cfg.train.multiplex.classes_per_forward. Spec §3.1.
+      cache_path: path to the calibration cache file. Defaults to
+         ``Path(CACHE_FILENAME).resolve()`` (the fixed default location). Pass an
+         explicit path when the calibration cache was written to a non-default
+         location (e.g. ``calibrate --output``), so provenance reflects the
+         just-written probe rather than a stale/absent default cache.
 
     Raises:
       RuntimeError: CUDA unavailable, env-var malformed, or no candidate fits.
 
     Spec: design §3 + §7.
     """
-    from custom_sam_peft.models.sam3 import SAM3_IMAGE_SIZE
+    from custom_sam_peft.models.sam3 import MULTIPLEX_CAP, SAM3_IMAGE_SIZE
 
     image_size = SAM3_IMAGE_SIZE
+    k_eff = MULTIPLEX_CAP if k is None else min(k, MULTIPLEX_CAP)
+    if k_eff < 1:
+        raise ValueError(f"k must be >= 1 when provided; got {k}")
     if not torch.cuda.is_available():
         raise RuntimeError(_CUDA_HINT)
 
@@ -292,7 +345,7 @@ def decide_preset() -> PresetDecision:
     headroom = _headroom_bytes()
     budget = total - headroom
 
-    cache, cache_path = _load_cache(gpu_name)
+    cache, cache_path = _load_cache(gpu_name, cache_path=cache_path)
     provenance: Literal["calibrated", "analytic"] = (
         "calibrated" if cache is not None else "analytic"
     )
@@ -300,14 +353,14 @@ def decide_preset() -> PresetDecision:
 
     feasible = []
     for method, r, batch in _candidates():
-        pb = _predicted_bytes(method, r, batch, image_size, cache)
+        pb = _predicted_bytes(method, r, batch, image_size, cache, k_eff=k_eff)
         if pb <= budget:
             feasible.append((method, r, batch, pb))
 
     if not feasible:
         budget_gib = budget / _GB
         headroom_gib = headroom / _GB
-        min_needed = _predicted_bytes("qlora", 4, 1, image_size, cache)
+        min_needed = _predicted_bytes("qlora", 4, 1, image_size, cache, k_eff=k_eff)
         raise RuntimeError(
             f"pick_preset(): GPU has {budget_gib:.1f} GiB after {headroom_gib:.1f} GiB "
             f"headroom — SAM 3.1 needs ≈{min_needed / _GB:.1f} GiB even at QLoRA r=4 "
@@ -391,14 +444,15 @@ def decide_eval_batch_size(
     # score matrix in float32 (4 bytes) even when inputs are bf16.  At SAM 3.1's
     # patch_size=14, image_size=1008 -> N=5184 tokens, H=16 heads, the analytic
     # model can return bs~35 on a 24 GiB card, causing a 56 GiB allocation (OOM).
-    # Constants: SAM 3.1 hiera-large vision backbone, from sam3/model_builder.py.
-    _SAM3_PATCH = 14  # vision backbone patch size
-    _SAM3_HEADS = 16  # vision backbone attention heads
-    _n_tokens = (image_size // _SAM3_PATCH) ** 2
-    # fp32 (4 bytes): worst case when SDPA math backend upcasts bf16 inputs.
-    _attn_per_example = _SAM3_HEADS * _n_tokens * _n_tokens * 4
-    # Model weights and forward activations are ALREADY resident when SDPA runs;
-    # subtract them from the budget before solving for the attention-bound bs.
+    # Attention-memory ceiling via the shared helper so the train term and this
+    # eval cap cite one definition (spec §3.2 / issue #162).
+    _attn_per_example = _attention_bytes_per_example(image_size)
+    # Model weights and CUDA workspace are fixed overhead, independent of batch
+    # size; subtract them from the budget once. Attention scores AND forward
+    # activations both scale per-example, so they share the divisor below.
+    # Counting activations in the divisor (not just attention) makes the cap
+    # conservative — it can only lower bs, which is safe for OOM prevention
+    # (issue #162).
     attn_budget = budget - _model_bytes("lora") - WORKSPACE_BYTES
     _act_per_example = int(_activation_per_example(image_size, cache) * forward_only_factor)
     _per_example = _attn_per_example + _act_per_example

@@ -118,6 +118,14 @@ def test_predicted_bytes_eval_mode_excludes_optimizer_and_adapter(monkeypatch) -
     assert eval_bytes < train_bytes
 
 
+def test_eval_path_uses_shared_attention_helper() -> None:
+    """The eval SDPA cap and the train attention term cite ONE definition."""
+    from custom_sam_peft.presets import _attention_bytes_per_example
+
+    # H=16, N=(1008//14)^2=5184, fp32=4 bytes.
+    assert _attention_bytes_per_example(1008) == 16 * 5184 * 5184 * 4
+
+
 def test_decide_eval_batch_size_sdpa_attention_cap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
