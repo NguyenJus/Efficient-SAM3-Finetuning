@@ -18,14 +18,19 @@ import logging
 import math
 import re
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import pycocotools.mask as mask_utils
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-from custom_sam_peft.data.base import Dataset, Instance
-from custom_sam_peft.predict.visualize import color_for_class
+from custom_sam_peft.data.base import Dataset, Example, Instance, TextPrompts
+from custom_sam_peft.eval.evaluator import _row_outputs
+from custom_sam_peft.eval.postprocess import queries_to_coco_results
+from custom_sam_peft.models.matching import HungarianMatcher, meta_to_canonical
+from custom_sam_peft.predict.visualize import color_for_class, render_overlay
+from custom_sam_peft.runtime import Runtime, to_device
 
 _LOG = logging.getLogger(__name__)
 
@@ -223,3 +228,86 @@ def _compose_pair(
             draw.text((4 + _LEGEND_SWATCH + 4, y), name, fill=(0, 0, 0), font=font)
             y += _LEGEND_ROW_H
     return canvas
+
+
+def _matched_pred_entries(
+    model: Any,
+    example: Example,
+    class_names: list[str],
+    *,
+    mask_threshold: float,
+    matcher: HungarianMatcher,
+    runtime: Runtime,
+) -> list[dict[str, object]]:
+    """Per-class K=1 forward + mask-only Hungarian match; return the matched-query
+    COCO entries (1:1 with GT masks) aggregated across all classes. Draws ONLY
+    matched preds (no unmatched/extra detections).
+    """
+    h, w = int(example.image.shape[-2]), int(example.image.shape[-1])
+    images_1 = to_device(example.image.unsqueeze(0), runtime)  # (1, C, H, W)
+    out_entries: list[dict[str, object]] = []
+    for class_name in class_names:
+        cls_idx = class_names.index(class_name)
+        targets = [inst for inst in example.instances if int(inst.class_id) == cls_idx]
+        if not targets:
+            continue  # no GT for this class → nothing matched/drawn
+        outputs = model(images_1, [TextPrompts(classes=[class_name])], support=None)
+        canonical = meta_to_canonical(outputs)
+        # matcher returns per-image [(query_idx, target_idx)]; one image here.
+        query_idx, _target_idx = matcher(canonical, [targets])[0]
+        # All-query COCO entries for this class, then keep only matched query rows.
+        all_entries = queries_to_coco_results(
+            _row_outputs(outputs, 0),
+            0,  # image_id is irrelevant for rendering (entries are per-image)
+            cls_idx + 1,
+            (h, w),
+            mask_threshold,
+        )
+        for q in query_idx.tolist():
+            if 0 <= q < len(all_entries):
+                out_entries.append(all_entries[q])
+    return out_entries
+
+
+def render_eval_pair(
+    model: Any,
+    example: Example,
+    class_names: list[str],
+    *,
+    mask_threshold: float,
+    mean: Sequence[float],
+    std: Sequence[float],
+    matcher: HungarianMatcher,
+) -> Image.Image:
+    """Return the hstacked `Ground Truth | Prediction` composite for one image.
+
+    GT panel: denormalized source + GT instance overlays (no score). Pred panel:
+    denormalized source + the Hungarian mask-only matched 1:1 preds per class,
+    aggregated across classes (matched preds only). Both panels use the same
+    color_for_class mapping so a class is the same color in both.
+    """
+    try:
+        param_device = next(model.parameters()).device
+    except (StopIteration, AttributeError):
+        param_device = torch.device("cpu")
+    runtime = Runtime(device=param_device, dtype=torch.float32)
+
+    source = denormalize_to_rgb(example.image, mean, std)
+
+    gt_entries = gt_instances_to_entries(example.instances)
+    gt_panel = render_overlay(source, gt_entries, prompts=class_names)
+
+    pred_entries = _matched_pred_entries(
+        model, example, class_names,
+        mask_threshold=mask_threshold, matcher=matcher, runtime=runtime,
+    )
+    pred_panel = render_overlay(source, pred_entries, prompts=class_names)
+
+    # Legend = union of classes present in either panel.
+    present_ids = {
+        int(e["category_id"])
+        for e in (*gt_entries, *pred_entries)
+        if isinstance(e["category_id"], (int, float))
+    }
+    names_present = [class_names[c - 1] for c in sorted(present_ids) if 0 < c <= len(class_names)]
+    return _compose_pair(gt_panel, pred_panel, class_names_present=names_present)
