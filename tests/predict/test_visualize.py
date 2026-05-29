@@ -167,3 +167,14 @@ def test_render_overlay_score_optional() -> None:
     none_score["score"] = None
     out_none = render_overlay(img, [none_score], prompts=["cat", "dog"])
     assert out_none.size == (32, 32)
+
+    # Behavioral assertion: scored label draws more text → different pixels.
+    bg = Image.new("RGB", (128, 128), (200, 200, 200))
+    scored_big = _make_rle_entry(category_id=1, score=0.42, h=128, w=128)
+    gt_big = dict(scored_big)
+    gt_big.pop("score")
+    arr_scored = np.asarray(render_overlay(bg.copy(), [scored_big], prompts=["cat", "dog"]))
+    arr_gt = np.asarray(render_overlay(bg.copy(), [gt_big], prompts=["cat", "dog"]))
+    assert not np.array_equal(arr_scored, arr_gt), (
+        "scored label ('cat 0.42') and GT label ('cat') must produce different pixels"
+    )

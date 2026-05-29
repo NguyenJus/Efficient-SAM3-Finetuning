@@ -67,7 +67,7 @@ def test_worst_cap_large_n() -> None:
     iou = [i / 50 for i in range(50)]
     picked = pick_samples(iou, ds, 20)
     assert len(picked) == 20
-    g, m, w = _bands(20)
+    _g, _m, w = _bands(20)
     assert w == 2  # capped despite round(0.2*20)=4
 
 
@@ -103,7 +103,7 @@ def test_nan_sorts_to_bottom_worst_only() -> None:
     assert 2 in picked  # eligible as worst
     # With N < pool, the top "good" band must not include the NaN index.
     picked2 = pick_samples(iou, ds, 2)
-    g, _, w = _bands(2)  # (1, 0, 1)
+    _g, _, _w = _bands(2)  # (1, 0, 1)
     assert picked2[0] != 2  # highest-IoU first, never the NaN
 
 
@@ -147,6 +147,22 @@ def test_denormalize_to_rgb_n_channel_uses_first_3() -> None:
     assert img.size == (6, 4)  # (W, H); only first 3 channels rendered
 
 
+def test_denormalize_to_rgb_grayscale_padded() -> None:
+    from custom_sam_peft.eval.visualize import denormalize_to_rgb
+
+    img = denormalize_to_rgb(torch.zeros(1, 4, 6), [0.5], [0.5])
+    assert img.mode == "RGB"
+    assert img.size == (6, 4)
+
+
+def test_denormalize_to_rgb_two_channel_padded() -> None:
+    from custom_sam_peft.eval.visualize import denormalize_to_rgb
+
+    img = denormalize_to_rgb(torch.zeros(2, 4, 6), [0.5, 0.5], [0.5, 0.5])
+    assert img.mode == "RGB"
+    assert img.size == (6, 4)
+
+
 def test_gt_instances_to_entries_conversion() -> None:
     import pycocotools.mask as mask_utils
 
@@ -172,7 +188,6 @@ def test_compose_pair_hstacks_with_titles_and_legend() -> None:
     from PIL import Image
 
     from custom_sam_peft.eval.visualize import _compose_pair
-    from custom_sam_peft.predict.visualize import color_for_class
 
     gt = Image.new("RGB", (40, 30), color=(10, 10, 10))
     pred = Image.new("RGB", (40, 30), color=(20, 20, 20))
@@ -180,8 +195,6 @@ def test_compose_pair_hstacks_with_titles_and_legend() -> None:
     # Width is at least the sum of the two panels (hstacked), height >= panel height.
     assert composite.width >= gt.width + pred.width
     assert composite.height >= gt.height
-    # color_for_class is stable + used by the legend (sanity: distinct colors here).
-    assert color_for_class("cat") != color_for_class("dog") or True  # may collide; not asserted hard
 
 
 def test_sanitize_image_id() -> None:
