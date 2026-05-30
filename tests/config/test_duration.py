@@ -28,7 +28,7 @@ def test_parse_accepts(value: str | int, expected: int) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    [0, -1, "", "   ", "abc", "10x", "2h30", "-2h", "-5", "0s", "h", "1m2h"],
+    [0, -1, "", "   ", "abc", "10x", "2h30", "-2h", "-5", "0s", "h", "1m2h", True, False],
 )
 def test_parse_rejects(value: str | int) -> None:
     with pytest.raises(ValueError):
@@ -38,6 +38,11 @@ def test_parse_rejects(value: str | int) -> None:
 def test_parse_error_names_the_bad_value() -> None:
     with pytest.raises(ValueError, match="10x"):
         parse_duration_to_seconds("10x")
+
+
+def test_parse_error_names_bad_int() -> None:
+    with pytest.raises(ValueError, match="-5"):
+        parse_duration_to_seconds(-5)
 
 
 @pytest.mark.parametrize(
@@ -58,3 +63,9 @@ def test_format(seconds: int, expected: str) -> None:
 @pytest.mark.parametrize("n", [1, 30, 45, 90, 3600, 3930, 5400, 9000])
 def test_round_trip(n: int) -> None:
     assert parse_duration_to_seconds(format_seconds(n)) == n
+
+
+@pytest.mark.parametrize("seconds", [0, -1])
+def test_format_rejects_nonpositive(seconds: int) -> None:
+    with pytest.raises(ValueError):
+        format_seconds(seconds)

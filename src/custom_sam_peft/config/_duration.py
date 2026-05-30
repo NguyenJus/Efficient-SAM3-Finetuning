@@ -52,7 +52,7 @@ def format_seconds(seconds: int) -> str:
 
     Collapses to the largest applicable units, dropping zero components:
     9000 -> "2h30m", 3600 -> "1h", 5400 -> "1h30m", 90 -> "1m30s", 45 -> "45s".
-    A zero/negative total never reaches here (rejected upstream).
+    Raises ValueError if ``seconds`` is zero or negative.
     """
     if seconds <= 0:
         raise ValueError(f"format_seconds: expected a positive second count, got {seconds!r}")
