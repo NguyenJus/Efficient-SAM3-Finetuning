@@ -84,7 +84,7 @@ Row schema (every section uses these six columns):
 | `config/schema.py:BoxHintSchedule.p_end` | `0.0` | `# cite: degenerate-case` | — | — | Probability=0.0 is the minimum of [0,1]; no box-hint at schedule end. Linear decay endpoint identity. |
 | `config/schema.py:BoxHintSchedule.decay_steps` | `None` | `# tbd: #191` | — | — | Auto-resolves to 0.75×epochs×steps_per_epoch at runtime (decay over first 75% of run). The 0.75 fraction is project-chosen with no ablation. Cross-ref open issue #88. Tracking via #191. |
 | `config/schema.py:MultiplexConfig.classes_per_forward` | `16` | `# cite: models/sam3.py:MULTIPLEX_CAP` | `src/custom_sam_peft/models/sam3.py` line 178: `MULTIPLEX_CAP: int = 16` | `MULTIPLEX_CAP: int = 16` — hard cap from SAM 3.1 model head. | Default=cap means maximum throughput per forward pass. Upper bound enforced by Field(le=16). |
-| `config/schema.py:TrainHyperparams.epochs` | `required (template $epochs slot)` | `# cite: empirical` | See "Reference Training Profile" section below (Deliverable 2). | See "Reference Training Profile" section below (Deliverable 2). | Required field; no schema default. The shipped default lives in the `config_full.yaml` `$epochs` slot, set by the `init` flow. Provenance is the analytical reference profile, not a single citation. |
+| `config/schema.py:TrainHyperparams.epochs` | `required (template $epochs slot)` | `# cite: SAMed (Zhang & Liu 2023)` / `# tbd: #193` | See "Reference Training Profile" section below. | See "Reference Training Profile" section below. | Required field; no schema default. The shipped default lives in the `config_full.yaml` `$epochs` slot, set by the `init` flow. Provenance is the SAMed convergence anchor (see Reference Training Profile), not a single inline citation. |
 | `config/schema.py:TrainHyperparams.batch_size` | `1` | `# tbd: #191` | — | — | VRAM-driven engineering choice; effective batch = batch_size×grad_accum_steps. Cross-ref presets.py memory model. Tracking via #191. |
 | `config/schema.py:TrainHyperparams.grad_accum_steps` | `8` | `# tbd: #191` | — | — | VRAM-driven; effective batch = 1×8=8. Cross-ref presets.py memory model. Tracking via #191. |
 | `config/schema.py:TrainHyperparams.optimizer` | `"auto"` | `# cite: AdamW (Loshchilov 2019) arXiv:1711.05101` | Loshchilov & Hutter 2019, "Decoupled Weight Decay Regularization", arXiv:1711.05101, ICLR 2019. Algorithm 2 (AdamW). | "The main contribution of this paper is to improve regularization in Adam by decoupling the weight decay from the gradient-based update." (§2) | "auto" resolves to `adamw` (LoRA) or `adamw8bit` (QLoRA) at trainer construction via `peft_adapters/__init__.py:recommended_optimizer()`. |
@@ -201,7 +201,7 @@ same symbol. This section cross-links the template slot to its schema row.
 | `config_full.yaml:peft.r` | `16` | `cross-link` | See `config/schema.py:PEFTConfig.r` row. | — | Template echo of the schema default. |
 | `config_full.yaml:peft.alpha` | `32` | `cross-link` | See `config/schema.py:PEFTConfig.alpha` row. | — | Template echo of the schema default. |
 | `config_full.yaml:peft.dropout` | `0.05` | `cross-link` | See `config/schema.py:PEFTConfig.dropout` row. | — | Template echo of the schema default. |
-| `config_full.yaml:train.epochs` | `$epochs` | `cross-link` | See `config/schema.py:TrainHyperparams.epochs` row + "Reference Training Profile". | — | Placeholder filled by the `init` flow; default set in Phase 2. |
+| `config_full.yaml:train.epochs` | `$epochs` | `cross-link` | See `config/schema.py:TrainHyperparams.epochs` row + "Reference Training Profile". | — | Placeholder filled by the `init` flow (default `160`; see Reference Training Profile). |
 | `config_full.yaml:train.batch_size` | `1` | `cross-link` | See `config/schema.py:TrainHyperparams.batch_size` row. | — | Template echo of the schema default. |
 | `config_full.yaml:train.grad_accum_steps` | `8` | `cross-link` | See `config/schema.py:TrainHyperparams.grad_accum_steps` row. | — | Template echo of the schema default. |
 | `config_full.yaml:train.learning_rate` | `1.0e-4` | `cross-link` | See `config/schema.py:TrainHyperparams.learning_rate` row. | — | Template echo of the schema default. |
@@ -247,4 +247,30 @@ same symbol. This section cross-links the template slot to its schema row.
 
 ## Reference Training Profile
 
-<!-- Owned by Deliverable 2 (epochs alignment). Populated in Phase 2. -->
+The shipped training defaults form the following reference profile:
+
+- `batch_size = 1`, `grad_accum_steps = 8` → effective batch = 8 (schema defaults in `config/schema.py:TrainHyperparams`).
+- `epochs = 160` (shipped default, set by the `init` flow via the `config_full.yaml` `$epochs` slot).
+- `eval.mode = "full"` (schema default in `config/schema.py:EvalConfig.mode`).
+
+### Anchor: SAMed (Zhang & Liu, 2023)
+
+The `epochs = 160` value is anchored to a **convergence figure**, not a runtime budget. The closest published analog to this repo's use case is **SAMed** — LoRA fine-tuning of SAM (LoRA rank 4, AdamW) on a small medical dataset — which is the same regime this repo targets (PEFT/LoRA on SAM, small dataset).
+
+**Primary source:** Zhang & Liu, 2023, "Customized Segment Anything Model for Medical Image Segmentation", arXiv:2304.13785.
+
+Key verifying quotes:
+
+- Sec 4.2: "We adopt early stop at 14880 iterations (160 epochs)."
+- Sec 4.1: "the training set contains 2212 axial slices" (18 cases — a small dataset directly comparable to this repo's target regime).
+- Abstract: "After finetuning only 160 epochs on Synapse multi-organ segmentation dataset (Synapse), SAMed achieves 81.88 DSC."
+
+The 160-epoch figure is therefore a **convergence anchor** drawn from the published LoRA-on-SAM small-dataset literature, not an arbitrary budget choice.
+
+### Convergence vs. runtime tradeoff
+
+At 160 epochs the run no longer fits the original "≤30 min on a 16 GB free-tier Colab T4" window that the earlier framing assumed: 160 epochs is ~16× the previous 10-epoch default, so the run exceeds that window by a wide margin. This is an order-of-magnitude inference from the epoch ratio, **not** a measured figure. The "≤30 min" budget framing is therefore **dropped** in favor of convergence. This reflects the standing design priority for this project: **final accuracy ≫ training speed** — a speed-only benefit is not a sufficient reason to reduce epoch count.
+
+There is **no citable T4 per-step wall-clock figure** in the literature for this configuration, so the actual wall-clock is left unmeasured: `# tbd: #193` (empirical T4 confirmation of the reference profile). No runtime figure is stated as a measured or completed claim here.
+
+For empirical GPU-test budget questions — including the 2-image overfit smoke-test — see **issue #195** (2-image overfit GPU smoke-test speed/convergence).
