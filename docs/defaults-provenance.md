@@ -192,6 +192,29 @@ same symbol. This section cross-links the template slot to its schema row.
 
 | Location | Value | Tag | Full reference | Verifying quote | Notes |
 | --- | --- | --- | --- | --- | --- |
+| `config_full.yaml:run.seed` | `42` | `cross-link` | See `config/schema.py:RunConfig.seed` row. | — | Template echo of the schema default. |
+| `config_full.yaml:model.dtype` | `bfloat16` | `cross-link` | See `config/schema.py:ModelConfig.dtype` row. | — | Template echo of the schema default. |
+| `config_full.yaml:data.text_prompt.mode` | `present_plus_negatives` | `cross-link` | See `config/schema.py:TextPromptConfig.mode` row. | — | DIFFERS from schema default (`present`). Template ships `present_plus_negatives` to pair with `negatives_per_image: 4`; schema default is the conservative `present` (0 negatives). |
+| `config_full.yaml:data.text_prompt.negatives_per_image` | `4` | `cross-link` | See `config/schema.py:TextPromptConfig.negatives_per_image` row. | — | DIFFERS from schema default (`0`). Template ships `4` per the field-description rationale: "leaves headroom for typical COCO present-class counts (~3-7 per image)". Schema default is `0` (conservative starting point before negative-mining is enabled). |
+| `config_full.yaml:data.normalize.mean` | `[0.485, 0.456, 0.406]` | `cross-link` | See `config/schema.py:NormalizeConfig.mean` row. | — | Template echo of the schema default. |
+| `config_full.yaml:data.normalize.std` | `[0.229, 0.224, 0.225]` | `cross-link` | See `config/schema.py:NormalizeConfig.std` row. | — | Template echo of the schema default. |
+| `config_full.yaml:peft.r` | `16` | `cross-link` | See `config/schema.py:PEFTConfig.r` row. | — | Template echo of the schema default. |
+| `config_full.yaml:peft.alpha` | `32` | `cross-link` | See `config/schema.py:PEFTConfig.alpha` row. | — | Template echo of the schema default. |
+| `config_full.yaml:peft.dropout` | `0.05` | `cross-link` | See `config/schema.py:PEFTConfig.dropout` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.epochs` | `$epochs` | `cross-link` | See `config/schema.py:TrainHyperparams.epochs` row + "Reference Training Profile". | — | Placeholder filled by the `init` flow; default set in Phase 2. |
+| `config_full.yaml:train.batch_size` | `1` | `cross-link` | See `config/schema.py:TrainHyperparams.batch_size` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.grad_accum_steps` | `8` | `cross-link` | See `config/schema.py:TrainHyperparams.grad_accum_steps` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.learning_rate` | `1.0e-4` | `cross-link` | See `config/schema.py:TrainHyperparams.learning_rate` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.lr_schedule` | `cosine` | `cross-link` | See `config/schema.py:TrainHyperparams.lr_schedule` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.warmup_steps` | `100` | `cross-link` | See `config/schema.py:TrainHyperparams.warmup_steps` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.max_grad_norm` | `1.0` | `cross-link` | See `config/schema.py:TrainHyperparams.max_grad_norm` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.log_every` | `50` | `cross-link` | See `config/schema.py:TrainHyperparams.log_every` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.nan_abort_after` | `20` | `cross-link` | See `config/schema.py:TrainHyperparams.nan_abort_after` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.box_hint.p_start` | `1.0` | `cross-link` | See `config/schema.py:BoxHintSchedule.p_start` row. | — | Template echo of the schema default. |
+| `config_full.yaml:train.box_hint.p_end` | `0.0` | `cross-link` | See `config/schema.py:BoxHintSchedule.p_end` row. | — | Template echo of the schema default. |
+| `config_full.yaml:eval.iou_thresholds` | `[0.5, 0.55, …, 0.95]` | `cross-link` | See `config/schema.py:EvalConfig.iou_thresholds` row. | — | Template echo of the schema default. |
+| `config_full.yaml:tracking.backend` | `tensorboard` | `cross-link` | See `config/schema.py:TrackingConfig.backend` row. | — | Template echo of the schema default. |
+| `config_full.yaml:export.merge` | `false` | `cross-link` | See `config/_internal.py:ExportConfig.merge` row. | — | Template echo of the schema default. |
 
 ## models/losses/presets.py
 
