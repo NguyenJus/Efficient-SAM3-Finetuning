@@ -7,7 +7,6 @@ class order.
 
 from __future__ import annotations
 
-import random
 from typing import Any
 
 import pytest
@@ -95,7 +94,6 @@ def test_legacy_k1_each_model_call_has_one_class(
         return real_forward(images, prompts, support=support)
 
     monkeypatch.setattr(wrapper, "forward", spy)
-    monkeypatch.setattr(random, "random", lambda: 0.0)
 
     cfg = _make_cfg_k1()
     opt = _make_optimizer(wrapper)
@@ -116,7 +114,7 @@ def test_legacy_k1_each_model_call_has_one_class(
         )
 
 
-def test_legacy_k1_n_classes_is_K_total(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_k1_n_classes_is_K_total() -> None:
     """At classes_per_forward=1, n_classes == K_total (not G, which also == K_total at K=1)."""
     K_total = 3
     class_names = ["A", "B", "C"]
@@ -125,7 +123,6 @@ def test_legacy_k1_n_classes_is_K_total(monkeypatch: pytest.MonkeyPatch) -> None
     wrapper = _make_wrapper()
     opt = _make_optimizer(wrapper)
     sched = _make_scheduler(opt)
-    monkeypatch.setattr(random, "random", lambda: 0.0)
 
     cfg = _make_cfg_k1()
     result = train_step(
@@ -151,7 +148,6 @@ def test_legacy_k1_nan_in_one_group_not_skip(monkeypatch: pytest.MonkeyPatch) ->
         return out
 
     monkeypatch.setattr(wrapper, "forward", spy)
-    monkeypatch.setattr(random, "random", lambda: 0.0)
 
     cfg = _make_cfg_k1(nan_abort_after=99)
     opt = _make_optimizer(wrapper)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import random
 from typing import Any
 
 import pytest
@@ -87,7 +86,6 @@ def test_train_step_class_loop_visits_union(monkeypatch: pytest.MonkeyPatch) -> 
     )
     optimizer = torch.optim.AdamW([p for p in wrapper.parameters() if p.requires_grad], lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda s: 1.0)
-    monkeypatch.setattr(random, "random", lambda: 1.0)
     result = train_step(
         wrapper,
         batch,
@@ -127,7 +125,6 @@ def test_train_step_nan_in_one_class_does_not_count_as_skip(
     batch = _batch(prompts=[["A", "B"]], instances=[[_instance(0), _instance(1)]])
     optimizer = torch.optim.AdamW([p for p in wrapper.parameters() if p.requires_grad], lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda s: 1.0)
-    monkeypatch.setattr(random, "random", lambda: 1.0)
     result = train_step(
         wrapper,
         batch,
@@ -157,7 +154,6 @@ def test_train_step_nan_in_all_classes_increments_streak(
     batch = _batch(prompts=[["A"]], instances=[[_instance(0)]])
     optimizer = torch.optim.AdamW([p for p in wrapper.parameters() if p.requires_grad], lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda s: 1.0)
-    monkeypatch.setattr(random, "random", lambda: 1.0)
     result = train_step(
         wrapper, batch, optimizer, scheduler, cfg, class_names=["A"], global_step=0, nan_streak=5
     )
@@ -180,7 +176,6 @@ def test_train_step_aborts_after_nan_abort_after(
     batch = _batch(prompts=[["A"]], instances=[[_instance(0)]])
     optimizer = torch.optim.AdamW([p for p in wrapper.parameters() if p.requires_grad], lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda s: 1.0)
-    monkeypatch.setattr(random, "random", lambda: 1.0)
     with pytest.raises(RuntimeError, match="non-finite"):
         train_step(
             wrapper,
@@ -195,7 +190,6 @@ def test_train_step_aborts_after_nan_abort_after(
 
 
 def test_train_step_empty_classes_does_not_bump_streak(
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     cfg = _make_cfg()
@@ -203,7 +197,6 @@ def test_train_step_empty_classes_does_not_bump_streak(
     batch = _batch(prompts=[[], []], instances=[[], []])
     optimizer = torch.optim.AdamW([p for p in wrapper.parameters() if p.requires_grad], lr=1e-4)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda s: 1.0)
-    monkeypatch.setattr(random, "random", lambda: 1.0)
     result = train_step(
         wrapper, batch, optimizer, scheduler, cfg, class_names=[], global_step=0, nan_streak=4
     )

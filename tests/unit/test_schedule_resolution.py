@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest  # noqa: F401 (kept for potential future parametrize use)
-
 # ---------------------------------------------------------------------------
 # Helper: import the resolver (will fail until implemented)
 # ---------------------------------------------------------------------------
