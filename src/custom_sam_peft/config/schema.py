@@ -28,6 +28,7 @@ from pydantic import (
     model_validator,
 )
 
+from custom_sam_peft.config._duration import parse_duration_to_seconds
 from custom_sam_peft.config._internal import (
     ExportConfig,
     MatcherWeights,
@@ -543,6 +544,24 @@ class TrainHyperparams(_Strict):
             "so one evaluation per epoch."
         ),
     )
+    time_limit: str | int | None = Field(
+        default=None,
+        description=(
+            "Wall-clock budget for this invocation. Accepts a human duration "
+            '("2h30m", "90m", "3600s") or bare seconds (3600). None (default) '
+            "means unlimited. The budget is per-run: --resume restarts the clock."
+        ),
+    )
+
+    @field_validator("time_limit")
+    @classmethod
+    def _validate_time_limit(cls, v: str | int | None) -> str | int | None:
+        """Validate (don't rewrite) the duration. Stored verbatim; parsed in fit()."""
+        if v is None:
+            return v
+        parse_duration_to_seconds(v)  # raises ValueError on bad input; Pydantic wraps it
+        return v
+
     loss: LossConfig = Field(default_factory=LossConfig)
     nan_abort_after: PositiveInt = 20  # tbd: #191 (repo-chosen)
     num_workers: int = Field(
