@@ -222,11 +222,28 @@ same symbol. This section cross-links the template slot to its schema row.
 
 | Letter | Source | Establishes |
 | --- | --- | --- |
+| A | Issue #112 body — draft preset × class_imbalance table in the original brainstorming issue. | Values lifted verbatim from the project's design table; not an external literature source. |
+| B | Preserved pre-#112 hardcoded defaults from `models/losses.py` trainer behavior. | Structural continuity of existing behavior before the preset system was introduced. |
+| C | Lin et al. 2017 "Focal Loss for Dense Object Detection", arXiv:1708.02002, Table 1. | γ=2.0, α=0.25 from the RetinaNet best-performing configuration in Table 1. |
+| D | Abraham & Khan 2019 "A Novel Focal Tversky loss function with improved Attention U-Net for lesion segmentation", arXiv:1810.07842, §2.1. | Focal-Tversky exponent: paper trains with γ_paper=4/3 so (1-TI)^(1/γ_paper) = (1-TI)^0.75; code uses `tversky_gamma=0.75` directly as the exponent. Paper's best α=0.7 (FP weight), β=0.3 (FN weight) in their notation (§2.1: "we train all models with α=0.7 and β=0.3"). |
+| E | Salehi et al. 2017 "Tversky loss function for image segmentation using 3D fully convolutional deep networks", arXiv:1706.05721, Table 1. | Best FN-penalization weight on MS lesion segmentation: paper's β=0.7 (FN weight), α=0.3 (FP weight). Code convention: `tversky_alpha` weights FN (= paper's β), so `tversky_alpha=0.7` corresponds to Salehi's best β=0.7. Verifying quote (Experiments): "the best results were obtained from the FCN trained with β=0.7, which performed much better than the FCN trained with the Dice loss layer". |
+| F | Degenerate-case identity: α=0.5 reduces Tversky to Dice; γ=1.0 reduces Focal-Tversky to Tversky. | Mathematical identity — no external citation required. |
+| G | Alias-of-medical — microscopy copies medical presets (spec §5.2). | Placeholder pending a real microscopy user/dataset justification. `# tbd: #191` (see issue #120). |
+| H | Kervadec et al. 2019 "Boundary loss for highly unbalanced segmentation", arXiv:1812.07032, MIDL 2019 (also IEEE TMI 2021 doi:10.1109/TMI.2021.3113078). | Boundary loss blend coefficient; paper uses ~0.2 as a representative blending weight for the boundary loss term alongside a region loss. |
 
 ### Preset-table parameters
 
 | Location | Value | Tag | Full reference | Verifying quote | Notes |
 | --- | --- | --- | --- | --- | --- |
+| `models/losses/presets.py:PRESET_TABLE[("natural","moderate")].focal_gamma` | `2.5` | `# tbd: #191` | — | — | Escalated above Lin et al.'s γ=2.0 in the issue #112 draft table (legend A) as a moderate-imbalance step; no external paper specifies γ=2.5 and no internal calibration run has been recorded. |
+| `models/losses/presets.py:PRESET_TABLE[("natural","severe")].focal_gamma` | `3.0` | `# tbd: #191` | — | — | Severe-imbalance step from the issue #112 draft table (legend A); no external paper specifies γ=3.0 and no internal calibration run has been recorded. |
+| `models/losses/presets.py:PRESET_TABLE[("medical","moderate")].focal_gamma` | `2.5` | `# tbd: #191` | — | — | Same rationale as `("natural","moderate").focal_gamma`; issue #112 design table only. |
+| `models/losses/presets.py:PRESET_TABLE[("medical","severe")].focal_gamma` | `3.0` | `# tbd: #191` | — | — | Same rationale as `("natural","severe").focal_gamma`; issue #112 design table only. |
+| `models/losses/presets.py:PRESET_TABLE[("satellite","moderate")].focal_gamma` | `2.5` | `# tbd: #191` | — | — | Same rationale as `("natural","moderate").focal_gamma`; issue #112 design table only. |
+| `models/losses/presets.py:PRESET_TABLE[("satellite","severe")].focal_gamma` | `3.0` | `# tbd: #191` | — | — | Same rationale as `("natural","severe").focal_gamma`; issue #112 design table only. |
+| `models/losses/presets.py:PRESET_TABLE[("medical","moderate")].tversky_alpha` | `0.7` | `# cite: (A,E)` | Salehi et al. 2017, "Tversky loss function for image segmentation using 3D fully convolutional deep networks", arXiv:1706.05721, Table 1. | Experiments: "the best results were obtained from the FCN trained with β=0.7, which performed much better than the FCN trained with the Dice loss layer". β=0.7 is the FN-penalization weight in Salehi's notation; code's `tversky_alpha` is the FN weight (`tp + alpha*fn + (1-alpha)*fp`), so `tversky_alpha=0.7` = Salehi's β=0.7. | Naming-convention note: Salehi's α (FP weight) = 0.3; their β (FN weight) = 0.7 = this code's `tversky_alpha`. Abraham & Khan 2019 use the opposite convention (their α=FP, β=FN), but also report best FN weight of 0.3 in their convention (= FP-emphasis), which is inconsistent with the 0.7 FN weight here. The Salehi source is the correct citation for `tversky_alpha=0.7` as an FN-penalization weight. |
+| `models/losses/presets.py:PRESET_TABLE[("satellite","severe")].tversky_alpha` | `0.7` | `# cite: (A,E)` | Salehi et al. 2017, arXiv:1706.05721 (same as above). | Experiments: "the best results were obtained from the FCN trained with β=0.7 ...". | Same as medical/moderate row above; microscopy/moderate and microscopy/severe inherit this via alias (legend G). |
+| `models/losses/presets.py:PRESET_TABLE[("medical","severe")].tversky_alpha` | `0.8` | `# tbd: #191` | — | — | Further FN-bias escalation from the issue #112 design table (legend A); no external paper specifies α=0.8 as an FN-penalization weight and no internal calibration run has been recorded. |
 
 ## Reference Training Profile
 
