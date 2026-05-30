@@ -81,6 +81,8 @@ These facts are verified against the audit branch tree. Trust them; do not re-de
 
 **Files:** none (GitHub only). This task MUST run before any `# tbd:` tag is written, because tags reference the umbrella issue number.
 
+> **Follow-up issue inventory (recorded numbers — already created; do not re-issue `gh`).** The full inventory is now FOUR issues: **#191** (umbrella `# tbd:` tracker — the `UMBRELLA` number used by every `# tbd:` tag), **#192** (CI no-uncited-default hook), **#193** (empirical T4 confirmation of the reference profile — the `T4_CONFIRM` number used by Phase 2; now reframed as runtime confirmation for the convergence-anchored 160-epoch profile), and **#195** (empirically measure the 2-image overfit GPU smoke-test speed/convergence on `tiny_coco` — added during Phase-2 prep; the empirical home for the GPU-test budget questions). Steps 1–5 below describe how the first three were originally filed; `#195` was created separately during the Phase-2 amendment.
+
 - [ ] **Step 1: Confirm `gh` auth and labels**
 
 Run: `gh auth status && gh label list`
@@ -616,28 +618,45 @@ and visually confirm each tagged symbol has a doc row in `docs/defaults-provenan
 
 **What this phase EXPOSES:** the shipped `epochs` numeric default (in the template), the written profile section, and the CI-truncation comment in the integration tests. Final task opens the PR.
 
-### Task 2.1: Derive the reference epochs value (analytical)
+### Amendment (2026-05-30): epochs convergence-anchored to SAMed (supersedes the 30-min-budget framing)
 
-**Files:** none (derivation; output recorded in Task 2.2).
+During Phase-2 prep two corrections superseded this phase's original framing:
+
+- **Factual correction.** The shipped `epochs` default is **`10`**, not `25`. It lives in `src/custom_sam_peft/cli/init_cmd.py:162` (`string.Template(...).substitute(epochs=10)`) and the wizard `src/custom_sam_peft/cli/setup_wizard.py:362` (`default="10"`). The GPU test's `epochs=25` is an **unrelated 2-image `tiny_coco` overfit smoke budget** (50 forward steps ÷ 2 images = 25 epochs), not the production default — its "shipped 50-step budget" wording means the *test's* budget.
+- **Decision: `EPOCHS_VALUE = 160`**, cited to **SAMed** (Zhang & Liu 2023, "Customized Segment Anything Model for Medical Image Segmentation", arXiv:2304.13785) — LoRA fine-tuning of SAM on a small dataset reaching convergence at 160 epochs. The Reference Training Profile becomes **convergence-anchored**, not budget-anchored: the 30-min-T4 budget and reaching convergence are mutually exclusive, and the standing design priority is **final accuracy ≫ training speed**, so the 30-min budget is **dropped** as the driver.
+- There is **no citable T4 per-step wall-clock figure** in the literature; any runtime estimate stays `# tbd: #193`.
+- **This supersedes the parent spec's 30-min-budget framing for the `epochs` deliverable.** Follow-up inventory is now FOUR issues: **#191** (umbrella `# tbd:` tracker), **#192** (CI no-uncited-default hook), **#193** (empirical T4 confirmation), **#195** (2-image overfit GPU smoke-test speed/convergence). Tasks 2.1–2.5 below are amended accordingly; where older text says "if it confirms 25" or "30-min budget", the amended text governs.
+
+### Task 2.1: Select the reference epochs value (literature-anchored)
+
+**Files:** none (selection; output recorded in Task 2.2).
+
+This task is now a **literature-anchored selection**, not a 30-min-budget arithmetic derivation. `EPOCHS_VALUE = 160`, cited to SAMed. The steps below capture the source locators and the corrected baseline.
 
 - [ ] **Step 1: Read the inputs**
 
-Read `src/custom_sam_peft/presets.py` (`decide_preset` / `_predicted_bytes` — the memory model; confirms a step *fits* a 16 GB T4, not how long it takes) and `tests/gpu/test_real_train_qlora_resume.py` (the "shipped 50-step budget (epochs=25)" docstring anchor on a 2-image dataset, batch=1, grad_accum=2). Confirm there is **no** runtime/throughput estimator anywhere in `src/` (verified: only the memory model exists).
+Read `src/custom_sam_peft/presets.py` (`decide_preset` / `_predicted_bytes` — the memory model; confirms a step *fits* a 16 GB T4, not how long it takes) and `tests/gpu/test_real_train_qlora_resume.py` (the `epochs=25` value there is a **2-image overfit smoke budget** — 50 forward steps ÷ 2 images — NOT the production default). Confirm there is **no** runtime/throughput estimator anywhere in `src/` (verified: only the memory model exists).
 
 Run: `grep -rn "estimate_runtime\|estimate_vram\|wall.clock\|seconds_per_step\|throughput" src/custom_sam_peft/ || echo "NONE FOUND (expected)"`
-Expected: `NONE FOUND (expected)`.
+Expected: `NONE FOUND (expected)`. (The grep confirms there is no in-repo runtime model — so any wall-clock claim stays `# tbd: #193`.)
 
-- [ ] **Step 2: Research LoRA convergence behavior**
+- [ ] **Step 2: Capture the SAMed convergence anchor**
 
-Capture a citable LoRA/PEFT fine-tuning convergence figure (Hu et al. 2021 + related) to argue the epoch count sits in a reasonable convergence regime for the assumed dataset size — not merely a budget artifact. Capture quote + source.
+The closest published analog is **SAMed** (Zhang & Liu 2023, "Customized Segment Anything Model for Medical Image Segmentation", arXiv:2304.13785): LoRA fine-tuning of SAM (rank 4, AdamW) on a SMALL dataset reaching convergence at **160 epochs**. Capture these locators/quotes for the doc row in Task 2.2:
 
-- [ ] **Step 3: Find a sourced per-step-time assumption**
+- Sec 4.2: "We adopt early stop at 14880 iterations (160 epochs)".
+- Sec 4.1: "the training set contains 2212 axial slices" (18 cases — a small dataset, the regime this repo targets).
+- Abstract: "After finetuning only 160 epochs on Synapse ... SAMed achieves 81.88 DSC".
 
-Since no in-repo timing model exists, state an explicit, sourced per-step-time assumption for a 16 GB T4 at the shipped batch×grad-accum (e.g. from the #179 calibration notes or a cited public T4 throughput figure for a SAM/ViT-scale forward+backward). Record the figure and its source.
+This anchors `EPOCHS_VALUE = 160` to a convergence figure, not a budget artifact.
 
-- [ ] **Step 4: Do the arithmetic**
+- [ ] **Step 3: Record runtime as unverified (no citable T4 figure)**
 
-Record: assumed dataset size → steps/epoch at batch_size=1 × grad_accum_steps=8 → per-step-time assumption (Step 3) → total epochs that fit train+eval ≤ 30 min on a 16 GB T4. If the result confirms `25`, the value is documented unchanged. If it lands elsewhere, the derived integer becomes the new template default (and the GPU-test docstring updates to match). Write the chosen integer down as `EPOCHS_VALUE` for Task 2.2/2.3.
+A literature review found **no citable T4 per-step wall-clock figure** for a SAM/ViT-scale forward+backward. The 30-min-T4 budget and reaching convergence are mutually exclusive (160 epochs on a real dataset at batch=1×grad_accum=8 takes well over 30 min on a T4), and the standing design priority is **final accuracy ≫ training speed** — so the 30-min budget is dropped as the driver. Record the runtime as **unverified**: `# tbd: #193` (empirical T4 confirmation). Do NOT fabricate a per-step time.
+
+- [ ] **Step 4: Record the corrected baseline + chosen value**
+
+Record the corrected baseline: the **current shipped default is `10`** (`init_cmd.py:162` substitute `epochs=10` + wizard `setup_wizard.py:362` `default="10"`), NOT `25` (the GPU test's `25` is a separate 2-image overfit budget, now tracked by #195). The **chosen value is `160`** (SAMed convergence anchor). Write `EPOCHS_VALUE = 160` down for Tasks 2.2/2.3. The value is honestly **literature-anchored (SAMed)** with runtime **unverified** (`# tbd: #193`) — not budget-derived.
 
 ### Task 2.2: Write the Reference Training Profile section
 
@@ -645,48 +664,55 @@ Record: assumed dataset size → steps/epoch at batch_size=1 × grad_accum_steps
 
 - Modify: `docs/defaults-provenance.md` (`## Reference Training Profile` section — the reserved anchor)
 
-- [ ] **Step 1: Replace the reserved comment with the profile content**
+- [ ] **Step 1: Replace the reserved comment with the profile content (convergence-anchored)**
 
-Under `## Reference Training Profile`, write the profile specifying: assumed dataset size; `batch_size=1` / `grad_accum_steps=8` (the shipped values); `epochs=EPOCHS_VALUE` (from Task 2.1); eval mode (`full`); and the budget claim **train + eval ≤ 30 min on a 16 GB free-Colab T4**. Include the full arithmetic from Task 2.1 Step 4, the LoRA-convergence citation (Step 2), and the explicit per-step-time assumption with its source (Step 3). State plainly that the figure is **analytical** (no in-repo runtime model) and add `# tbd: #<T4_CONFIRM>` noting the empirical T4 confirmation is a tracked follow-up, never a completed claim.
+Under `## Reference Training Profile`, write the **convergence-anchored** profile specifying: `batch_size=1` / `grad_accum_steps=8` (the shipped values); `epochs=EPOCHS_VALUE` = **160** (from Task 2.1); eval mode (`full`). Anchor the 160-epoch default to **SAMed** with the quote + locator: arXiv:2304.13785, Sec 4.2 "We adopt early stop at 14880 iterations (160 epochs)" (Sec 4.1: 2212-slice small training set; Abstract: 160 epochs → 81.88 DSC). State the **convergence-vs-runtime tradeoff honestly**: 160 epochs on a real dataset at batch=1×grad_accum=8 takes **well over 30 min on a T4**, so the original 30-min budget is dropped in favor of convergence (accuracy ≫ speed); there is **no citable T4 per-step wall-clock figure**, so the runtime stays `# tbd: #193` (empirical T4 confirmation) — never a completed claim. Add a cross-reference to **#195** (the 2-image overfit GPU smoke-test speed/convergence) as the empirical home for the GPU-test budget questions.
 
-- [ ] **Step 2: Confirm the epochs row now resolves**
+- [ ] **Step 2: Update the schema epochs doc row Tag cell**
 
-Verify the `config/schema.py:TrainHyperparams.epochs` row's "See Reference Training Profile section below" pointer lands on a populated section (the row text itself is unchanged — it already points here from Phase 1).
+In the already-committed `config/schema.py:TrainHyperparams.epochs` doc row (`## config/schema.py` table), change the **Tag** cell from `# cite: empirical` to the literature anchor (e.g. `# cite: SAMed (Zhang 2023)`, with `# tbd: #193` for the unverified runtime). The row's "See Reference Training Profile section below (Deliverable 2)." pointer text in the Full reference / Verifying quote / Notes cells **stays unchanged**.
 
-- [ ] **Step 3: Markdownlint + commit**
+- [ ] **Step 3: Confirm the epochs row now resolves**
+
+Verify the `config/schema.py:TrainHyperparams.epochs` row's "See Reference Training Profile section below" pointer lands on a populated section (only the Tag cell changed in Step 2; the pointer text is unchanged).
+
+- [ ] **Step 4: Markdownlint + commit**
 
 Run: `npx --yes markdownlint-cli2 --config .config/markdownlint-cli2.jsonc "docs/defaults-provenance.md"`
 Expected: PASS.
 
 ```bash
 git add docs/defaults-provenance.md
-git commit -m "docs(provenance): add Reference Training Profile + analytical epochs derivation"
+git commit -m "docs(provenance): add convergence-anchored Reference Training Profile (epochs=160, SAMed); update schema epochs Tag cell"
 ```
 
 ### Task 2.3: Set the shipped `epochs` default + align the GPU-test docstring
 
 **Files:**
 
-- Modify: `src/custom_sam_peft/cli/templates/config_full.yaml` (line 52: `epochs: $epochs`) — only if the `init` flow's literal substitution is what carries the default; otherwise modify the `init` flow's default `$epochs` value
-- Modify: `src/custom_sam_peft/tests/gpu/test_real_train_qlora_resume.py` docstring (only if `EPOCHS_VALUE != 25`)
+- Modify: `src/custom_sam_peft/cli/init_cmd.py` (line 162: `substitute(... epochs=10 ...)` → `epochs=160`)
+- Modify: `src/custom_sam_peft/cli/setup_wizard.py` (line 362: `ask_text("Number of epochs?", default="10", ...)` → `default="160"`)
+- Modify: `tests/gpu/test_real_train_qlora_resume.py` docstring (de-conflate the "shipped" wording; do NOT touch the `epochs=13`/`epochs=25` override values)
+
+The shipped default is `10` (NOT the GPU test's `25`). It lives in **both** `init_cmd.py:162` (template `$epochs` substitution) and `setup_wizard.py:362` (interactive wizard default). Both move **`10` → `160`** (`EPOCHS_VALUE`, SAMed-anchored).
 
 - [ ] **Step 1: Locate where `$epochs` is substituted**
 
 Run: `grep -rn '\$epochs\|epochs' src/custom_sam_peft/cli/ | grep -iv 'log_every\|eval_every\|save_every'`
-Identify the `init` flow's default value that fills the `config_full.yaml` `$epochs` placeholder (the template keeps `$epochs`; the `init` command supplies the integer). Set that default to `EPOCHS_VALUE`.
+Confirm both sites: `init_cmd.py:162` `string.Template(...).substitute(... epochs=10 ...)` (fills the `config_full.yaml` `$epochs` placeholder — the template keeps `$epochs`) and `setup_wizard.py:362` `ask_text("Number of epochs?", default="10", ...)`. Do NOT hardcode a literal into the template itself; change the substitution default and the wizard default.
 
-- [ ] **Step 2: Apply the epochs default**
+- [ ] **Step 2: Apply the epochs default in BOTH sites**
 
-Edit the identified `init`-flow default so the rendered `config_full.yaml` ships `epochs: EPOCHS_VALUE`. Do not hardcode a literal into the template if the template intentionally keeps `$epochs` — change the substitution default. (If Task 2.1 confirmed `25` and the current default is already `25`, document-only — no code edit; note this in the commit message.)
+Set `init_cmd.py:162` `epochs=10` → `epochs=160`, and `setup_wizard.py:362` `default="10"` → `default="160"`. After this, both the `init` flow's rendered `config_full.yaml` and the wizard ship `epochs: 160`.
 
-- [ ] **Step 3: Update the GPU-test docstring if the value changed**
+- [ ] **Step 3: Fix the GPU-test docstring (de-conflate; do NOT retune the budget)**
 
-If `EPOCHS_VALUE != 25`, update the "shipped 50-step budget (epochs=25)" docstring in `tests/gpu/test_real_train_qlora_resume.py` to match (`epochs=EPOCHS_VALUE`). If `EPOCHS_VALUE == 25`, leave it unchanged.
+In `tests/gpu/test_real_train_qlora_resume.py`, UPDATE the docstring text to remove the misleading "shipped" conflation: the test's 50-step / `epochs=25` budget is a **2-image overfit** budget (50 forward steps ÷ 2 images), NOT the production default. Reword so the docstring says this is a 2-image overfit smoke budget, cross-reference the real production default (**160**, set in `init_cmd.py`/`setup_wizard.py`) and issue **#195** (which empirically tracks the 2-image overfit test's speed/convergence). **Do NOT change the test's `epochs=13` / `epochs=25` override values** — they are a deliberate 2-image step budget, now tracked by #195; retuning them is **out of scope** for this task.
 
-- [ ] **Step 4: Verify init rendering + tests**
+- [ ] **Step 4: Verify init/wizard rendering + tests**
 
 Run: `uv run pytest -o "addopts=" tests/unit/cli/ tests/unit/test_cli_init.py -q`
-Expected: PASS (init flow renders the new default; no test asserts the old literal — if one does, update it to `EPOCHS_VALUE` as part of this task).
+Expected: PASS. Confirm `init`/wizard render the new **160** default. If any unit test asserts the old `10` literal (e.g. an `init`-render or wizard-default assertion), update that expectation to `160` as part of this task.
 
 - [ ] **Step 5: Lint + commit**
 
@@ -694,8 +720,8 @@ Run: `uv run ruff check src/custom_sam_peft && uv run ruff format --check src/cu
 Expected: PASS.
 
 ```bash
-git add src/custom_sam_peft/cli/ src/custom_sam_peft/tests/gpu/test_real_train_qlora_resume.py
-git commit -m "feat(init): set shipped epochs default to the reference-profile value"
+git add src/custom_sam_peft/cli/init_cmd.py src/custom_sam_peft/cli/setup_wizard.py tests/gpu/test_real_train_qlora_resume.py
+git commit -m "feat(init): raise shipped epochs default 10->160 (SAMed convergence anchor); de-conflate GPU-test docstring"
 ```
 
 ### Task 2.4: Add the CI-truncation comment to the integration tests (verify default path)
@@ -782,11 +808,11 @@ Expected: PASS at ≥80% coverage (no source logic added; this run mirrors CI's 
 ```bash
 gh pr create \
   --title "docs: literature-cite every default + align epochs to reference profile (#120)" \
-  --body $'Closes #120.\n\nDeliverable 1: inline # cite:/# tbd: tags on every trust-bearing default across config/_internal.py, config/schema.py, data/aug_presets.py, data/channel_semantics.py, data/transforms.py, presets.py, and the config_full.yaml template; loss-preset # citation needed cells firmed up (grep -c == 0); central docs/defaults-provenance.md index with verified quotes/DOIs.\n\nDeliverable 2: analytical Reference Training Profile + shipped epochs default aligned to it; integration tests document CI epoch truncation while exercising the real default hyperparameter path.\n\nSpec: docs/superpowers/specs/2026-05-30-cite-defaults-audit-design.md\nPlan: docs/superpowers/plans/2026-05-30-cite-defaults-audit-plan.md\n\nFollow-ups filed: umbrella # tbd: tracker, CI no-uncited-default hook, empirical T4 confirmation.' \
+  --body $'Closes #120.\n\nDeliverable 1: inline # cite:/# tbd: tags on every trust-bearing default across config/_internal.py, config/schema.py, data/aug_presets.py, data/channel_semantics.py, data/transforms.py, presets.py, and the config_full.yaml template; loss-preset # citation needed cells firmed up (grep -c == 0); central docs/defaults-provenance.md index with verified quotes/DOIs.\n\nDeliverable 2: convergence-anchored Reference Training Profile; shipped epochs default raised 10->160 (init_cmd.py + setup_wizard.py), anchored to SAMed (arXiv:2304.13785, 160-epoch convergence on a small LoRA-SAM dataset). Runtime stays unverified (# tbd: #193 — no citable T4 per-step figure; the 30-min budget was dropped in favor of convergence, accuracy >> speed). GPU-test docstring de-conflated (its epochs=25 is a 2-image overfit budget, not the production default). Integration tests document CI epoch truncation while exercising the real default hyperparameter path.\n\nSpec: docs/superpowers/specs/2026-05-30-cite-defaults-audit-design.md\nPlan: docs/superpowers/plans/2026-05-30-cite-defaults-audit-plan.md\n\nFollow-ups filed: #191 (umbrella # tbd: tracker), #192 (CI no-uncited-default hook), #193 (empirical T4 confirmation), #195 (2-image overfit GPU smoke-test speed/convergence).' \
   --label docs --assignee @me
 ```
 
-Expected: PR created, linking spec + plan and the three follow-up issues.
+Expected: PR created, linking spec + plan and the four follow-up issues (#191/#192/#193/#195).
 
 ---
 
