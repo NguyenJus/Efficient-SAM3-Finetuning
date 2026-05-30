@@ -104,3 +104,55 @@ def test_train_stop_prints_message_and_skips_eval_export(
     assert "Time limit (2h) reached" in result.output
     assert eval_called["n"] == 0
     assert export_called["n"] == 0
+
+
+def test_run_bad_time_limit_exits_1_without_training(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from custom_sam_peft.cli import run_cmd
+
+    called = {"run": False}
+    monkeypatch.setattr(run_cmd, "run_training", lambda *a, **k: called.__setitem__("run", True))
+    cfg = _write_min_config(tmp_path)
+
+    from custom_sam_peft.cli.main import app
+
+    result = runner.invoke(app, ["run", "--config", str(cfg), "--time-limit", "10x"])
+    assert result.exit_code == 1
+    assert "invalid --time-limit" in result.output
+    assert called["run"] is False
+
+
+def test_run_stop_short_circuits_before_eval_export_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from custom_sam_peft.cli import run_cmd
+
+    run_dir = tmp_path / "run"
+    (run_dir).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(run_cmd, "run_training", lambda *a, **k: _stop_artifacts(run_dir))
+    phase_calls = {"val": 0, "load": 0, "eval": 0, "merged": 0, "bundle": 0}
+    monkeypatch.setattr(
+        "custom_sam_peft.data.val_source.load_val_source",
+        lambda *a, **k: phase_calls.__setitem__("val", 1),
+    )
+    monkeypatch.setattr(run_cmd, "load_sam31", lambda *a, **k: phase_calls.__setitem__("load", 1))
+    monkeypatch.setattr(run_cmd, "run_eval", lambda *a, **k: phase_calls.__setitem__("eval", 1))
+    monkeypatch.setattr(
+        run_cmd, "save_merged", lambda *a, **k: phase_calls.__setitem__("merged", 1)
+    )
+    monkeypatch.setattr(
+        run_cmd, "write_bundle", lambda *a, **k: phase_calls.__setitem__("bundle", 1)
+    )
+    cfg = _write_min_config(tmp_path)
+
+    from custom_sam_peft.cli.main import app
+
+    result = runner.invoke(app, ["run", "--config", str(cfg), "--time-limit", "2h"])
+    assert result.exit_code == 0
+    assert "Time limit (2h) reached" in result.output
+    # No phase after train ran:
+    assert phase_calls["load"] == 0
+    assert phase_calls["eval"] == 0
+    assert phase_calls["merged"] == 0
+    assert phase_calls["bundle"] == 0
