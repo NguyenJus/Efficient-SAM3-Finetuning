@@ -375,9 +375,7 @@ class Trainer:
         (run_dir/adapter is intentionally NOT written on a stop).
         """
         assert budget_seconds is not None  # noqa: S101 — invariant: set whenever a stop fires
-        checkpoint_dir = (
-            paths.checkpoint_path(run_dir, step=stop.step).parent / f"step_{stop.step}"
-        )
+        checkpoint_dir = paths.checkpoint_path(run_dir, step=stop.step).parent / f"step_{stop.step}"
         best_dir: Path | None = None
         best_map: float | None = None
         best_candidate = run_dir / "best"
